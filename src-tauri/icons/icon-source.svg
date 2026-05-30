@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- ShardX diamond — same geometry as IconShard in App.tsx, scaled to
+       1024×1024 with ~96px padding so it doesn't kiss icon-tile edges.
+       Used as the source for `npx @tauri-apps/cli icon` regeneration. -->
+  <polygon points="512,96 928,512 512,928 96,512" fill="#8B5CF6"/>
+</svg>

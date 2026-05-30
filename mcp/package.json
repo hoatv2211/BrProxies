@@ -1,0 +1,14 @@
+{
+  "name": "shardx-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for the ShardX Launcher — drives the local automation API and a profile's browser over CDP.",
+  "type": "module",
+  "bin": { "shardx-mcp": "index.js" },
+  "scripts": { "start": "node index.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.4.0",
+    "patchright": "^1.47.0",
+    "zod": "^3.23.8"
+  }
+}

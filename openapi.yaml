@@ -1,0 +1,1015 @@
+openapi: 3.0.3
+
+info:
+  title: ShardX Launcher — Automation API
+  version: "0.1.0"
+  description: |
+    Local HTTP API for automating the ShardX anti-detect browser launcher:
+    generate fingerprints, create/launch/close profiles, and obtain a Chrome
+    DevTools Protocol (CDP) WebSocket endpoint to drive a launched profile
+    with Puppeteer / Playwright.
+
+    ## Binding & lifecycle
+    The server runs inside the launcher app, bound to **127.0.0.1** only,
+    on the port configured in *Settings → Automation API* (default **40325**).
+    It is **not** reachable from other hosts. Enabling/port changes take
+    effect after the app restarts.
+
+    ## Authentication
+    Every endpoint except `GET /health` requires a **Bearer JWT** (HS256,
+    signed with the launcher's stored secret):
+
+        Authorization: Bearer <token>
+
+    The permanent token is shown in *Settings → Automation API* (copy it
+    from there). Pressing **Regenerate token** rotates the signing secret
+    live — the new token works immediately and every previously issued
+    token is invalidated at once. There is no separate API key and no
+    token-minting endpoint: the token itself is the credential.
+
+    Missing/invalid token → `401` with an empty body.
+
+    ## Typical flow
+    1. `GET /fingerprint/new/{platform}` → a fully uniquified fingerprint
+       (random platform_version, host-aware CPU/RAM, clamped screen,
+       library noise prefs), **not** persisted.
+    2. Optionally edit the returned `fingerprint` object (e.g. flip
+       `noise.fonts.enabled`, set `webrtc`, tweak `navigator`).
+    3. `POST /profiles` (or `POST /folders/{folder}/profiles`) with that
+       object as `fingerprint` → the launcher stores it **verbatim**
+       (create never re-randomizes).
+    4. `POST /profiles/{id}/start` → returns the CDP endpoint; connect with
+       `browserWSEndpoint = cdp.web_socket_debugger_url`.
+    5. `POST /profiles/{id}/stop` when done.
+
+    ## Proxies & QUIC/WebRTC
+    On **every** launch (UI or API), before the browser starts, the bound
+    proxy is probed live for UDP-relay (SOCKS5 UDP_ASSOCIATE). If UDP works,
+    QUIC is enabled and WebRTC may use the proxied UDP relay; otherwise QUIC
+    is disabled and WebRTC collapses to TCP-only so the real IP can't leak.
+    Timezone/locale/geo `auto` fields are resolved live through the proxy at
+    launch too. Passing `proxy` (string) on a persistent create adds it to
+    the store and full-tests it up front; a temporary profile keeps it inline.
+
+    ## Temporary profiles
+    `POST /profiles/temporary` creates a profile flagged `temporary`: it is
+    hidden from `GET /profiles` and from the launcher UI, and is deleted
+    (config + user-data-dir) automatically when its browser closes. If the
+    app crashes while one is open, it is purged on the next app start.
+
+    ## Fingerprint object
+    The `fingerprint` returned by `GET /fingerprint/new*` and accepted by
+    the create endpoints is the launcher's native FingerprintConfig. It is
+    round-tripped verbatim, so the schema below documents the common
+    sub-objects but is intentionally open (`additionalProperties: true`).
+
+    ## MCP server
+    A companion **MCP** (Model Context Protocol) server lets an AI client
+    drive the launcher through *this* API plus a profile's browser over
+    CDP. It is a separate Node process — **not** part of this HTTP API and
+    not hosted by it. Get it from the launcher (**Settings → MCP server →
+    Download MCP server**, or the sidebar "Download MCP" button), which
+    saves the source to a folder you choose; or from the repo at
+    `rust/shardx-launcher/mcp/`.
+
+    Under the hood it just calls this API: configure it with
+    `SHARDX_API` (this base URL) and `SHARDX_TOKEN` (the Bearer token from
+    *Settings → Automation API*). It exposes:
+    - **API tools** — thin wrappers over the endpoints below
+      (profiles, fingerprints, proxies, folders, cookies, start/stop).
+    - **Browser tools** (patchright over CDP) — `browser_navigate`,
+      `browser_evaluate`, `browser_screenshot`, `browser_click`,
+      `browser_fill`, tabs, waits, etc., targeting a profile started via
+      `POST /profiles/{id}/start` (which returns the CDP endpoint).
+
+    Run it standalone over **stdio** (the client spawns it) or, with
+    `MCP_HTTP_PORT` set, over HTTP at `127.0.0.1:<port>/mcp`. See the MCP
+    server's README for setup. (The launcher only downloads it; it does
+    not run it.)
+
+servers:
+  - url: http://127.0.0.1:40325
+    description: Local launcher (default port; change in Settings)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: System
+  - name: Fingerprints
+  - name: Profiles
+  - name: Folders
+  - name: Proxies
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Liveness probe
+      description: Returns basic server info. The only endpoint that does **not** require auth.
+      security: []
+      responses:
+        "200":
+          description: Server is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  name: { type: string, example: shardx-launcher }
+                  version: { type: string, example: "0.1.0" }
+
+  /fingerprint/new:
+    get:
+      tags: [Fingerprints]
+      summary: Generate a new fingerprint (host OS)
+      description: |
+        Returns a fully uniquified fingerprint for the **host** operating
+        system, without persisting it. Equivalent to
+        `/fingerprint/new/{platform}` with the launcher host's platform.
+      responses:
+        "200":
+          description: A uniquified, unsaved fingerprint.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FingerprintEnvelope"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: The fingerprint library is empty.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /fingerprint/new/{platform}:
+    get:
+      tags: [Fingerprints]
+      summary: Generate a new fingerprint for a platform
+      description: |
+        Picks a random library fingerprint matching `platform`, then
+        uniquifies it: a fresh Sec-CH-UA `platform_version`, host-aware
+        `hardware_concurrency`/`device_memory` (never claims more than the
+        real machine), and a screen clamped to the real display. Returned
+        unsaved — feed it to a create endpoint as `fingerprint`.
+      parameters:
+        - name: platform
+          in: path
+          required: true
+          description: Case-insensitive; `win`/`osx`/`darwin` aliases accepted.
+          schema:
+            type: string
+            enum: [Windows, macOS, Linux]
+      responses:
+        "200":
+          description: A uniquified, unsaved fingerprint.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FingerprintEnvelope"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No matching fingerprint and the library is empty.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /profiles:
+    get:
+      tags: [Profiles]
+      summary: List profiles
+      description: |
+        Lists persistent profiles (temporary profiles are hidden), newest
+        first, pinned on top. Each entry is enriched with live run state.
+      responses:
+        "200":
+          description: Profile list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProfileListItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Profiles]
+      summary: Create a profile
+      description: |
+        Persists a profile from a client-supplied `fingerprint` **exactly as
+        given** (no re-randomization — uniquification already happened in
+        `/fingerprint/new`). Use `folder` to file it; bind a proxy by stored
+        `proxy_id` or attach one inline via `proxy` (a string that is NOT
+        saved to the proxy store).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateProfileRequest" }
+      responses:
+        "200":
+          description: Created profile metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileMeta" }
+        "400":
+          description: Missing/!object `fingerprint`, or an unparseable proxy string.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /profiles/temporary:
+    post:
+      tags: [Profiles]
+      summary: Create a temporary profile
+      description: |
+        Creates a profile from a random (or specified) library fingerprint,
+        uniquified like `/fingerprint/new` and stored verbatim, flagged
+        `temporary`: hidden from listings and **auto-deleted when its
+        browser closes** (or purged on next app start after a crash). Pair
+        with `POST /profiles/{id}/start`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TempProfileRequest" }
+      responses:
+        "200":
+          description: Created temporary profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  name: { type: string }
+                  fingerprint_id:
+                    type: string
+                    description: The library entry the profile was generated from.
+                  temporary: { type: boolean, example: true }
+                  proxy_inline:
+                    type: boolean
+                    description: Whether an inline proxy string was attached.
+        "400":
+          description: Unparseable proxy string.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No matching fingerprint / empty library.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /profiles/{id}:
+    get:
+      tags: [Profiles]
+      summary: Get a profile
+      description: |
+        Returns the full stored profile: the `_meta` envelope plus the
+        flattened FingerprintConfig. If the profile is running, `running`
+        and `cdp` are added.
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      responses:
+        "200":
+          description: The stored profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoredProfile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      tags: [Profiles]
+      summary: Delete a profile
+      description: Removes the profile config and its user-data-dir.
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: boolean, example: true }
+                  id: { type: string, format: uuid }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: Deletion failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    patch:
+      tags: [Profiles]
+      summary: Edit a profile
+      description: |
+        Updates only the provided fields. When `fingerprint` is given it
+        REPLACES the stored fingerprint verbatim (no re-randomization).
+        `folder: ""` unfiles the profile; `proxy_id: ""` unbinds the proxy;
+        a `proxy` string is stored (deduped) + full-tested, then bound.
+        Returns the updated stored profile.
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EditProfileRequest" }
+      responses:
+        "200":
+          description: Updated stored profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoredProfile" }
+        "400":
+          description: Bad fingerprint (not an object) or unparseable proxy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /profiles/{id}/start:
+    post:
+      tags: [Profiles]
+      summary: Launch a profile (with CDP)
+      description: |
+        Spawns the ShardX browser for the profile with remote-debugging
+        enabled, resolves any `auto` timezone/locale/geo from the bound
+        proxy, and returns the CDP endpoint once Chrome has written its
+        DevToolsActivePort. CDP is enabled **only** on API launches (UI
+        launches stay debugging-free for anti-detect). `cdp` is `null` if
+        the endpoint couldn't be read within the timeout. Works for both
+        regular and temporary profiles.
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      requestBody:
+        required: false
+        description: Optional. Empty body launches headed.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                headless:
+                  type: boolean
+                  default: false
+                  description: Launch headless (--headless=new).
+      responses:
+        "200":
+          description: Launched.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile_id: { type: string }
+                  pid: { type: integer, format: int64, description: OS process id. }
+                  headless: { type: boolean }
+                  cdp:
+                    nullable: true
+                    allOf: [{ $ref: "#/components/schemas/CdpInfo" }]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: Binary not configured / spawn failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /profiles/{id}/stop:
+    post:
+      tags: [Profiles]
+      summary: Stop a profile
+      description: |
+        Sends the browser a graceful shutdown (SIGTERM on Unix; 5s grace
+        then SIGKILL). Temporary profiles are deleted as part of close.
+        `stopped` is `false` if the profile wasn't running.
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      responses:
+        "200":
+          description: Stop requested.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile_id: { type: string }
+                  stopped: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /profiles/{id}/cookies:
+    get:
+      tags: [Profiles]
+      summary: Export cookies
+      description: |
+        Reads the profile's Chromium cookie store and returns all cookies
+        **decrypted**. Works whether the profile is running or stopped.
+        Empty array if the profile has never launched.
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      responses:
+        "200":
+          description: Cookies.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cookies:
+                    type: array
+                    items: { $ref: "#/components/schemas/Cookie" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: Cookie DB read/decrypt failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      tags: [Profiles]
+      summary: Import cookies
+      description: |
+        Writes cookies into the profile's cookie store (re-encrypting to
+        Chromium's v10 scheme). The profile **must be stopped** — a running
+        browser rewrites the store on exit and would clobber the import.
+      parameters:
+        - $ref: "#/components/parameters/ProfileId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cookies]
+              properties:
+                cookies:
+                  type: array
+                  items: { $ref: "#/components/schemas/Cookie" }
+      responses:
+        "200":
+          description: Imported.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imported: { type: integer, description: Number of cookies written. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Profile is running — stop it first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Cookie DB write failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /folders:
+    get:
+      tags: [Folders]
+      summary: List folders
+      description: Distinct, non-empty folder tags across persistent profiles.
+      responses:
+        "200":
+          description: Folder names.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+                example: ["work", "scrapers"]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /folders/{folder}:
+    patch:
+      tags: [Folders]
+      summary: Rename a folder
+      description: Retags every profile in the folder. Returns the count.
+      parameters:
+        - name: folder
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, description: New folder name. }
+      responses:
+        "200":
+          description: Renamed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  renamed_to: { type: string }
+                  profiles: { type: integer, description: Profiles retagged. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [Folders]
+      summary: Delete a folder
+      description: |
+        Deletes the folder tag. With `delete_profiles=true` the profiles in
+        it are deleted too; otherwise they're unfiled (moved to "All").
+      parameters:
+        - name: folder
+          in: path
+          required: true
+          schema: { type: string }
+        - name: delete_profiles
+          in: query
+          required: false
+          description: Delete the profiles in the folder (default false = unfile).
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted_folder: { type: string }
+                  delete_profiles: { type: boolean }
+                  profiles: { type: integer, description: Profiles affected. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /folders/{folder}/profiles:
+    post:
+      tags: [Folders]
+      summary: Create a profile in a folder
+      description: |
+        Same as `POST /profiles`, but the folder comes from the path
+        (overriding any `folder` in the body).
+      parameters:
+        - name: folder
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateProfileRequest" }
+      responses:
+        "200":
+          description: Created profile metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileMeta" }
+        "400":
+          description: Missing/!object `fingerprint`, or an unparseable proxy string.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /fingerprints:
+    get:
+      tags: [Fingerprints]
+      summary: List library fingerprints
+      description: The on-disk fingerprint library (GPU presets) the launcher ships/imports.
+      responses:
+        "200":
+          description: Library entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/LibraryEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /running:
+    get:
+      tags: [Profiles]
+      summary: List running profiles
+      description: Profiles with a live browser process, including the CDP endpoint when launched via the API.
+      responses:
+        "200":
+          description: Running profiles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RunningProfile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /proxies:
+    get:
+      tags: [Proxies]
+      summary: List stored proxies
+      description: Proxies saved in the launcher store. **Credentials (username/password) are never returned.**
+      responses:
+        "200":
+          description: Proxy summaries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProxySummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Proxies]
+      summary: Add a proxy
+      description: |
+        Adds a proxy to the store (deduped by endpoint). Pass `proxy` as a
+        string, or explicit `host`/`port` (+ `kind`/`username`/`password`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddProxyRequest" }
+      responses:
+        "200":
+          description: Stored proxy summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxySummary" }
+        "400":
+          description: Unparseable proxy / missing host+port.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /proxies/{id}:
+    delete:
+      tags: [Proxies]
+      summary: Delete a proxy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: boolean, example: true }
+                  id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Permanent JWT from Settings → Automation API.
+
+  parameters:
+    ProfileId:
+      name: id
+      in: path
+      required: true
+      description: Profile UUID.
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid Bearer token.
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+      required: [error]
+
+    FingerprintEnvelope:
+      type: object
+      properties:
+        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+      required: [fingerprint]
+
+    Fingerprint:
+      type: object
+      description: |
+        Native FingerprintConfig. Documented sub-objects are the common
+        ones; the object is open and stored verbatim by the create
+        endpoints, so any field present here is round-tripped.
+      additionalProperties: true
+      properties:
+        name: { type: string }
+        notes: { type: string }
+        seed:
+          type: integer
+          description: 0 = overrides-only mode (the common case).
+        navigator:
+          type: object
+          additionalProperties: true
+          properties:
+            user_agent: { type: string }
+            platform: { type: string, example: "Win32" }
+            hardware_concurrency: { type: integer, example: 12 }
+            device_memory: { type: integer, enum: [8, 16, 32], example: 16 }
+            language: { type: string }
+            do_not_track: { type: boolean }
+        screen:
+          type: object
+          additionalProperties: true
+          properties:
+            width: { type: integer }
+            height: { type: integer }
+            avail_width: { type: integer }
+            avail_height: { type: integer }
+            color_depth: { type: integer, example: 24 }
+            device_pixel_ratio: { type: number, example: 2 }
+            color_gamut: { type: string, enum: ["", srgb, p3, rec2020] }
+        client_hints:
+          type: object
+          description: Sec-CH-UA family (browser.vision calls this `hints`).
+          additionalProperties: true
+          properties:
+            platform: { type: string }
+            platform_version: { type: string }
+            architecture: { type: string, example: "x86" }
+            bitness: { type: string, example: "64" }
+            mobile: { type: boolean }
+        webgl:
+          type: object
+          additionalProperties: true
+          properties:
+            unmasked_vendor: { type: string }
+            unmasked_renderer: { type: string }
+        webgpu:
+          type: object
+          additionalProperties: true
+        webrtc:
+          type: string
+          description: WebRTC handling mode.
+          enum: [auto, tcp_only, block]
+        noise:
+          $ref: "#/components/schemas/NoisePrefs"
+        network:
+          type: object
+          properties:
+            blocked_ports:
+              type: array
+              items: { type: integer }
+              description: Local-network port-scan defense (ports_protection).
+        timezone:
+          type: string
+          description: IANA name, or "auto" to resolve from the bound proxy at launch.
+
+    NoisePrefs:
+      type: object
+      description: |
+        Per-vector anti-fingerprint noise. Each block is `{enabled, seed}`
+        (+ feature-specific knobs). `enabled:false` = pass-through.
+      properties:
+        canvas: { $ref: "#/components/schemas/NoiseBlock" }
+        webgl:
+          allOf: [{ $ref: "#/components/schemas/NoiseBlock" }]
+          properties:
+            intensity: { type: number }
+        audio:
+          allOf: [{ $ref: "#/components/schemas/NoiseBlock" }]
+          properties:
+            intensity: { type: number }
+        client_rects:
+          allOf: [{ $ref: "#/components/schemas/NoiseBlock" }]
+          properties:
+            max_offset: { type: number }
+        sensors: { $ref: "#/components/schemas/NoiseBlock" }
+        fonts:
+          allOf: [{ $ref: "#/components/schemas/NoiseBlock" }]
+          description: |
+            `enabled:true` hides a small deterministic per-profile subset of
+            non-essential fonts (real host fonts otherwise pass through).
+
+    NoiseBlock:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        seed:
+          type: integer
+          description: Per-profile entropy; 0 = derive automatically.
+
+    CreateProfileRequest:
+      type: object
+      required: [fingerprint]
+      properties:
+        name: { type: string }
+        notes: { type: string }
+        proxy_id:
+          type: string
+          description: Bind a proxy already in the store (by id).
+        proxy:
+          type: string
+          description: |
+            Attach a proxy by string (`host:port:user:pass` or
+            `scheme://user:pass@host:port`). On a **persistent** profile it is
+            added to the proxy store (deduped by endpoint) and full-tested
+            (UDP + geo), then bound by id — so it appears in the proxy list
+            and QUIC/WebRTC gating has a cached result. On a **temporary**
+            profile it is attached inline (not stored). Ignored if `proxy_id`
+            is set.
+          example: "socks5://user:pass@1.2.3.4:1080"
+        folder:
+          type: string
+          description: Folder tag (ignored on /folders/{folder}/profiles, which wins).
+        fingerprint:
+          allOf: [{ $ref: "#/components/schemas/Fingerprint" }]
+          description: Stored verbatim. Get one from /fingerprint/new and edit as needed.
+
+    EditProfileRequest:
+      type: object
+      description: All fields optional — only what's present is changed.
+      properties:
+        name: { type: string }
+        notes: { type: string }
+        folder: { type: string, description: '"" unfiles (moves to All).' }
+        proxy_id: { type: string, description: '"" unbinds the proxy.' }
+        proxy:
+          type: string
+          description: Proxy string — stored (deduped) + full-tested, then bound.
+        fingerprint:
+          allOf: [{ $ref: "#/components/schemas/Fingerprint" }]
+          description: When present, REPLACES the stored fingerprint verbatim.
+
+    TempProfileRequest:
+      type: object
+      properties:
+        fingerprint_id:
+          type: string
+          description: Library entry to base off; random match for `platform` when omitted.
+        platform:
+          type: string
+          enum: [Windows, macOS, Linux]
+          description: Used to pick a random fingerprint when `fingerprint_id` is omitted; host OS when both omitted.
+        proxy:
+          type: string
+          description: Inline proxy string (not saved to the store).
+        name: { type: string }
+        folder: { type: string }
+
+    ProfileMeta:
+      type: object
+      description: Launcher-facing profile metadata (returned by create).
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        notes: { type: string }
+        proxy_id: { type: string, nullable: true }
+        last_launched_at: { type: string, nullable: true, description: ISO-8601 or null. }
+        created_at: { type: string, nullable: true }
+        pinned: { type: boolean }
+        folder: { type: string }
+
+    ProfileListItem:
+      allOf:
+        - $ref: "#/components/schemas/ProfileMeta"
+        - type: object
+          properties:
+            running: { type: boolean }
+            pid: { type: integer, format: int64, nullable: true }
+            cdp:
+              nullable: true
+              allOf: [{ $ref: "#/components/schemas/CdpInfo" }]
+
+    StoredProfile:
+      type: object
+      description: |
+        Full on-disk profile: the `_meta` envelope plus the flattened
+        FingerprintConfig (all `Fingerprint` fields appear at the top
+        level). `running`/`cdp` are present only while the profile runs.
+      additionalProperties: true
+      properties:
+        _meta:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            proxy_id: { type: string, nullable: true }
+            inline_proxy:
+              nullable: true
+              allOf: [{ $ref: "#/components/schemas/ProxyEntry" }]
+            last_launched_at: { type: string, nullable: true }
+            created_at: { type: string, nullable: true }
+            pinned: { type: boolean }
+            folder: { type: string }
+            temporary: { type: boolean }
+        running: { type: boolean }
+        cdp:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/CdpInfo" }]
+
+    CdpInfo:
+      type: object
+      description: Chrome DevTools Protocol endpoint of a running profile.
+      properties:
+        port: { type: integer, description: Chrome-chosen remote-debugging port. }
+        http_url:
+          type: string
+          example: "http://127.0.0.1:53217"
+          description: REST base (/json, /json/version).
+        web_socket_debugger_url:
+          type: string
+          example: "ws://127.0.0.1:53217/devtools/browser/ab12-..."
+          description: Browser-level WS endpoint for Puppeteer/Playwright `connect`.
+
+    RunningProfile:
+      type: object
+      properties:
+        profile_id: { type: string }
+        pid: { type: integer, format: int64 }
+        cdp:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/CdpInfo" }]
+
+    LibraryEntry:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string }
+        platform: { type: string, enum: [Windows, macOS, Linux] }
+        chrome: { type: string, description: Chrome version string. }
+        gpu: { type: string }
+        builtin: { type: boolean, description: Part of the bundled starter set. }
+
+    AddProxyRequest:
+      type: object
+      description: A proxy string OR explicit fields (string wins).
+      properties:
+        proxy:
+          type: string
+          description: "`scheme://user:pass@host:port` or `host:port:user:pass`."
+        kind: { type: string, enum: [socks5, http, https] }
+        host: { type: string }
+        port: { type: integer }
+        username: { type: string }
+        password: { type: string }
+        name: { type: string }
+        country: { type: string }
+        notes: { type: string }
+
+    ProxySummary:
+      type: object
+      description: Stored proxy without credentials.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [socks5, http, https] }
+        host: { type: string }
+        port: { type: integer }
+        country: { type: string, description: Informational tag (e.g. "US"). }
+
+    Cookie:
+      type: object
+      description: |
+        A cookie in a tool-friendly shape (compatible with EditThisCookie /
+        Puppeteer exports — `httpOnly`/`sameSite` are accepted as aliases on
+        import).
+      required: [domain, name, value]
+      properties:
+        domain:
+          type: string
+          description: Cookie host (Chromium `host_key`), e.g. ".example.com".
+        name: { type: string }
+        value: { type: string }
+        path: { type: string, default: "/" }
+        expires:
+          type: number
+          nullable: true
+          description: Unix seconds; null/absent = session cookie.
+        secure: { type: boolean, default: false }
+        http_only: { type: boolean, default: false }
+        same_site:
+          type: string
+          enum: [Strict, Lax, None, unspecified]
+          description: Case-insensitive on import.
+
+    ProxyEntry:
+      type: object
+      description: Full proxy (as embedded in `_meta.inline_proxy`).
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [socks5, http, https] }
+        host: { type: string }
+        port: { type: integer }
+        username: { type: string }
+        password: { type: string }
+        country: { type: string }
+        notes: { type: string }

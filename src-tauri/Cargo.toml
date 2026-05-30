@@ -1,0 +1,65 @@
+[package]
+name = "shardx-launcher"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "shardx_launcher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "rt-multi-thread", "macros", "fs", "net", "io-util", "time"] }
+anyhow = "1"
+dirs = "5"
+uuid = { version = "1", features = ["v4", "serde"] }
+url = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "socks", "json"] }
+base64 = "0.22"
+# Local automation HTTP API (axum) + JWT bearer auth.
+axum = "0.7"
+jsonwebtoken = "9"
+# Cookie import/export from the profile's Chromium Cookies SQLite DB.
+# Values are v10 (AES-128-CBC) with a SHA-256 domain prefix; the OSCrypt
+# key is fixed because ShardX runs with --use-mock-keychain (patch 0041).
+# MCP bootstrap: download the server tarball from GitHub + extract.
+flate2 = "1"
+tar = "0.4"
+rusqlite = { version = "0.32", features = ["bundled"] }
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+pbkdf2 = "0.12"
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+# Self-bootstrapping runtime: zip extraction of the chrome bundle
+# downloaded from Cloudflare R2 on first launch (src/runtime.rs).
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Windows cookie crypto: AES-256-GCM + DPAPI key from Local State.
+[target.'cfg(windows)'.dependencies]
+aes-gcm = "0.10"
+getrandom = "0.2"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",            # HLOCAL + LocalFree live here in 0.59
+    "Win32_Security_Cryptography", # CryptProtectData / CryptUnprotectData
+] }
+
