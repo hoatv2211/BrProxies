@@ -12,6 +12,11 @@ spoofing at the engine level.
 * **Site:**     <https://proxyshard.com>
 * **Docs:**     <https://docs.proxyshard.com>
 * **UDP info:** <https://docs.proxyshard.com/eng/our-products/about-udp>
+* **p0f info:** <https://docs.proxyshard.com/eng/our-products/p0f-spoofing>
+
+<p align="center">
+  <img src="docs/screenshots/00-launcher-workspace.jpg" alt="ShardX Launcher" width="820">
+</p>
 
 ---
 
@@ -238,15 +243,19 @@ Windows, `.AppImage` / `.deb` for Linux — and run it.
 The release isn't code-signed (no Apple Developer ID, no Authenticode
 cert), so the first launch is gated by the OS:
 
-* **macOS** — Gatekeeper says *"can't be opened because Apple cannot
-  check it for malicious software"*. Two ways past:
-  1. **Finder** — right-click `ShardX Launcher.app` → *Open* → *Open*
-     in the confirmation dialog. Only needed once per install.
-  2. **Terminal** — strip the quarantine attribute the browser added
-     when you downloaded the .dmg:
-     ```bash
-     xattr -dr com.apple.quarantine "/Applications/ShardX Launcher.app"
-     ```
+* **macOS** — Gatekeeper sees an unsigned bundle that the browser
+  just downloaded and refuses to open it. Depending on macOS version
+  you get either *"can't be opened because Apple cannot check it for
+  malicious software"* (mild) or *"ShardX Launcher is damaged and
+  can't be opened. Move it to the Trash."* (loud, since macOS 14+).
+  **Both are fixed by stripping the quarantine attribute** the
+  browser stamped on the .dmg — run once in Terminal:
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/ShardX Launcher.app"
+  ```
+  After that the .app opens normally with a double-click. If you only
+  see the mild "developer cannot be verified" warning, right-click on
+  the .app → *Open* → *Open* in the confirmation also works.
 * **Windows** — SmartScreen shows *"Windows protected your PC"*.
   Click **More info** → **Run anyway**. Repeated launches don't
   re-prompt.
