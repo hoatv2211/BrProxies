@@ -1,0 +1,174 @@
+# Build the Tauri launcher for macOS arm64, Windows x64 and Linux x64
+# on free GitHub-hosted runners, then attach every bundle to a GitHub
+# Release.
+#
+# Why three runners instead of cross-compiling from Linux?  Tauri's
+# bundlers are platform-native — .dmg needs `hdiutil`/`codesign` (mac
+# only), .msi needs WiX (Windows only); cross-compiling the Rust
+# binary is possible but the bundling step then fails.  GitHub's
+# hosted runners are free for public repos (and have a generous free
+# tier for private ones), so this is cost-free for the maintainer and
+# avoids any self-hosted-runner setup.
+#
+# Triggers:
+#   * pushing a tag like `v1.2.3`  → release named "ShardX Launcher v1.2.3"
+#   * manual dispatch via the Actions tab (handy for ad-hoc builds)
+#
+# Artifacts attached to the Release:
+#   * macOS arm64 — .dmg + .app.tar.gz
+#   * Windows x64 — .msi installer + portable .exe
+#   * Linux x64   — .AppImage + .deb
+#
+# The launcher itself is unsigned (no Apple Developer ID / Authenticode
+# cert in this repo).  README documents how end-users dismiss the
+# Gatekeeper / SmartScreen warning on first launch.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.1.0). Required for manual runs.'
+        required: true
+
+permissions:
+  contents: write   # needed to create / attach assets to releases
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14            # Apple Silicon (M-series) runner — free, ARM-only
+            target: aarch64-apple-darwin
+            label: mac-arm64
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: win-x64
+
+    runs-on: ${{ matrix.os }}
+    name: build (${{ matrix.label }})
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Rust (stable, ${{ matrix.target }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry + build target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ matrix.label }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.label }}-cargo-
+
+      # Tauri needs WebKitGTK + a few X libs on Linux; nothing extra on
+      # mac / windows runners.
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            patchelf
+
+      - name: npm install
+        run: npm ci
+
+      - name: Build Tauri bundle
+        env:
+          # Bundles are unsigned — explicit empty strings stop the
+          # Tauri bundler from trying to invoke missing codesign /
+          # signtool on the CI runners.
+          APPLE_SIGNING_IDENTITY: ''
+          APPLE_CERTIFICATE: ''
+          APPLE_CERTIFICATE_PASSWORD: ''
+          WINDOWS_CERTIFICATE: ''
+          WINDOWS_CERTIFICATE_PASSWORD: ''
+        run: npx tauri build --target ${{ matrix.target }}
+
+      - name: Collect bundles
+        shell: bash
+        run: |
+          mkdir -p staging
+          # Grab every distributable Tauri produced — paths differ per OS.
+          find src-tauri/target/${{ matrix.target }}/release/bundle \
+            -type f \
+            \( -name '*.dmg' -o -name '*.app.tar.gz' \
+               -o -name '*.msi' -o -name '*.exe' \
+               -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
+            -exec cp -v {} staging/ \;
+          ls -la staging/
+
+      - name: Upload to workflow artifacts (intermediate)
+        uses: actions/upload-artifact@v4
+        with:
+          name: shardx-launcher-${{ matrix.label }}
+          path: staging/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    name: publish release
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download every per-platform artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List collected bundles
+        run: ls -la dist/
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ShardX Launcher ${{ steps.tag.outputs.tag }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            * **macOS** (Apple Silicon — M1/M2/M3/M4) — download the `.dmg`.  First launch: right-click *ShardX Launcher.app* → *Open* → *Open* (the build isn't signed with an Apple Developer ID).
+            * **Windows** — `.msi` installer.  SmartScreen will warn: *More info* → *Run anyway* (the build isn't signed with Authenticode).
+            * **Linux** — `.AppImage` (`chmod +x` and run) or `.deb` (`sudo apt install ./...deb`).
+
+            On first launch the launcher downloads the patched ShardX browser, Widevine CDM and a starter library of 170 device profiles from our CDN.  After that it boots straight to the workspace.
+          files: dist/*
