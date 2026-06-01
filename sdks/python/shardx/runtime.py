@@ -172,9 +172,12 @@ class Runtime:
             self._install_fingerprints(force=force)
             local["fingerprints_etag"] = fp_remote
         self._save_manifest(local)
-        # Make binary executable on unix.
-        if sys.platform != "win32" and self.binary_path.exists():
-            self.binary_path.chmod(self.binary_path.stat().st_mode | 0o111)
+        # Linux/mac archives produced on Windows lose every Unix exec bit;
+        # restore +x on every ELF/Mach-O file under the engine tree (not
+        # just the main binary — chrome spawns chrome_crashpad_handler,
+        # chrome_sandbox, etc., and they need the exec bit too).
+        if sys.platform != "win32":
+            _fix_unix_exec_bits(self.root)
         self._checked_in_process = True
 
     def _head_etag(self, key: str) -> Optional[str]:
@@ -267,25 +270,55 @@ class Runtime:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+_NATIVE_MAGIC = (
+    b"\x7fELF",                                              # Linux/BSD ELF
+    b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",               # Mach-O 64-bit BE / LE
+    b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",               # Mach-O 32-bit BE / LE
+    b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",               # Mach-O universal
+)
+
+
+def _fix_unix_exec_bits(root: Path) -> None:
+    """Walk `root` and add +x to every file whose first 4 bytes are an
+    ELF / Mach-O magic.  Required because Windows zip producers don't
+    store Unix exec bits, so chrome / chrome_crashpad_handler / chrome_sandbox
+    all come out non-executable on Linux."""
+    for p in root.rglob("*"):
+        try:
+            if not p.is_file() or p.is_symlink():
+                continue
+            with p.open("rb") as f:
+                head = f.read(4)
+            if any(head.startswith(m) for m in _NATIVE_MAGIC):
+                p.chmod(p.stat().st_mode | 0o111)
+        except OSError:
+            pass
+
+
 def _system_unzip(archive: Path, dest: Path) -> None:
     """Extract via /usr/bin/unzip — preserves symlinks and permission
     bits that Python's zipfile silently drops.  Required for any
     macOS .app bundle (Versions/Current symlinks + Helper exec bits).
+
+    Accepts exit code 0 (clean) and 1 (warnings — e.g. "backslashes in
+    path" for archives zipped on Windows; extraction still completes
+    correctly).  Only 2+ are real fatal errors per unzip(1).
     """
     dest.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.run(
+        proc = subprocess.run(
             ["unzip", "-q", "-o", str(archive), "-d", str(dest)],
-            check=True,
+            check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
     except FileNotFoundError as e:
         raise RuntimeError(
-            "system `unzip` not found — required for symlink-preserving "
-            "extraction on macOS / Linux"
+            "system `unzip` not found — install with "
+            "`apt install unzip` / `brew install unzip`"
         ) from e
-    except subprocess.CalledProcessError as e:
+    if proc.returncode > 1:
         raise RuntimeError(
-            f"unzip failed for {archive.name}: {e.stderr.decode(errors='replace')[:400]}"
-        ) from e
+            f"unzip failed for {archive.name} (exit {proc.returncode}): "
+            f"{proc.stderr.decode(errors='replace')[:400]}"
+        )

@@ -345,27 +345,98 @@ async fn download_and_extract(window: &Window, spec: &ArchiveSpec, base: &Path) 
     let zip_path = tmp.clone();
     let dest = base.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<()> {
-        let f = fs::File::open(&zip_path)?;
-        let mut archive = zip::ZipArchive::new(f)?;
-        archive.extract(&dest)?;
-        Ok(())
+        // On macOS / Linux shell out to the system `unzip`: the Rust `zip`
+        // crate's `extract()` does not restore symlinks (rewrites them as
+        // text files) or +x bits, and Linux archives that store entries
+        // out-of-order vs. their parent dirs trip its file-create with
+        // ENOENT ("os error 2") before the parent dir entry is processed.
+        // `unzip` handles all three correctly.
+        #[cfg(unix)]
+        {
+            use std::process::Command;
+            fs::create_dir_all(&dest)?;
+            let out = Command::new("unzip")
+                .arg("-q")
+                .arg("-o")
+                .arg(&zip_path)
+                .arg("-d")
+                .arg(&dest)
+                .output()
+                .map_err(|e| anyhow::anyhow!(
+                    "system `unzip` not found ({e}); install with `apt install unzip` / `brew install unzip`"
+                ))?;
+            // unzip exit codes: 0 = clean, 1 = warnings (e.g. archives
+            // zipped on Windows have backslashes; extraction still
+            // completes correctly), 2+ = real fatal errors per unzip(1).
+            let code = out.status.code().unwrap_or(-1);
+            if code > 1 {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                anyhow::bail!(
+                    "unzip failed for {} (exit {}): {}",
+                    zip_path.display(),
+                    code,
+                    stderr.trim()
+                );
+            }
+            return Ok(());
+        }
+        #[cfg(not(unix))]
+        {
+            let f = fs::File::open(&zip_path)?;
+            let mut archive = zip::ZipArchive::new(f)?;
+            archive.extract(&dest)?;
+            Ok(())
+        }
     })
     .await??;
 
     let _ = fs::remove_file(&tmp);
 
-    // Restore +x on unix (zip may have stripped it).
+    // Linux/mac archives produced on Windows lose every Unix exec bit;
+    // restore +x on every ELF/Mach-O file under the runtime tree (not
+    // just the main binary — chrome spawns chrome_crashpad_handler,
+    // chrome_sandbox, etc., and they all need the exec bit).
     #[cfg(unix)]
-    if let Ok(bin) = binary_path() {
-        if bin.exists() {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = fs::metadata(&bin)?.permissions();
-            p.set_mode(p.mode() | 0o111);
-            let _ = fs::set_permissions(&bin, p);
+    {
+        if let Ok(root) = runtime_dir() {
+            fix_unix_exec_bits(&root);
         }
     }
 
     Ok(etag)
+}
+
+/// First-4-bytes magic check; matches ELF + every Mach-O flavour.
+#[cfg(unix)]
+fn fix_unix_exec_bits(root: &Path) {
+    use std::io::Read;
+    use std::os::unix::fs::PermissionsExt;
+    const MAGIC: &[[u8; 4]] = &[
+        [0x7f, b'E', b'L', b'F'],                              // ELF
+        [0xfe, 0xed, 0xfa, 0xcf], [0xcf, 0xfa, 0xed, 0xfe],   // Mach-O 64 BE/LE
+        [0xfe, 0xed, 0xfa, 0xce], [0xce, 0xfa, 0xed, 0xfe],   // Mach-O 32 BE/LE
+        [0xca, 0xfe, 0xba, 0xbe], [0xbe, 0xba, 0xfe, 0xca],   // Mach-O universal
+    ];
+    fn walk(dir: &Path, magic: &[[u8; 4]]) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for ent in entries.flatten() {
+            let p = ent.path();
+            let Ok(ft) = ent.file_type() else { continue };
+            if ft.is_symlink() { continue; }
+            if ft.is_dir() { walk(&p, magic); continue; }
+            if !ft.is_file() { continue; }
+            let mut head = [0u8; 4];
+            let Ok(mut f) = fs::File::open(&p) else { continue };
+            if f.read_exact(&mut head).is_err() { continue; }
+            if !magic.iter().any(|m| *m == head) { continue; }
+            if let Ok(meta) = fs::metadata(&p) {
+                let mut perm = meta.permissions();
+                perm.set_mode(perm.mode() | 0o111);
+                let _ = fs::set_permissions(&p, perm);
+            }
+        }
+    }
+    walk(root, MAGIC);
 }
 
 /// Move Widevine to `<Framework>.framework/Versions/<ver>/Libraries/WidevineCdm/`.

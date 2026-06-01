@@ -2,7 +2,7 @@
 // library from the ProxyShard CDN, extract into a per-user cache dir,
 // place Widevine inside the engine bundle, remember etags so subsequent
 // runs are zero-network. Mirrors src-tauri/src/runtime.rs in the launcher.
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, chmodSync, copyFileSync } from "node:fs";
+import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync, chmodSync, copyFileSync, lstatSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir, platform as osPlatform, arch as osArch } from "node:os";
 import { join, dirname, resolve } from "node:path";
@@ -147,9 +147,12 @@ export class Runtime {
     }
     this.saveManifest(local);
 
-    if (osPlatform() !== "win32" && existsSync(this.binaryPath)) {
-      const m = statSync(this.binaryPath).mode;
-      chmodSync(this.binaryPath, m | 0o111);
+    // Linux/mac archives produced on Windows lose every Unix exec bit;
+    // restore +x on every ELF/Mach-O file under the engine tree (not
+    // just the main binary — chrome spawns chrome_crashpad_handler,
+    // chrome_sandbox, etc., and they need the exec bit too).
+    if (osPlatform() !== "win32") {
+      fixUnixExecBits(this.root);
     }
     this._checkedInProcess = true;
   }
@@ -263,7 +266,11 @@ export class Runtime {
 
 /** Extract via /usr/bin/unzip — preserves symlinks and permission
  *  bits that adm-zip silently drops.  Required for any macOS .app
- *  bundle (Versions/Current symlinks + Helper exec bits). */
+ *  bundle (Versions/Current symlinks + Helper exec bits).
+ *
+ *  Accepts exit code 0 (clean) and 1 (warnings — e.g. "backslashes in
+ *  path" for archives zipped on Windows; extraction still completes
+ *  correctly).  Only 2+ are real fatal errors per unzip(1). */
 function systemUnzip(archive: string, dest: string): void {
   mkdirSync(dest, { recursive: true });
   const r = spawnSync("unzip", ["-q", "-o", archive, "-d", dest], {
@@ -272,13 +279,50 @@ function systemUnzip(archive: string, dest: string): void {
   if (r.error) {
     if ((r.error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error(
-        "system `unzip` not found — required for symlink-preserving extraction on macOS / Linux",
+        "system `unzip` not found — install with `apt install unzip` / `brew install unzip`",
       );
     }
     throw r.error;
   }
-  if (r.status !== 0) {
+  if ((r.status ?? 0) > 1) {
     const err = r.stderr?.toString().slice(0, 400) ?? `exit ${r.status}`;
-    throw new Error(`unzip failed for ${archive}: ${err}`);
+    throw new Error(`unzip failed for ${archive} (exit ${r.status}): ${err}`);
   }
+}
+
+/** ELF + Mach-O magic bytes; first 4 bytes tell us a file is a native
+ *  executable that needs the +x bit, regardless of what zip stored. */
+const NATIVE_MAGIC: ReadonlyArray<Buffer> = [
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46]),                  // ELF
+  Buffer.from([0xfe, 0xed, 0xfa, 0xcf]),                  // Mach-O 64 BE
+  Buffer.from([0xcf, 0xfa, 0xed, 0xfe]),                  // Mach-O 64 LE
+  Buffer.from([0xfe, 0xed, 0xfa, 0xce]),                  // Mach-O 32 BE
+  Buffer.from([0xce, 0xfa, 0xed, 0xfe]),                  // Mach-O 32 LE
+  Buffer.from([0xca, 0xfe, 0xba, 0xbe]),                  // Mach-O universal BE
+  Buffer.from([0xbe, 0xba, 0xfe, 0xca]),                  // Mach-O universal LE
+];
+
+/** Walk `root` and add +x to every file whose first 4 bytes match a known
+ *  native-binary magic.  Required because Windows zip producers don't
+ *  store Unix exec bits, so chrome / chrome_crashpad_handler / chrome_sandbox
+ *  all come out non-executable on Linux. */
+function fixUnixExecBits(root: string): void {
+  const walk = (dir: string): void => {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, ent.name);
+      if (ent.isSymbolicLink()) continue;
+      if (ent.isDirectory()) { walk(p); continue; }
+      if (!ent.isFile()) continue;
+      try {
+        const fd = openSync(p, "r");
+        const buf = Buffer.alloc(4);
+        readSync(fd, buf, 0, 4, 0);
+        closeSync(fd);
+        if (NATIVE_MAGIC.some((m) => buf.equals(m))) {
+          chmodSync(p, lstatSync(p).mode | 0o111);
+        }
+      } catch { /* skip unreadable / racing files */ }
+    }
+  };
+  walk(root);
 }
