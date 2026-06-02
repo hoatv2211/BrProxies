@@ -16,7 +16,7 @@
   <a href="https://www.npmjs.com/package/@proxyshard/shardx"><img alt="npm downloads" src="https://img.shields.io/npm/dt/@proxyshard/shardx?style=flat-square&logo=npm&logoColor=white&label=npm&color=brightgreen"></a>
 </p>
 
-A project by the **[ProxyShard](https://proxyshard.com)** team — the
+A project by the **[ProxyShard](https://proxyshard.com?utm_source=shardx&utm_medium=referral&utm_campaign=shardx-launcher)** team — the
 proxy service with full **SOCKS5 UDP relay** (RFC 1928 §7) and active
 **p0f TCP-fingerprint spoofing** on the exit (so the OS the proxy
 claims to be on actually matches the SYN/ACK shape sites see). ShardX
@@ -25,10 +25,10 @@ of those proxies: the launcher manages profiles, binds proxies, and
 ships the patched **Chromium 148** browser that does the actual
 spoofing at the engine level.
 
-* **Site:**     <https://proxyshard.com>
-* **Docs:**     <https://docs.proxyshard.com>
-* **UDP info:** <https://docs.proxyshard.com/eng/our-products/about-udp>
-* **p0f info:** <https://docs.proxyshard.com/eng/our-products/p0f-spoofing>
+* **Site:**     <https://proxyshard.com?utm_source=shardx&utm_medium=referral&utm_campaign=shardx-launcher>
+* **Docs:**     <https://docs.proxyshard.com?utm_source=shardx&utm_medium=referral&utm_campaign=shardx-launcher>
+* **UDP info:** <https://docs.proxyshard.com/eng/our-products/about-udp?utm_source=shardx&utm_medium=referral&utm_campaign=shardx-launcher>
+* **p0f info:** <https://docs.proxyshard.com/eng/our-products/p0f-spoofing?utm_source=shardx&utm_medium=referral&utm_campaign=shardx-launcher>
 
 Drive ShardX whichever way fits the job — all four read from the same
 on-disk state, so a profile is reachable from every entry-point with
@@ -72,7 +72,7 @@ geolocation from the proxy's exit country, isolated `user-data-dir`,
 persistent cookies, Widevine pre-warm, QUIC over the proxy's UDP
 relay, no real-IP leaks via WebRTC.
 
-Free for any use — pair with [ProxyShard](https://proxyshard.com)
+Free for any use — pair with [ProxyShard](https://proxyshard.com?utm_source=shardx&utm_medium=referral&utm_campaign=shardx-launcher)
 proxies for the QUIC + WebRTC stack to actually work end-to-end, or
 bring your own.
 
@@ -160,7 +160,7 @@ across iframes, web workers, devtools and headless inspection.
   launches are zero-network.
 * **Local automation API** — axum HTTP server on `127.0.0.1`,
   JWT-Bearer auth. Full reference at
-  [docs.proxyshard.com/eng/shardx-launcher-api](https://docs.proxyshard.com/eng/shardx-launcher-api/binding-and-lifecycle?fallback=true),
+  [docs.proxyshard.com/eng/shardx-launcher-api](https://docs.proxyshard.com/eng/shardx-launcher-api/binding-and-lifecycle?fallback=true&utm_source=shardx&utm_medium=referral&utm_campaign=shardx-launcher),
   raw schema in [openapi.yaml](openapi.yaml). Create / start / stop
   profiles and get a CDP WebSocket URL programmatically.
 * **MCP server bundled** — drop into Claude Desktop / IDE for
@@ -370,7 +370,7 @@ HTTP. Every endpoint except `GET /health` requires a Bearer JWT shown
 in *Settings → Automation API* (regenerate rotates the signing secret
 live).
 
-* **Reference docs:** <https://docs.proxyshard.com/eng/shardx-launcher-api/binding-and-lifecycle>
+* **Reference docs:** <https://docs.proxyshard.com/eng/shardx-launcher-api/binding-and-lifecycle?utm_source=shardx&utm_medium=referral&utm_campaign=shardx-launcher>
 * **OpenAPI schema:** [openapi.yaml](openapi.yaml)
 
 Launching a profile and getting a CDP endpoint:
