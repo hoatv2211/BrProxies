@@ -30,6 +30,24 @@ pub struct Settings {
     /// (see `ensure_secret`); rotating it invalidates issued tokens.
     #[serde(default)]
     pub api_secret: String,
+
+    // ---- ProxyPool sidecar ----
+    #[serde(default = "default_proxypool_host")]
+    pub proxypool_host: String,
+    #[serde(default = "default_proxypool_port")]
+    pub proxypool_port: u16,
+    #[serde(default = "default_proxypool_redis_url")]
+    pub proxypool_redis_url: String,
+    #[serde(default)]
+    pub proxypool_disabled_sources: Vec<String>,
+    #[serde(default = "default_proxypool_collect_interval")]
+    pub proxypool_collect_interval_seconds: u64,
+    #[serde(default = "default_proxypool_check_interval")]
+    pub proxypool_check_interval_seconds: u64,
+    #[serde(default = "default_proxypool_timeout")]
+    pub proxypool_timeout_seconds: f64,
+    #[serde(default = "default_proxypool_concurrency")]
+    pub proxypool_max_concurrency: u64,
 }
 
 fn default_theme() -> String {
@@ -44,6 +62,14 @@ fn default_api_port() -> u16 {
     40325
 }
 
+fn default_proxypool_host() -> String { "127.0.0.1".into() }
+fn default_proxypool_port() -> u16 { 40326 }
+fn default_proxypool_redis_url() -> String { "redis://127.0.0.1:6379/0".into() }
+fn default_proxypool_collect_interval() -> u64 { 900 }
+fn default_proxypool_check_interval() -> u64 { 300 }
+fn default_proxypool_timeout() -> f64 { 8.0 }
+fn default_proxypool_concurrency() -> u64 { 50 }
+
 pub fn load() -> Result<Settings> {
     let path = store::settings_path()?;
     if !path.exists() {
@@ -55,6 +81,14 @@ pub fn load() -> Result<Settings> {
             api_enabled: default_api_enabled(),
             api_port: default_api_port(),
             api_secret: String::new(),
+            proxypool_host: default_proxypool_host(),
+            proxypool_port: default_proxypool_port(),
+            proxypool_redis_url: default_proxypool_redis_url(),
+            proxypool_disabled_sources: Vec::new(),
+            proxypool_collect_interval_seconds: default_proxypool_collect_interval(),
+            proxypool_check_interval_seconds: default_proxypool_check_interval(),
+            proxypool_timeout_seconds: default_proxypool_timeout(),
+            proxypool_max_concurrency: default_proxypool_concurrency(),
         });
     }
     let body = fs::read_to_string(&path)?;
