@@ -1,0 +1,4 @@
+interface:
+  display_name: "ShardBrowser Repo"
+  short_description: "Repo map and workflow for ShardX Launcher"
+  default_prompt: "Use $shardbrowser-repo to inspect and modify the ShardBrowser launcher safely."

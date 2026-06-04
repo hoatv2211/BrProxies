@@ -2,7 +2,7 @@
 name = "shardx"
 version = "0.1.5"
 description = "Self-contained Python SDK for the ShardX anti-detect browser — downloads the engine + Widevine + fingerprint library on first use, launches isolated profiles."
-authors = [{ name = "ProxyShard", email = "support@proxyshard.com" }]
+authors = [{ name = "hoatv2211" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.9"
@@ -26,10 +26,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage      = "https://github.com/ProxyShard/ShardBrowser"
-Repository    = "https://github.com/ProxyShard/ShardBrowser"
-Documentation = "https://docs.proxyshard.com?utm_source=shardx&utm_medium=referral&utm_campaign=shardx-launcher"
-Issues        = "https://github.com/ProxyShard/ShardBrowser/issues"
+Homepage      = "https://github.com/hoatv2211/ShardBrowser"
+Repository    = "https://github.com/hoatv2211/ShardBrowser"
+Documentation = "https://github.com/hoatv2211/ShardBrowser#readme"
+Issues        = "https://github.com/hoatv2211/ShardBrowser/issues"
 
 [build-system]
 requires = ["hatchling"]

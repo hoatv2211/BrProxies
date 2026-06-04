@@ -9,7 +9,7 @@ use tauri::{Emitter, Window};
 use tokio::io::AsyncWriteExt;
 
 const PUB_BASE: &str = "https://pub-e57a7c60f6934eb09a6600bf2fc59cdc.r2.dev";
-const LAUNCHER_RELEASE_REPO: &str = "ProxyShard/ShardBrowser";
+const LAUNCHER_RELEASE_REPO: &str = "hoatv2211/ShardBrowser";
 /// Chromium version baked into the current bundle (used for Mac Framework path).
 const CHROMIUM_VERSION: &str = "148.0.7778.216";
 

@@ -60,10 +60,3 @@ pub fn proxypool_dir() -> Result<PathBuf> {
 pub fn proxypool_config_path() -> Result<PathBuf> {
     Ok(proxypool_dir()?.join("config.json"))
 }
-
-/// ProxyShard billing-API config (Bearer key). Kept in its own file so the
-/// Settings page (which round-trips the whole Settings struct) can never
-/// clobber the saved key.
-pub fn psapi_path() -> Result<PathBuf> {
-    Ok(config_root()?.join("psapi.json"))
-}

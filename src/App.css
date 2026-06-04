@@ -540,7 +540,7 @@ textarea { resize: vertical; min-height: 60px; line-height: 1.5; }
 }
 
 /* Inline CTA button in the Proxies-page toolbar — accent-tinted
-   pill that opens proxyshard.com in the default browser.  Sits next
+     pill-style action used by proxy tools. Sits next
    to Import / New proxy so it's the first thing users see on a fresh
    install with an empty proxy list. */
 .proxy-buy-cta {
@@ -1683,6 +1683,11 @@ button.status-pill.status-link:active { transform: translateY(1px); }
   font-size: 12.5px;
   margin-bottom: 12px;
 }
+.pp-source-errors {
+  display: grid;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
 
 /* ===== card (settings) ===== */
 .card {
@@ -1887,7 +1892,7 @@ button.status-pill.status-link:active { transform: translateY(1px); }
   to   { transform: translateX(0) scale(1);       opacity: 1; }
 }
 
-/* ---- ProxyShard billing integration ---- */
+/* ---- Proxy tools legacy styles ---- */
 
 .ps-key-row {
   display: flex;
@@ -2004,7 +2009,7 @@ button.status-pill.status-link:active { transform: translateY(1px); }
 .ps-price-orig { color: var(--tx-3); text-decoration: line-through; font-size: 13px; }
 .ps-price-final { font-size: 18px; font-weight: 700; color: var(--tx-1); }
 
-/* ProxyShard: order-proxy import picker */
+/* Order-proxy import picker */
 .dialog.dialog-wide { max-width: 580px; width: 92vw; }
 .ps-import-list {
   max-height: 320px;
@@ -2081,11 +2086,12 @@ button.status-pill.status-link:active { transform: translateY(1px); }
   flex-direction: column;
   border: 1px solid var(--bd-1);
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow-y: auto;
+  max-height: 420px;
 }
 .pp-row {
   display: grid;
-  grid-template-columns: minmax(170px, 1.2fr) 80px 90px minmax(120px, 1fr) minmax(150px, 1fr) 82px;
+  grid-template-columns: minmax(170px, 1.2fr) 80px 90px 78px minmax(120px, 1fr) minmax(150px, 1fr) 210px;
   align-items: center;
   gap: 10px;
   padding: 9px 12px;
@@ -2094,12 +2100,32 @@ button.status-pill.status-link:active { transform: translateY(1px); }
 }
 .pp-row:last-child { border-bottom: 0; }
 .pp-row-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   background: var(--bg-2);
   color: var(--tx-3);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: .5px;
   text-transform: uppercase;
+}
+.pp-sort {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pp-sort:hover { color: var(--tx-1); }
+.pp-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 .pp-row .mono {
   overflow: hidden;
@@ -2112,11 +2138,40 @@ button.status-pill.status-link:active { transform: translateY(1px); }
   gap: 8px;
   margin-top: 10px;
 }
+.pp-source-list .readout {
+  gap: 8px;
+}
+.pp-source-list .readout .mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pp-source-form {
+  display: grid;
+  grid-template-columns: minmax(140px, .7fr) minmax(240px, 1.4fr) minmax(120px, .5fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin: 8px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--bd-1);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+}
+.pp-source-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .btn-ghost.danger { color: var(--err); border-color: #fb718555; }
 
 @media (max-width: 1100px) {
   .pp-config-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
-  .pp-row { grid-template-columns: minmax(170px, 1fr) 70px 80px 82px; }
+  .pp-source-form { grid-template-columns: 1fr; }
+  .pp-row { grid-template-columns: minmax(170px, 1fr) 70px 80px 150px; }
   .pp-row span:nth-child(4),
-  .pp-row span:nth-child(5) { display: none; }
+  .pp-row span:nth-child(5),
+  .pp-row span:nth-child(6) { display: none; }
+  .pp-row .pp-sort:nth-child(4),
+  .pp-row .pp-sort:nth-child(5),
+  .pp-row .pp-sort:nth-child(6) { display: none; }
 }

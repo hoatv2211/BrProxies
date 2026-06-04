@@ -25,6 +25,7 @@ class ProxyPoolConfig:
     max_concurrency: int = 50
     failure_threshold: int = 2
     initial_collect: bool = True
+    custom_sources: list[dict[str, str]] = field(default_factory=list)
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "ProxyPoolConfig":
@@ -33,6 +34,17 @@ class ProxyPoolConfig:
             disabled_sources = _split_csv(disabled)
         else:
             disabled_sources = {str(item) for item in disabled}
+        raw_custom = data.get("custom_sources", [])
+        custom_sources: list[dict[str, str]] = []
+        if isinstance(raw_custom, list):
+            for item in raw_custom:
+                if not isinstance(item, dict):
+                    continue
+                custom_sources.append({
+                    "id": str(item.get("id", "")),
+                    "url": str(item.get("url", "")),
+                    "parser": str(item.get("parser", "text")),
+                })
         return cls(
             host=str(data.get("host", "127.0.0.1")),
             port=int(data.get("port", 40326)),
@@ -44,6 +56,7 @@ class ProxyPoolConfig:
             max_concurrency=int(data.get("max_concurrency", 50)),
             failure_threshold=int(data.get("failure_threshold", 2)),
             initial_collect=bool(data.get("initial_collect", True)),
+            custom_sources=custom_sources,
         )
 
 
@@ -74,4 +87,3 @@ def load_config(path: str | None = None) -> ProxyPoolConfig:
             else:
                 data[field_name] = value
     return ProxyPoolConfig.from_mapping(data)
-

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 
 import uvicorn
 
@@ -31,6 +32,7 @@ def main() -> None:
         print(json.dumps(source_status(config), indent=2))
         return
     if cmd in {"serve", "scheduler"}:
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
         app = create_app(config, start_scheduler=True)
         uvicorn.run(app, host=config.host, port=config.port, log_level="info")
         return
@@ -39,4 +41,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
