@@ -7,6 +7,7 @@ mod launch;
 mod mcp_setup;
 mod process;
 mod profile;
+mod proxypool;
 mod proxy;
 mod psapi;
 mod runtime;
@@ -1142,6 +1143,13 @@ pub fn run() {
             ps_regions,
             ps_cities,
             ps_signature_set,
+            proxypool::proxypool_start,
+            proxypool::proxypool_stop,
+            proxypool::proxypool_status,
+            proxypool::proxypool_health,
+            proxypool::proxypool_get,
+            proxypool::proxypool_post,
+            proxypool::proxypool_delete,
             cookies_export,
             cookies_export_to_file,
             cookies_import,
