@@ -17,6 +17,7 @@ dependencies = [
   "lxml>=5,<6",
   "pydantic>=2,<3",
   "python-dotenv>=1,<2",
+  "setuptools<81",
 ]
 
 [project.optional-dependencies]
@@ -33,4 +34,3 @@ shardx-proxypool = "proxypool_service.__main__:main"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-
