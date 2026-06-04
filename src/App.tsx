@@ -227,6 +227,14 @@ type Settings = {
   api_enabled?: boolean;
   api_port?: number;
   api_secret?: string;
+  proxypool_host?: string;
+  proxypool_port?: number;
+  proxypool_redis_url?: string;
+  proxypool_disabled_sources?: string[];
+  proxypool_collect_interval_seconds?: number;
+  proxypool_check_interval_seconds?: number;
+  proxypool_timeout_seconds?: number;
+  proxypool_max_concurrency?: number;
 };
 type ApiInfo = {
   enabled: boolean;
@@ -234,7 +242,28 @@ type ApiInfo = {
   base_url: string;
   token: string;
 };
-type Section = "browsers" | "proxies" | "proxyshard" | "fingerprints" | "settings";
+type Section = "browsers" | "proxies" | "proxypool" | "proxyshard" | "fingerprints" | "settings";
+type ProxyPoolStatus = { running: boolean; pid: number | null; base_url: string; config_path: string };
+type ProxyPoolHealth = {
+  ok: boolean;
+  redis: string;
+  error?: string | null;
+  count: number;
+  https_count: number;
+  scheduler_running: boolean;
+  last_collect?: any;
+  last_check?: any;
+};
+type ProxyPoolRecord = {
+  proxy: string;
+  http: string;
+  https: string | null;
+  supports_https: boolean;
+  latency_ms: number;
+  source: string;
+  last_checked: number;
+  fail_count: number;
+};
 
 /// Library fingerprint backing the editor GPU select; payload supplies the coherent base.
 type FingerprintEntry = {
@@ -605,6 +634,7 @@ export default function App() {
           <main className="main">
             {section === "browsers" && <BrowsersView />}
             {section === "proxies" && <ProxiesView />}
+            {section === "proxypool" && <ProxyPoolView />}
             {section === "proxyshard" && <ProxyShardView />}
             {section === "fingerprints" && <FingerprintsView />}
             {section === "settings" && <SettingsView />}
@@ -631,6 +661,7 @@ function Sidebar({
       items: [
         { id: "browsers", label: "Browsers", svg: <IconShard /> },
         { id: "proxies", label: "Proxies", svg: <IconWire /> },
+        { id: "proxypool", label: "ProxyPool", svg: <IconPool /> },
         { id: "proxyshard", label: "ProxyShard", svg: <IconCart /> },
       ],
     },
@@ -755,6 +786,12 @@ const IconShard = () => (
 const IconWire = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
     <path d="M2 4H10M4 10H12M3 4L1 6L3 8M11 6L13 8L11 10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+const IconPool = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <path d="M3 3.5c0-1 1.8-1.8 4-1.8s4 .8 4 1.8-1.8 1.8-4 1.8-4-.8-4-1.8Z" stroke="currentColor" strokeWidth="1.2"/>
+    <path d="M3 3.5v3c0 1 1.8 1.8 4 1.8s4-.8 4-1.8v-3M3 6.5v3c0 1 1.8 1.8 4 1.8s4-.8 4-1.8v-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
   </svg>
 );
 const IconHex = () => (
@@ -2246,6 +2283,185 @@ function Metric({ label, value, accent, pulse }: { label: string; value: string;
       <div className="m-k">{label}</div>
       <div className={`m-v ${pulse ? "m-v-pulse" : ""}`}>{value}</div>
     </div>
+  );
+}
+
+// ---- ProxyPool ----
+
+function ProxyPoolView() {
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [status, setStatus] = useState<ProxyPoolStatus | null>(null);
+  const [health, setHealth] = useState<ProxyPoolHealth | null>(null);
+  const [proxies, setProxies] = useState<ProxyPoolRecord[]>([]);
+  const [sources, setSources] = useState<any[]>([]);
+  const [httpsOnly, setHttpsOnly] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [sourceDraft, setSourceDraft] = useState("");
+
+  const apiPath = (path: string) => path + (path.includes("?") ? "&" : "?") + `https=${httpsOnly ? "true" : "false"}`;
+
+  const refresh = async () => {
+    const [sRes, stRes] = await Promise.allSettled([
+      invoke<Settings>("settings_get"),
+      invoke<ProxyPoolStatus>("proxypool_status"),
+    ]);
+    if (sRes.status === "fulfilled") {
+      setSettings(sRes.value);
+      setSourceDraft((sRes.value.proxypool_disabled_sources ?? []).join(", "));
+    }
+    if (stRes.status === "fulfilled") setStatus(stRes.value);
+    try { setHealth(await invoke<ProxyPoolHealth>("proxypool_health")); } catch { setHealth(null); }
+    try { setProxies(await invoke<ProxyPoolRecord[]>("proxypool_get", { path: apiPath("/proxies") })); } catch { setProxies([]); }
+    try { setSources(await invoke<any[]>("proxypool_get", { path: "/sources" })); } catch { setSources([]); }
+  };
+
+  useEffect(() => { refresh(); }, [httpsOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const run = async (label: string, fn: () => Promise<any>) => {
+    setBusy(true);
+    try {
+      await fn();
+      toast.ok(label);
+      await refresh();
+    } catch (e) { toast.err(String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const saveConfig = async () => {
+    if (!settings) return;
+    const next: Settings = {
+      ...settings,
+      proxypool_disabled_sources: sourceDraft.split(",").map((s) => s.trim()).filter(Boolean),
+    };
+    await run("ProxyPool config saved", async () => invoke("settings_save", { value: next }));
+  };
+
+  const deleteProxy = async (proxy: string) => {
+    await run("Proxy removed", async () => invoke("proxypool_delete", { proxy }));
+  };
+
+  const copyRandom = async (pop: boolean) => {
+    await run(pop ? "Proxy popped" : "Proxy copied", async () => {
+      const record = await invoke<ProxyPoolRecord>("proxypool_get", { path: apiPath(pop ? "/proxy/pop" : "/proxy/random") });
+      await clip.write(record.http);
+    });
+  };
+
+  const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
+    if (!settings) return;
+    setSettings({ ...settings, [key]: value });
+  };
+
+  const fmtTime = (ts: number) => ts ? new Date(ts * 1000).toLocaleString() : "-";
+  const endpoint = status?.base_url || `http://${settings?.proxypool_host ?? "127.0.0.1"}:${settings?.proxypool_port ?? 40326}`;
+
+  return (
+    <section className="page pp-page">
+      <Topbar crumbs={["Workspace", "ProxyPool"]} search="" onSearch={() => {}} />
+      <div className="metric-strip">
+        <Metric label="Service" value={status?.running ? "Running" : "Stopped"} accent={status?.running} pulse={status?.running} />
+        <Metric label="Redis" value={health?.redis ?? "Unknown"} accent={health?.ok} />
+        <Metric label="Live proxies" value={String(health?.count ?? proxies.length)} />
+        <Metric label="HTTPS" value={String(health?.https_count ?? proxies.filter((p) => p.supports_https).length)} />
+      </div>
+
+      <div className="page-title">
+        <h1>ProxyPool</h1>
+        <div className="page-actions">
+          <button className="btn-ghost" onClick={refresh} disabled={busy}>Refresh</button>
+          <button className="btn-ghost" onClick={() => run("Collection job queued", async () => invoke("proxypool_post", { path: "/jobs/collect" }))} disabled={busy}>Collect now</button>
+          <button className="btn-ghost" onClick={() => run("Check job queued", async () => invoke("proxypool_post", { path: "/jobs/check" }))} disabled={busy}>Check now</button>
+          {status?.running ? (
+            <button className="btn-ghost danger" onClick={() => run("ProxyPool stopped", async () => invoke("proxypool_stop"))} disabled={busy}>Stop</button>
+          ) : (
+            <button className="btn-primary" onClick={() => run("ProxyPool started", async () => invoke("proxypool_start"))} disabled={busy}><ShardMini /> Start</button>
+          )}
+        </div>
+      </div>
+
+      <div className="card pp-control-card">
+        <div className="pp-head-row">
+          <div>
+            <h3>Local crawler API</h3>
+            <p className="muted small">Redis is external. Start Redis first, then start ProxyPool here.</p>
+          </div>
+          <div className="pp-inline-actions">
+            <button className={`ps-seg ${!httpsOnly ? "active" : ""}`} onClick={() => setHttpsOnly(false)}>All</button>
+            <button className={`ps-seg ${httpsOnly ? "active" : ""}`} onClick={() => setHttpsOnly(true)}>HTTPS</button>
+          </div>
+        </div>
+        <div className="form-row">
+          <label>
+            <span className="lbl">Endpoint</span>
+            <CopyField value={endpoint} />
+          </label>
+          <label>
+            <span className="lbl">Config file</span>
+            <CopyField value={status?.config_path ?? ""} />
+          </label>
+        </div>
+        {health?.error && <div className="error">{health.error}</div>}
+        <div className="pp-inline-actions">
+          <button className="btn-ghost" onClick={() => copyRandom(false)} disabled={busy}>Copy random</button>
+          <button className="btn-ghost" onClick={() => copyRandom(true)} disabled={busy}>Get and remove</button>
+        </div>
+      </div>
+
+      {settings && (
+        <div className="card pp-config-card">
+          <h3>Config</h3>
+          <div className="pp-config-grid">
+            <Field label="Host" value={settings.proxypool_host ?? "127.0.0.1"} onChange={(v) => updateSetting("proxypool_host", v)} />
+            <NumField label="Port" value={settings.proxypool_port ?? 40326} onChange={(v) => updateSetting("proxypool_port", Math.round(v))} />
+            <Field label="Redis URL" value={settings.proxypool_redis_url ?? "redis://127.0.0.1:6379/0"} onChange={(v) => updateSetting("proxypool_redis_url", v)} mono />
+            <Field label="Disabled sources" value={sourceDraft} onChange={setSourceDraft} placeholder="us_proxy, ssl_proxies" />
+            <NumField label="Collect interval (sec)" value={settings.proxypool_collect_interval_seconds ?? 900} onChange={(v) => updateSetting("proxypool_collect_interval_seconds", Math.max(60, Math.round(v)))} />
+            <NumField label="Check interval (sec)" value={settings.proxypool_check_interval_seconds ?? 300} onChange={(v) => updateSetting("proxypool_check_interval_seconds", Math.max(60, Math.round(v)))} />
+            <NumField label="Timeout (sec)" value={settings.proxypool_timeout_seconds ?? 8} onChange={(v) => updateSetting("proxypool_timeout_seconds", Math.max(1, v))} step={0.5} />
+            <NumField label="Concurrency" value={settings.proxypool_max_concurrency ?? 50} onChange={(v) => updateSetting("proxypool_max_concurrency", Math.max(1, Math.round(v)))} />
+          </div>
+          <div className="card-actions"><button className="btn-primary" onClick={saveConfig} disabled={busy}><ShardMini /> Save config</button></div>
+        </div>
+      )}
+
+      <div className="card pp-list-card">
+        <div className="pp-head-row">
+          <h3>Working proxies</h3>
+          <span className="muted small">{proxies.length} shown</span>
+        </div>
+        {proxies.length === 0 ? (
+          <div className="empty">No working proxies in Redis for this filter.</div>
+        ) : (
+          <div className="pp-table">
+            <div className="pp-row pp-row-head"><span>Proxy</span><span>HTTPS</span><span>Latency</span><span>Source</span><span>Last checked</span><span></span></div>
+            {proxies.map((p) => (
+              <div className="pp-row" key={p.proxy}>
+                <span className="mono">{p.proxy}</span>
+                <span className={`status-pill ${p.supports_https ? "status-active" : ""}`}>{p.supports_https ? "Yes" : "No"}</span>
+                <span>{p.latency_ms} ms</span>
+                <span>{p.source}</span>
+                <span className="muted small">{fmtTime(p.last_checked)}</span>
+                <button className="btn-sm btn-ghost danger" onClick={() => deleteProxy(p.proxy)} disabled={busy}>Delete</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {sources.length > 0 && (
+        <div className="card pp-source-card">
+          <h3>Sources</h3>
+          <div className="pp-source-list">
+            {sources.map((s) => (
+              <div key={s.id} className="readout">
+                <span className="mono">{s.id}</span>
+                <span className={`status-pill ${s.enabled ? "status-active" : "status-failed"}`}>{s.enabled ? "Enabled" : "Disabled"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
