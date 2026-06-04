@@ -44,6 +44,15 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+!proxypool_service/.env.example
+
+# ===== Python / ProxyPool artifacts =====
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+proxypool_service/.venv/
+proxypool_service/logs/
 
 # ===== MCP server local install (downloaded by the user post-install) =====
 mcp/node_modules/
