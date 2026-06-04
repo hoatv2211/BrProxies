@@ -1,7 +1,7 @@
 # shardx (Python)
 
 Self-contained Python SDK for the **ShardX anti-detect browser** by the
-[ProxyShard](https://proxyshard.com?utm_source=shardx&utm_medium=referral&utm_campaign=shardx-launcher) team.
+ShardBrowser project.
 
 This package does **not** depend on the desktop launcher. On first use
 it downloads the patched Chromium 148 engine, Widevine CDM, and the
@@ -247,5 +247,5 @@ sdk.runtime.install(force=True)
 
 MIT (this SDK). The Chromium-fork engine binary downloaded at runtime
 is a closed-source product — see the
-[main repo](https://github.com/ProxyShard/ShardBrowser) for engine
+[main repo](https://github.com/hoatv2211/ShardBrowser) for engine
 licensing.

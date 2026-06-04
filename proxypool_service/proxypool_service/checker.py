@@ -9,8 +9,8 @@ from .config import ProxyPoolConfig
 from .models import ProxyCandidate, ProxyRecord
 
 
-HTTP_TEST_URL = "http://httpbin.org/ip"
-HTTPS_TEST_URL = "https://httpbin.org/ip"
+HTTP_TEST_URL = "http://example.com/"
+HTTPS_TEST_URL = "https://example.com/"
 
 
 async def check_candidate(candidate: ProxyCandidate, config: ProxyPoolConfig) -> ProxyRecord | None:
@@ -31,6 +31,7 @@ async def check_candidate(candidate: ProxyCandidate, config: ProxyPoolConfig) ->
         supports_https=https_ok,
         latency_ms=latency_ms,
         source=candidate.source,
+        country=candidate.country,
     )
 
 
@@ -51,4 +52,3 @@ async def _probe(client: httpx.AsyncClient, url: str) -> bool:
         return 200 <= response.status_code < 400
     except Exception:
         return False
-

@@ -1,10 +1,37 @@
 import fakeredis
+import time
 from fastapi.testclient import TestClient
 
 from proxypool_service.api import create_app
 from proxypool_service.config import ProxyPoolConfig
 from proxypool_service.models import ProxyRecord
 from proxypool_service.storage import ProxyStorage
+
+class SlowRuntime:
+    def __init__(self, _config, _storage):
+        self.scheduler = type("Scheduler", (), {"running": False})()
+        self.last_collect = None
+        self.last_check = None
+
+    async def collect_once(self):
+        import asyncio
+
+        await asyncio.sleep(0.2)
+        self.last_collect = {"candidates": 1, "saved": 1}
+        return self.last_collect
+
+    async def check_once(self):
+        import asyncio
+
+        await asyncio.sleep(0.2)
+        self.last_check = {"checked": 1, "kept": 1, "removed": 0}
+        return self.last_check
+
+    def start_scheduler(self):
+        pass
+
+    def stop_scheduler(self):
+        pass
 
 
 def make_client():
@@ -50,3 +77,40 @@ def test_sources_endpoint_marks_disabled_sources():
     assert by_id["us_proxy"]["enabled"] is False
     assert by_id["free_proxy_list"]["enabled"] is True
 
+def test_sources_endpoint_adds_custom_source():
+    client, _storage = make_client()
+
+    response = client.post(
+        "/sources",
+        json={"id": "my_text", "url": "https://example.test/proxies.txt", "parser": "text"},
+    )
+
+    assert response.status_code == 201
+    by_id = {source["id"]: source for source in client.get("/sources").json()}
+    assert by_id["my_text"] == {
+        "id": "my_text",
+        "url": "https://example.test/proxies.txt",
+        "parser": "text",
+        "enabled": True,
+        "custom": True,
+    }
+
+def test_sources_endpoint_rejects_bad_custom_source():
+    client, _storage = make_client()
+
+    response = client.post("/sources", json={"id": "bad id", "url": "ftp://x", "parser": "text"})
+
+    assert response.status_code == 400
+
+def test_collect_job_returns_without_waiting_for_scan(monkeypatch):
+    monkeypatch.setattr("proxypool_service.api.ProxyPoolRuntime", SlowRuntime)
+    redis = fakeredis.FakeRedis(decode_responses=True)
+    app = create_app(ProxyPoolConfig(), redis=redis, start_scheduler=False)
+    with TestClient(app) as client:
+        started = time.perf_counter()
+        response = client.post("/jobs/collect")
+        elapsed = time.perf_counter() - started
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "started"
+    assert elapsed < 0.1

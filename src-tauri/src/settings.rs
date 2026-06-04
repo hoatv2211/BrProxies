@@ -4,6 +4,14 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProxyPoolCustomSource {
+    pub id: String,
+    pub url: String,
+    #[serde(default = "default_source_parser")]
+    pub parser: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Settings {
     /// Absolute path to the ShardX executable.
     pub browser_path: Option<String>,
@@ -40,6 +48,8 @@ pub struct Settings {
     pub proxypool_redis_url: String,
     #[serde(default)]
     pub proxypool_disabled_sources: Vec<String>,
+    #[serde(default)]
+    pub proxypool_custom_sources: Vec<ProxyPoolCustomSource>,
     #[serde(default = "default_proxypool_collect_interval")]
     pub proxypool_collect_interval_seconds: u64,
     #[serde(default = "default_proxypool_check_interval")]
@@ -69,6 +79,7 @@ fn default_proxypool_collect_interval() -> u64 { 900 }
 fn default_proxypool_check_interval() -> u64 { 300 }
 fn default_proxypool_timeout() -> f64 { 8.0 }
 fn default_proxypool_concurrency() -> u64 { 50 }
+fn default_source_parser() -> String { "text".into() }
 
 pub fn load() -> Result<Settings> {
     let path = store::settings_path()?;
@@ -85,6 +96,7 @@ pub fn load() -> Result<Settings> {
             proxypool_port: default_proxypool_port(),
             proxypool_redis_url: default_proxypool_redis_url(),
             proxypool_disabled_sources: Vec::new(),
+            proxypool_custom_sources: Vec::new(),
             proxypool_collect_interval_seconds: default_proxypool_collect_interval(),
             proxypool_check_interval_seconds: default_proxypool_check_interval(),
             proxypool_timeout_seconds: default_proxypool_timeout(),

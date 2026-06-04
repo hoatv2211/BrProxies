@@ -1,7 +1,7 @@
-# @proxyshard/shardx (Node)
+# shardbrowser-sdk (Node)
 
 Self-contained Node/TypeScript SDK for the **ShardX anti-detect
-browser** by the [ProxyShard](https://proxyshard.com?utm_source=shardx&utm_medium=referral&utm_campaign=shardx-launcher) team.
+browser** for ShardBrowser.
 
 Does **not** depend on the desktop launcher. On first use it downloads
 the patched Chromium 148 engine, Widevine CDM, and the 170-profile
@@ -15,7 +15,7 @@ Driven by [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)
 ## Install
 
 ```bash
-npm install @proxyshard/shardx
+npm install shardbrowser-sdk
 ```
 
 Supported hosts: **macOS arm64**, **Windows x64**, **Linux x64**. Node ≥ 18.
@@ -43,7 +43,7 @@ await sdk.session({ ..., extraArgs: ["--no-sandbox", "--disable-dev-shm-usage"] 
 ## Quick start
 
 ```ts
-import { ShardX } from "@proxyshard/shardx";
+import { ShardX } from "shardbrowser-sdk";
 
 const sdk = new ShardX();
 // Engine + Widevine + fingerprint library auto-download from CDN on
@@ -181,7 +181,7 @@ const { browser, close } = await sdk.session({ fingerprint: profile, proxy: "soc
 ### Use your own fingerprint JSON
 
 ```ts
-import { Profile } from "@proxyshard/shardx";
+import { Profile } from "shardbrowser-sdk";
 
 const profile = Profile.fromFile("/path/to/my-custom.json");
 const { browser, close } = await sdk.session({ fingerprint: profile });
@@ -263,5 +263,5 @@ await sdk.runtime.install({ force: true });
 
 MIT (this SDK). The Chromium-fork engine binary it downloads at
 runtime is a closed-source product — see the
-[main repo](https://github.com/ProxyShard/ShardBrowser) for engine
+[main repo](https://github.com/hoatv2211/ShardBrowser) for engine
 licensing.

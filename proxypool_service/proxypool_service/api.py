@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, status
+from pydantic import BaseModel
 from redis import Redis
 
 from .config import ProxyPoolConfig
 from .models import record_to_response, normalize_proxy
 from .scheduler import ProxyPoolRuntime
-from .sources import source_status
+from .sources import add_custom_source, source_status
 from .storage import ProxyStorage
+
+logger = logging.getLogger("proxypool_service")
+
+class SourceCreate(BaseModel):
+    id: str
+    url: str
+    parser: str = "text"
 
 
 def create_app(config: ProxyPoolConfig, redis: Redis | None = None, start_scheduler: bool = True) -> FastAPI:
@@ -20,13 +30,36 @@ def create_app(config: ProxyPoolConfig, redis: Redis | None = None, start_schedu
     app.state.config = config
     app.state.storage = storage
     app.state.runtime = runtime
+    app.state.job_tasks = {}
+
+    def start_background_job(name: str, job: Callable[[], Awaitable[dict[str, object]]]) -> dict[str, str]:
+        tasks: dict[str, asyncio.Task] = app.state.job_tasks
+        existing = tasks.get(name)
+        if existing is not None and not existing.done():
+            return {"job": name, "status": "running"}
+
+        async def run_job() -> dict[str, object]:
+            return await asyncio.to_thread(lambda: asyncio.run(job()))
+
+        task = asyncio.create_task(run_job())
+        tasks[name] = task
+
+        def cleanup(done: asyncio.Task) -> None:
+            tasks.pop(name, None)
+            try:
+                done.result()
+            except Exception:
+                logger.exception("ProxyPool %s job failed", name)
+
+        task.add_done_callback(cleanup)
+        return {"job": name, "status": "started"}
 
     @app.on_event("startup")
     async def on_startup() -> None:
         if start_scheduler:
             runtime.start_scheduler()
             if config.initial_collect:
-                asyncio.create_task(runtime.collect_once())
+                start_background_job("collect", runtime.collect_once)
 
     @app.on_event("shutdown")
     async def on_shutdown() -> None:
@@ -82,13 +115,19 @@ def create_app(config: ProxyPoolConfig, redis: Redis | None = None, start_schedu
     def sources() -> list[dict[str, object]]:
         return source_status(config)
 
-    @app.post("/jobs/collect")
-    async def collect_job() -> dict[str, int]:
-        return await runtime.collect_once()
+    @app.post("/sources", status_code=status.HTTP_201_CREATED)
+    def add_source(source: SourceCreate) -> dict[str, object]:
+        try:
+            return add_custom_source(config, source.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/jobs/check")
-    async def check_job() -> dict[str, int]:
-        return await runtime.check_once()
+    @app.post("/jobs/collect", status_code=status.HTTP_202_ACCEPTED)
+    async def collect_job() -> dict[str, str]:
+        return start_background_job("collect", runtime.collect_once)
+
+    @app.post("/jobs/check", status_code=status.HTTP_202_ACCEPTED)
+    async def check_job() -> dict[str, str]:
+        return start_background_job("check", runtime.check_once)
 
     return app
-

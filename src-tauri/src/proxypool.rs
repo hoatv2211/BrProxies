@@ -1,8 +1,9 @@
 use crate::{settings, store};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
@@ -18,6 +19,13 @@ pub struct ProxyPoolStatus {
     pub pid: Option<u32>,
     pub base_url: String,
     pub config_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProxyPoolSourceCreate {
+    pub id: String,
+    pub url: String,
+    pub parser: String,
 }
 
 fn base_url(s: &settings::Settings) -> String {
@@ -58,6 +66,7 @@ fn write_config(s: &settings::Settings) -> Result<PathBuf, String> {
         "port": s.proxypool_port,
         "redis_url": s.proxypool_redis_url,
         "disabled_sources": s.proxypool_disabled_sources,
+        "custom_sources": s.proxypool_custom_sources,
         "collect_interval_seconds": s.proxypool_collect_interval_seconds,
         "check_interval_seconds": s.proxypool_check_interval_seconds,
         "timeout_seconds": s.proxypool_timeout_seconds,
@@ -68,6 +77,76 @@ fn write_config(s: &settings::Settings) -> Result<PathBuf, String> {
     std::fs::write(&path, serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+async fn spawn_sidecar(config_path: PathBuf) -> Result<Child, String> {
+    let workdir = service_workdir();
+    let log_path = store::proxypool_dir()
+        .map_err(|e| e.to_string())?
+        .join("sidecar.log");
+    let mut attempts: Vec<(String, Vec<String>)> = Vec::new();
+    if let Ok(python) = std::env::var("PROXYPOOL_PYTHON") {
+        if !python.trim().is_empty() {
+            attempts.push((python, Vec::new()));
+        }
+    }
+    attempts.extend([
+        ("python".to_string(), Vec::new()),
+        ("py".to_string(), vec!["-3.11".to_string()]),
+        ("py".to_string(), vec!["-3".to_string()]),
+        ("python3".to_string(), Vec::new()),
+    ]);
+
+    let mut last_error = String::new();
+    for (program, prefix_args) in attempts {
+        let mut cmd = Command::new(&program);
+        cmd.args(prefix_args)
+            .arg("-m")
+            .arg("proxypool_service")
+            .arg("serve")
+            .arg("--config")
+            .arg(&config_path)
+            .current_dir(&workdir)
+            .env("PYTHONUNBUFFERED", "1")
+            .kill_on_drop(false);
+        #[cfg(target_os = "windows")]
+        {
+            cmd.creation_flags(0x00000010);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            use std::fs::OpenOptions;
+            use std::process::Stdio;
+
+            let log = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .map_err(|e| e.to_string())?;
+            let err_log = log.try_clone().map_err(|e| e.to_string())?;
+            cmd.stdout(Stdio::from(log)).stderr(Stdio::from(err_log));
+        }
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                tokio::time::sleep(Duration::from_millis(800)).await;
+                match child.try_wait().map_err(|e| e.to_string())? {
+                    Some(status) => {
+                        last_error = format!("{program} exited early with {status}");
+                    }
+                    None => return Ok(child),
+                }
+            }
+            Err(err) => {
+                last_error = format!("{program}: {err}");
+            }
+        }
+    }
+
+    Err(format!(
+        "failed to start ProxyPool sidecar ({last_error}). See {}",
+        log_path.display()
+    ))
 }
 
 #[tauri::command]
@@ -82,19 +161,7 @@ pub async fn proxypool_start() -> Result<ProxyPoolStatus, String> {
     }
 
     let config_path = write_config(&s)?;
-    let mut cmd = Command::new("python");
-    cmd.arg("-m")
-        .arg("proxypool_service")
-        .arg("serve")
-        .arg("--config")
-        .arg(config_path)
-        .current_dir(service_workdir())
-        .kill_on_drop(false);
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(0x08000000);
-    }
-    let child = cmd.spawn().map_err(|e| format!("failed to start ProxyPool: {e}"))?;
+    let child = spawn_sidecar(config_path).await?;
     *guard = Some(child);
     status_with(&s, guard.as_ref())
 }
@@ -137,6 +204,28 @@ pub async fn proxypool_post(path: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub async fn proxypool_add_source(source: ProxyPoolSourceCreate) -> Result<Value, String> {
+    proxypool_request_json("POST", "/sources", serde_json::to_value(source).map_err(|e| e.to_string())?).await
+}
+
+#[tauri::command]
+pub async fn proxypool_job(path: String) -> Result<Value, String> {
+    let s = settings::load().map_err(|e| e.to_string())?;
+    let clean_path = if path.starts_with('/') { path.to_string() } else { format!("/{path}") };
+    let url = format!("{}{}", base_url(&s), clean_path);
+    tauri::async_runtime::spawn(async move {
+        let Ok(client) = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+        else {
+            return;
+        };
+        let _ = client.post(url).send().await;
+    });
+    Ok(serde_json::json!({"status":"queued"}))
+}
+
+#[tauri::command]
 pub async fn proxypool_delete(proxy: String) -> Result<Value, String> {
     proxypool_request("DELETE", &format!("/proxy/{}", path_encode(&proxy))).await
 }
@@ -153,6 +242,27 @@ async fn proxypool_request(method: &str, path: &str) -> Result<Value, String> {
         "POST" => client.post(url),
         "DELETE" => client.delete(url),
         _ => client.get(url),
+    };
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("ProxyPool API {status}: {text}"));
+    }
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
+async fn proxypool_request_json(method: &str, path: &str, body: Value) -> Result<Value, String> {
+    let s = settings::load().map_err(|e| e.to_string())?;
+    let clean_path = if path.starts_with('/') { path.to_string() } else { format!("/{path}") };
+    let url = format!("{}{}", base_url(&s), clean_path);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let req = match method {
+        "POST" => client.post(url).json(&body),
+        _ => return Err(format!("unsupported JSON method: {method}")),
     };
     let resp = req.send().await.map_err(|e| e.to_string())?;
     let status = resp.status();

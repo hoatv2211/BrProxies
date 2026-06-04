@@ -8,6 +8,7 @@ from time import time
 class ProxyCandidate:
     proxy: str
     source: str
+    country: str = ""
 
 
 @dataclass(slots=True)
@@ -16,6 +17,7 @@ class ProxyRecord:
     supports_https: bool
     latency_ms: int
     source: str
+    country: str = ""
     last_checked: float = 0.0
     fail_count: int = 0
 
@@ -38,6 +40,7 @@ class ProxyRecord:
             "supports_https": "1" if self.supports_https else "0",
             "latency_ms": str(int(self.latency_ms)),
             "source": self.source,
+            "country": self.country,
             "last_checked": str(float(self.last_checked)),
             "fail_count": str(int(self.fail_count)),
         }
@@ -49,6 +52,7 @@ class ProxyRecord:
             supports_https=data.get("supports_https") == "1",
             latency_ms=int(float(data.get("latency_ms", "0"))),
             source=data.get("source", "unknown"),
+            country=data.get("country", ""),
             last_checked=float(data.get("last_checked", "0") or 0),
             fail_count=int(data.get("fail_count", "0") or 0),
         )
@@ -70,7 +74,7 @@ def record_to_response(record: ProxyRecord) -> dict[str, object]:
         "supports_https": record.supports_https,
         "latency_ms": record.latency_ms,
         "source": record.source,
+        "country": record.country,
         "last_checked": record.last_checked,
         "fail_count": record.fail_count,
     }
-

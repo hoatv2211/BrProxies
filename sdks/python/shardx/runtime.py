@@ -1,5 +1,5 @@
 """Runtime cache: download ShardX engine + Widevine CDM + fingerprint library
-from the ProxyShard CDN, extract into a per-user cache dir, place Widevine
+from the upstream CDN, extract into a per-user cache dir, place Widevine
 inside the engine bundle, and remember etags so subsequent runs are
 zero-network. Mirrors src-tauri/src/runtime.rs in the launcher."""
 from __future__ import annotations

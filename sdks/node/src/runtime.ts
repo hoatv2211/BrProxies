@@ -1,5 +1,5 @@
 // Runtime cache: download ShardX engine + Widevine CDM + fingerprint
-// library from the ProxyShard CDN, extract into a per-user cache dir,
+// library from the upstream CDN, extract into a per-user cache dir,
 // place Widevine inside the engine bundle, remember etags so subsequent
 // runs are zero-network. Mirrors src-tauri/src/runtime.rs in the launcher.
 import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync, chmodSync, copyFileSync, lstatSync } from "node:fs";
