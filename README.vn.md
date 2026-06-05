@@ -1,8 +1,8 @@
-# ShardBrowser
+# BrProxies
 
 [English](README.md)
 
-ShardBrowser là launcher cá nhân để quản lý browser profile, proxy,
+BrProxies là launcher cá nhân để quản lý browser profile, proxy,
 fingerprint, Automation API cục bộ và ProxyPool cho crawler.
 
 Dự án này được phát triển cá nhân tại
@@ -22,6 +22,16 @@ ban đầu lấy từ [ProxyShard/ShardBrowser](https://github.com/ProxyShard/Sh
   token để điều khiển profile từ code.
 - **MCP server** - gói MCP để AI client điều khiển profile/CDP.
 - **SDKs** - Python và Node SDK trong thư mục `sdks/`.
+
+## Hình ảnh
+
+| Browsers | Fingerprints |
+|----------|--------------|
+| ![Không gian quản lý browser](docs/screenshots/Browsers.png) | ![Trình chỉnh fingerprint](docs/screenshots/fingerprints.png) |
+
+| Proxies | ProxyPool |
+|---------|-----------|
+| ![Trình quản lý proxy](docs/screenshots/proxies.png) | ![Không gian ProxyPool](docs/screenshots/proxypool.png) |
 
 ## Chạy nhanh trên Windows
 
@@ -44,7 +54,7 @@ Build và chạy:
 File exe mặc định:
 
 ```text
-src-tauri\target\release\shardx-launcher.exe
+src-tauri\target\release\brproxies.exe
 ```
 
 `run.bat` sẽ gọi `cleanup-proxypool.ps1` để tắt Python sidecar ProxyPool cũ
@@ -60,6 +70,10 @@ npm run tauri build
 ```
 
 Trên Windows PowerShell, dùng `npm.cmd` nếu lệnh `npm` bị lỗi.
+
+## Hướng dẫn dự án
+
+Trang giới thiệu và hướng dẫn sử dụng dạng HTML nằm ở [`docs/index.html`](docs/index.html).
 
 ## ProxyPool
 

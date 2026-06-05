@@ -12,7 +12,7 @@ pub struct LaunchOutcome {
     pub cdp: Option<process::CdpInfo>,
 }
 
-/// Resolve the ShardX executable from settings, runtime cache, or dev guess.
+/// Resolve the BrProxies browser executable from settings, runtime cache, or dev guess.
 pub fn resolve_binary() -> Result<PathBuf> {
     if let Some(p) = settings::load()?.browser_path {
         let pb = PathBuf::from(p);
@@ -28,14 +28,14 @@ pub fn resolve_binary() -> Result<PathBuf> {
     #[cfg(target_os = "macos")]
     let guess = "/Users/kritos/Documents/GitHub/ShardXBrowser/build/src/out/Release_GN_arm64/ShardX.app/Contents/MacOS/ShardX";
     #[cfg(target_os = "windows")]
-    let guess = "C:\\Program Files\\ShardX\\ShardX.exe";
+    let guess = "C:\\Program Files\\BrProxies\\BrProxies.exe";
     #[cfg(target_os = "linux")]
-    let guess = "/opt/shardx/shardx";
+    let guess = "/opt/brproxies/brproxies";
     let pb = PathBuf::from(guess);
     if pb.exists() {
         return Ok(pb);
     }
-    anyhow::bail!("ShardX browser not installed yet — open Settings to download, or configure Browser path manually")
+    anyhow::bail!("BrProxies browser not installed yet - open Settings to download, or configure Browser path manually")
 }
 
 pub async fn launch_profile(
@@ -205,7 +205,7 @@ pub async fn launch_profile(
         // when a Tauri GUI app spawns the engine binary.
         cmd.creation_flags(0x08000000);
     }
-    let child = cmd.spawn().context("spawn ShardX")?;
+    let child = cmd.spawn().context("spawn BrProxies browser")?;
     let pid = Tracker::shared().track(profile_id.to_string(), child, stored.meta.temporary);
 
     profile::touch_launched(profile_id, None)?;

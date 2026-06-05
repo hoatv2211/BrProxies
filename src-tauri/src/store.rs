@@ -51,6 +51,13 @@ pub fn settings_path() -> Result<PathBuf> {
     Ok(config_root()?.join("settings.json"))
 }
 
+/// ProxyShard billing-API config (Bearer key). Kept in its own file so the
+/// Settings page (which round-trips the whole Settings struct) can never
+/// clobber the saved key.
+pub fn psapi_path() -> Result<PathBuf> {
+    Ok(config_root()?.join("psapi.json"))
+}
+
 pub fn proxypool_dir() -> Result<PathBuf> {
     let p = config_root()?.join("proxypool");
     std::fs::create_dir_all(&p)?;

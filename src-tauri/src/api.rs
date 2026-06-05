@@ -1,4 +1,4 @@
-// Local automation HTTP API (axum) for ShardX Launcher.
+// Local automation HTTP API (axum) for BrProxies.
 // 127.0.0.1:<api_port>; every endpoint except /health requires Bearer JWT (HS256).
 
 use std::sync::{OnceLock, RwLock};
@@ -52,7 +52,7 @@ fn mint(secret: &str, ttl_secs: u64) -> Result<String, String> {
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     let now = unix_now();
     let claims = Claims {
-        sub: "shardx-api".into(),
+        sub: "brproxies-api".into(),
         iat: now,
         exp: now.saturating_add(ttl_secs),
     };
@@ -121,7 +121,7 @@ async fn auth(req: Request, next: Next) -> Result<Response, StatusCode> {
 async fn health() -> Json<Value> {
     Json(json!({
         "ok": true,
-        "name": "shardx-launcher",
+        "name": "brproxies",
         "version": env!("CARGO_PKG_VERSION"),
     }))
 }

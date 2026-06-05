@@ -1,27 +1,60 @@
-# ShardBrowser
+# BrProxies
 
-[Tieng Viet](README.vn.md)
+[Tieng Viet](README.vn.md) | [Project guide](docs/index.html)
 
-Personal ShardBrowser launcher for browser profile management, proxy testing,
-local automation, and crawler proxy pooling.
+BrProxies is a personal desktop launcher for browser profile management,
+fingerprint control, proxy testing, local automation, and crawler proxy pooling.
+It is developed at [hoatv2211/ShardBrowser](https://github.com/hoatv2211/ShardBrowser)
+from the original [ProxyShard/ShardBrowser](https://github.com/ProxyShard/ShardBrowser)
+ShardX Launcher codebase.
 
-This project is developed as a personal fork at
-[hoatv2211/ShardBrowser](https://github.com/hoatv2211/ShardBrowser). Source was
-originally taken from [ProxyShard/ShardBrowser](https://github.com/ProxyShard/ShardBrowser).
+The upstream project describes ShardX as an anti-detect Chromium launcher with
+engine-level fingerprint spoofing, proxy binding, a local HTTP API, MCP support,
+and Python/Node SDKs. This fork keeps that profile/proxy workflow and adds a
+local Redis-backed ProxyPool sidecar for collecting and rechecking public
+proxies before promoting working rows into browser profiles.
 
-## Features
+## Main Screens
 
-- **Profiles** - create, clone, pin, tag, and launch isolated browser profiles.
-- **Fingerprints** - edit device, screen, WebGL/WebGPU, locale, timezone,
-  WebRTC, media devices, and noise settings.
-- **Proxies** - add HTTP, HTTPS, and SOCKS5 proxies, test TCP/UDP/geo, and bind
-  proxies to profiles.
-- **ProxyPool** - collect free public proxies, check live ones, store working
-  proxies in Redis, recheck them, and add them into the main proxy list.
-- **Automation API** - local HTTP API on `127.0.0.1:40325` with Bearer token
-  auth for profile automation and CDP handoff.
-- **MCP server** - downloadable MCP bridge for AI clients.
-- **SDKs** - Python and Node SDKs in `sdks/`.
+| Browsers | Fingerprints |
+|----------|--------------|
+| ![Browsers workspace](docs/screenshots/Browsers.png) | ![Fingerprint editor](docs/screenshots/fingerprints.png) |
+
+| Proxies | ProxyPool |
+|---------|-----------|
+| ![Proxy manager](docs/screenshots/proxies.png) | ![ProxyPool workspace](docs/screenshots/proxypool.png) |
+
+## What It Does
+
+- **Profiles** - create, clone, pin, tag, organize, and launch isolated browser
+  profiles.
+- **Fingerprints** - edit device identity, screen, WebGL/WebGPU, locale,
+  timezone, WebRTC, media devices, geolocation, and noise settings.
+- **Proxies** - add HTTP, HTTPS, and SOCKS5 proxies, run TCP/UDP/geo checks, and
+  bind proxies to profiles.
+- **ProxyPool** - collect public proxy candidates, test live ones, store working
+  records in Redis, recheck them, and add good proxies into the main proxy list.
+- **Automation API** - expose a local HTTP API on `127.0.0.1:40325` with Bearer
+  token auth for profile automation and CDP handoff.
+- **MCP server** - export a local MCP bridge for AI clients.
+- **SDKs** - Python and Node SDKs live in `sdks/`.
+
+## Validation Screenshots
+
+Screenshots `03` through `08` are refreshed from
+[hoatv2211/ShardBrowser](https://github.com/hoatv2211/ShardBrowser/tree/main/docs/screenshots).
+
+| fingerprint.com | Twilio WebRTC |
+|-----------------|---------------|
+| ![fingerprint.com result](docs/screenshots/03-fingerprint-com.jpg) | ![Twilio WebRTC result](docs/screenshots/04-twilio-webrtc.jpg) |
+
+| Browserscan | Pixelscan |
+|-------------|-----------|
+| ![Browserscan result](docs/screenshots/05-browserscan.jpg) | ![Pixelscan result](docs/screenshots/06-pixelscan.jpg) |
+
+| Haru bot detection | reCAPTCHA score |
+|--------------------|-----------------|
+| ![Haru bot detection result](docs/screenshots/07-haru-bot-detect.jpg) | ![reCAPTCHA score result](docs/screenshots/08-recaptcha-score.jpg) |
 
 ## Quick Start On Windows
 
@@ -44,10 +77,10 @@ Build and run:
 Release exe:
 
 ```text
-src-tauri\target\release\shardx-launcher.exe
+src-tauri\target\release\brproxies.exe
 ```
 
-`run.bat` also runs `cleanup-proxypool.ps1` to stop stale ProxyPool Python
+`run.bat` also calls `cleanup-proxypool.ps1` to stop stale ProxyPool Python
 sidecars before opening the app.
 
 ## Manual Build
@@ -61,7 +94,7 @@ npm run tauri build
 
 On Windows PowerShell, use `npm.cmd` if bare `npm` is not resolved correctly.
 
-## ProxyPool
+## ProxyPool Workflow
 
 ProxyPool runs as a local Python sidecar. It collects proxies from enabled
 public sources, tests whether they work, saves passing records to Redis, and
@@ -80,17 +113,21 @@ Default Redis URL:
 redis://:madpool@127.0.0.1:6380/0
 ```
 
-ProxyPool UI actions:
+Typical UI flow:
 
-- **Connect** - start/connect to the local ProxyPool service.
-- **Collect now** - fetch candidates and save passing proxies.
-- **Check now / Refresh** - recheck stored proxies and refresh the table.
-- **Copy** - copy a working proxy.
-- **Add** - add a working proxy into the main **Proxies** tab.
-- **Delete** - remove a bad proxy from the pool.
-- **Add source** - add a custom scraping source for future collection.
+1. Open **ProxyPool** and click **Connect**.
+2. Click **Collect now** to crawl enabled sources and save passing proxies.
+3. Click **Refresh** or **Check now** to recheck stored proxies.
+4. Use **Copy** for a raw proxy string or **Add** to promote a row into the main
+   **Proxies** tab.
+5. Use **Add source** for custom text, table, or Geonode JSON proxy lists.
 
-ProxyPool API:
+Public free proxy sources are unstable. Empty results can mean the source is
+blocked, temporarily down, or all candidates failed live checks.
+
+## ProxyPool API
+
+Default sidecar URL: `http://127.0.0.1:40326`
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
@@ -111,9 +148,6 @@ Example:
 curl "http://127.0.0.1:40326/proxy/random?https=false"
 ```
 
-Public free proxy sources are unstable. Empty results can mean the source is
-blocked, temporarily down, or all candidates failed the live check.
-
 ## Local Automation API
 
 The launcher can expose a local API on `127.0.0.1:40325`. Enable it in
@@ -131,6 +165,7 @@ sdks/python/          Python SDK
 sdks/node/            Node SDK
 mcp/                  MCP server package
 smart launch/         Windows build/run helpers
+docs/screenshots/     README and guide screenshots
 ```
 
 ## License

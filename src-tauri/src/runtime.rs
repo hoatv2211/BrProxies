@@ -1,4 +1,4 @@
-//! Self-bootstrapping runtime: download ShardX browser + Widevine from R2.
+//! Self-bootstrapping runtime: download BrProxies browser + Widevine from R2.
 //! Emits `runtime:progress` and `runtime:done` events to the Tauri frontend.
 
 use anyhow::{Context, Result};
@@ -31,7 +31,7 @@ pub fn host_spec() -> Option<PlatformSpec> {
     return Some(PlatformSpec {
         browser: ArchiveSpec {
             key: "ShardX-Mac-arm64.zip".into(),
-            label: "ShardX browser (macOS arm64)".into(),
+            label: "BrProxies browser (macOS arm64)".into(),
         },
         widevine: Some(ArchiveSpec {
             key: "ShardX-Widevine-Mac-arm64.zip".into(),
@@ -42,7 +42,7 @@ pub fn host_spec() -> Option<PlatformSpec> {
     return Some(PlatformSpec {
         browser: ArchiveSpec {
             key: "ShardX-Windows.zip".into(),
-            label: "ShardX browser (Windows x64)".into(),
+            label: "BrProxies browser (Windows x64)".into(),
         },
         widevine: Some(ArchiveSpec {
             key: "ShardX-Widevine-Win.zip".into(),
@@ -53,7 +53,7 @@ pub fn host_spec() -> Option<PlatformSpec> {
     return Some(PlatformSpec {
         browser: ArchiveSpec {
             key: "ShardX-Linux.zip".into(),
-            label: "ShardX browser (Linux x64)".into(),
+            label: "BrProxies browser (Linux x64)".into(),
         },
         widevine: Some(ArchiveSpec {
             key: "ShardX-Widevine-Linux.zip".into(),
@@ -184,7 +184,7 @@ pub async fn runtime_status() -> Result<RuntimeStatus, String> {
 
 #[tauri::command]
 pub async fn runtime_install(window: Window, force: bool) -> Result<RuntimeStatus, String> {
-    let spec = host_spec().ok_or("Host platform has no published ShardX archive")?;
+    let spec = host_spec().ok_or("Host platform has no published BrProxies archive")?;
     let base = runtime_dir().map_err(|e| e.to_string())?;
     fs::create_dir_all(&base).map_err(|e| e.to_string())?;
 
@@ -538,7 +538,7 @@ pub async fn launcher_update_check(app: tauri::AppHandle) -> Result<LauncherVers
 
     let url = format!("https://api.github.com/repos/{LAUNCHER_RELEASE_REPO}/releases/latest");
     let client = match reqwest::Client::builder()
-        .user_agent(format!("shardx-launcher/{current}"))
+        .user_agent(format!("brproxies/{current}"))
         .build()
     {
         Ok(c) => c,
