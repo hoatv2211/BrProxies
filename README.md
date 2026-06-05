@@ -1,6 +1,6 @@
 # BrProxies
 
-[Tieng Viet](README.vn.md) | [Project guide](docs/index.html)
+[Tieng Viet](README.vn.md) | [Page](https://hoatv2211.github.io/BrProxies/)
 
 BrProxies is a personal desktop launcher for browser profile management,
 fingerprint control, proxy testing, local automation, and crawler proxy pooling.
@@ -40,9 +40,6 @@ proxies before promoting working rows into browser profiles.
 - **SDKs** - Python and Node SDKs live in `sdks/`.
 
 ## Validation Screenshots
-
-Screenshots `03` through `08` are refreshed from
-[hoatv2211/BrProxies](https://github.com/hoatv2211/BrProxies/tree/main/docs/screenshots).
 
 | fingerprint.com | Twilio WebRTC |
 |-----------------|---------------|
