@@ -4,7 +4,7 @@
 
 BrProxies is a personal desktop launcher for browser profile management,
 fingerprint control, proxy testing, local automation, and crawler proxy pooling.
-It is developed at [hoatv2211/ShardBrowser](https://github.com/hoatv2211/ShardBrowser)
+It is developed at [hoatv2211/BrProxies](https://github.com/hoatv2211/BrProxies)
 from the original [ProxyShard/ShardBrowser](https://github.com/ProxyShard/ShardBrowser)
 ShardX Launcher codebase.
 
@@ -42,7 +42,7 @@ proxies before promoting working rows into browser profiles.
 ## Validation Screenshots
 
 Screenshots `03` through `08` are refreshed from
-[hoatv2211/ShardBrowser](https://github.com/hoatv2211/ShardBrowser/tree/main/docs/screenshots).
+[hoatv2211/BrProxies](https://github.com/hoatv2211/BrProxies/tree/main/docs/screenshots).
 
 | fingerprint.com | Twilio WebRTC |
 |-----------------|---------------|
