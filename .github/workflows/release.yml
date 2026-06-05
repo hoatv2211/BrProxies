@@ -1,27 +1,5 @@
-# Build the Tauri launcher for macOS arm64, Windows x64 and Linux x64
-# on free GitHub-hosted runners, then attach every bundle to a GitHub
-# Release.
-#
-# Why three runners instead of cross-compiling from Linux?  Tauri's
-# bundlers are platform-native — .dmg needs `hdiutil`/`codesign` (mac
-# only), .msi needs WiX (Windows only); cross-compiling the Rust
-# binary is possible but the bundling step then fails.  GitHub's
-# hosted runners are free for public repos (and have a generous free
-# tier for private ones), so this is cost-free for the maintainer and
-# avoids any self-hosted-runner setup.
-#
-# Triggers:
-#   * pushing a tag like `v1.2.3`  → release named "ShardX Launcher v1.2.3"
-#   * manual dispatch via the Actions tab (handy for ad-hoc builds)
-#
-# Artifacts attached to the Release:
-#   * macOS arm64 — .dmg + .app.tar.gz
-#   * Windows x64 — .msi installer + portable .exe
-#   * Linux x64   — .AppImage + .deb
-#
-# The launcher itself is unsigned (no Apple Developer ID / Authenticode
-# cert in this repo).  README documents how end-users dismiss the
-# Gatekeeper / SmartScreen warning on first launch.
+# Build BrProxies for macOS arm64, Windows x64, and Linux x64,
+# then attach bundles to a GitHub Release.
 
 name: Release
 
@@ -32,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to publish (e.g. v0.1.0). Required for manual runs.'
+        description: 'Tag to publish (e.g. v0.1.3). Required for manual runs.'
         required: true
 
 permissions:
-  contents: write   # needed to create / attach assets to releases
+  contents: write
 
 jobs:
   build:
@@ -44,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14            # Apple Silicon (M-series) runner — free, ARM-only
+          - os: macos-14
             target: aarch64-apple-darwin
             label: mac-arm64
           - os: ubuntu-22.04
@@ -83,8 +61,6 @@ jobs:
           restore-keys: |
             ${{ matrix.label }}-cargo-
 
-      # Tauri needs WebKitGTK + a few X libs on Linux; nothing extra on
-      # mac / windows runners.
       - name: Install Linux build deps
         if: runner.os == 'Linux'
         run: |
@@ -100,18 +76,12 @@ jobs:
         run: npm ci
 
       - name: Build Tauri bundle (unsigned)
-        # Bundles are produced unsigned; the Tauri bundler skips
-        # codesign / signtool only when the relevant env vars are
-        # UNSET — empty strings cause it to call `security import` /
-        # `signtool` with no cert and crash, so we deliberately don't
-        # set any signing variable here.
         run: npx tauri build --target ${{ matrix.target }}
 
       - name: Collect bundles
         shell: bash
         run: |
           mkdir -p staging
-          # Grab every distributable Tauri produced — paths differ per OS.
           find src-tauri/target/${{ matrix.target }}/release/bundle \
             -type f \
             \( -name '*.dmg' -o -name '*.app.tar.gz' \
@@ -120,10 +90,10 @@ jobs:
             -exec cp -v {} staging/ \;
           ls -la staging/
 
-      - name: Upload to workflow artifacts (intermediate)
+      - name: Upload to workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: shardx-launcher-${{ matrix.label }}
+          name: brproxies-${{ matrix.label }}
           path: staging/*
           if-no-files-found: error
 
@@ -154,7 +124,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: ShardX Launcher ${{ steps.tag.outputs.tag }}
+          name: BrProxies ${{ steps.tag.outputs.tag }}
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
@@ -162,9 +132,9 @@ jobs:
           body: |
             ## Install
 
-            * **macOS** (Apple Silicon — M1/M2/M3/M4) — download the `.dmg`.  First launch: right-click *ShardX Launcher.app* → *Open* → *Open* (the build isn't signed with an Apple Developer ID).
-            * **Windows** — `.msi` installer.  SmartScreen will warn: *More info* → *Run anyway* (the build isn't signed with Authenticode).
-            * **Linux** — `.AppImage` (`chmod +x` and run) or `.deb` (`sudo apt install ./...deb`).
+            * **macOS** (Apple Silicon) - download the `.dmg`. First launch: right-click *BrProxies.app* -> *Open* -> *Open*.
+            * **Windows** - download the `.msi` installer. SmartScreen may warn: *More info* -> *Run anyway*.
+            * **Linux** - use the `.AppImage` (`chmod +x` and run) or `.deb` (`sudo apt install ./...deb`).
 
-            On first launch the launcher downloads the patched ShardX browser, Widevine CDM and a starter library of 170 device profiles from our CDN.  After that it boots straight to the workspace.
+            Builds are unsigned.
           files: dist/*
