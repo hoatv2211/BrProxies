@@ -6,7 +6,7 @@ BrProxies là launcher cá nhân để quản lý browser profile, proxy,
 fingerprint, Automation API cục bộ và ProxyPool cho crawler.
 
 Dự án này được phát triển cá nhân tại
-[hoatv2211/ShardBrowser](https://github.com/hoatv2211/ShardBrowser). Mã nguồn
+[hoatv2211/BrProxies](https://github.com/hoatv2211/BrProxies). Mã nguồn
 ban đầu lấy từ [ProxyShard/ShardBrowser](https://github.com/ProxyShard/ShardBrowser).
 
 ## Tính năng
