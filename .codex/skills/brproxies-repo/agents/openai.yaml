@@ -1,0 +1,4 @@
+interface:
+  display_name: "BrProxies Repo"
+  short_description: "Repo map and workflow for BrProxies"
+  default_prompt: "Use $brproxies-repo to inspect and modify the BrProxies launcher safely."
