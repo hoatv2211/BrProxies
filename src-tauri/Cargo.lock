@@ -449,6 +449,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "brproxies"
+version = "0.1.3"
+dependencies = [
+ "aes",
+ "aes-gcm",
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "cbc",
+ "dirs 5.0.1",
+ "flate2",
+ "getrandom 0.2.17",
+ "hmac",
+ "jsonwebtoken",
+ "libc",
+ "pbkdf2",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "tar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tokio",
+ "url",
+ "uuid",
+ "windows-sys 0.59.0",
+ "zip",
+]
+
+[[package]]
 name = "bs58"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3859,42 +3895,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
-]
-
-[[package]]
-name = "shardx-launcher"
-version = "0.1.3"
-dependencies = [
- "aes",
- "aes-gcm",
- "anyhow",
- "axum",
- "base64 0.22.1",
- "cbc",
- "dirs 5.0.1",
- "flate2",
- "getrandom 0.2.17",
- "hmac",
- "jsonwebtoken",
- "libc",
- "pbkdf2",
- "reqwest 0.12.28",
- "rusqlite",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "tar",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tokio",
- "url",
- "uuid",
- "windows-sys 0.59.0",
- "zip",
 ]
 
 [[package]]

@@ -3,7 +3,7 @@ setlocal
 
 cd /d "%~dp0.."
 
-echo Building ShardX Launcher...
+echo Building BrProxies...
 
 if not exist "node_modules" (
   echo Installing npm dependencies...
@@ -21,7 +21,7 @@ if errorlevel 1 goto :error
 
 echo.
 echo Build complete.
-echo Output: src-tauri\target\release\shardx-launcher.exe
+echo Output: src-tauri\target\release\brproxies.exe
 goto :done
 
 :error
