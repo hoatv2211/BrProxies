@@ -2,7 +2,7 @@
 
 ## Product Shape
 
-ShardBrowser is ShardX Launcher: Tauri 2 desktop app with React/TypeScript UI and Rust backend. It manages anti-detect browser profiles, proxies, fingerprints, cookies, local HTTP automation API, MCP bootstrap, SDK docs, and a Python ProxyPool sidecar.
+BrProxies is a Tauri 2 desktop app with React/TypeScript UI and Rust backend. It manages anti-detect browser profiles, proxies, fingerprints, cookies, local HTTP automation API, MCP bootstrap, SDK docs, and a Python ProxyPool sidecar.
 
 ## Frontend
 

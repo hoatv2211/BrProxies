@@ -1,9 +1,9 @@
 ---
-name: shardbrowser-repo
-description: Repository onboarding and task workflow for ShardBrowser / ShardX Launcher. Use when Codex is working inside this repo, especially for Tauri Rust backend changes, React/TypeScript UI changes, ProxyPool service changes, smart launch .bat scripts, SDK docs, README updates, tests, builds, or debugging local launcher/proxy/Redis behavior.
+name: brproxies-repo
+description: Repository onboarding and task workflow for BrProxies. Use when Codex is working inside this repo, especially for Tauri Rust backend changes, React/TypeScript UI changes, ProxyPool service changes, smart launch .bat scripts, SDK docs, README updates, tests, builds, or debugging local launcher/proxy/Redis behavior.
 ---
 
-# ShardBrowser Repo
+# BrProxies Repo
 
 Use this skill as first-pass repo memory. Read the minimum reference needed, then inspect live files before editing.
 
