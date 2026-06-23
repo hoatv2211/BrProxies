@@ -124,6 +124,20 @@ Ví dụ:
 curl "http://127.0.0.1:40326/proxy/random?https=false"
 ```
 
+## Chrome ProxyPool Extension
+
+Thu muc [`extension/`](extension/) co Chrome extension Manifest V3 de lay proxy tu ProxyPool local. Extension goi `http://127.0.0.1:40326`, hien proxy song, va set proxy cho Chrome bang `chrome.proxy`.
+
+Cach load local:
+
+1. Chay `smart launch\run.bat`.
+2. Mo **ProxyPool**, bam **Connect**, roi collect/check den khi co proxy song.
+3. Mo Chrome `chrome://extensions`, bat **Developer mode**, bam **Load unpacked**.
+4. Chon thu muc `extension` trong repo.
+5. Mo popup extension, bam **Connect**, roi dung **Use**, **Rotate**, hoac **Direct**.
+
+Ban dau chi cho phep host local `127.0.0.1:40326` va `localhost:40326`. Khi chuyen sang VPS nen them auth token va quyen URL hep hon truoc khi publish.
+
 Nguồn proxy miễn phí rất thất thường. Bảng trống có thể do mạng chặn source,
 source đang lỗi, hoặc tất cả proxy đều fail bài test.
 

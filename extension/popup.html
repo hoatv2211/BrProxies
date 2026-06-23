@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BrProxies ProxyPool</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>BrProxies</h1>
+          <p id="statusText">Disconnected</p>
+        </div>
+        <span id="countBadge" class="badge">0</span>
+      </header>
+
+      <label class="field">
+        <span>Pool API URL</span>
+        <input id="apiUrlInput" type="url" spellcheck="false" value="http://127.0.0.1:40326" />
+      </label>
+
+      <section class="actions">
+        <button id="connectButton" type="button">Connect</button>
+        <button id="testLiveButton" type="button">Test live</button>
+        <button id="rotateButton" type="button">Rotate</button>
+        <button id="directButton" type="button">Direct</button>
+      </section>
+
+      <section class="active">
+        <span>Active</span>
+        <strong id="activeProxy">Direct</strong>
+      </section>
+
+      <p id="errorText" class="error" hidden></p>
+      <div id="proxyList" class="proxy-list" role="list"></div>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
