@@ -69,6 +69,8 @@ def create_app(config: ProxyPoolConfig, redis: Redis | None = None, start_schedu
     def health() -> dict[str, object]:
         redis_ok = False
         error = None
+        tasks: dict[str, asyncio.Task] = app.state.job_tasks
+        jobs = {name: "running" for name, task in tasks.items() if not task.done()}
         try:
             redis_ok = storage.ping()
         except Exception as exc:
@@ -80,6 +82,7 @@ def create_app(config: ProxyPoolConfig, redis: Redis | None = None, start_schedu
             "count": storage.count() if redis_ok else 0,
             "https_count": storage.count(https=True) if redis_ok else 0,
             "scheduler_running": runtime.scheduler.running,
+            "jobs": jobs,
             "last_collect": runtime.last_collect,
             "last_check": runtime.last_check,
         }

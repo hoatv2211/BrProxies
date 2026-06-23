@@ -145,6 +145,24 @@ Default sidecar URL: `http://127.0.0.1:40326`
 | `POST` | `/jobs/collect` | queue collect job |
 | `POST` | `/jobs/check` | queue recheck job |
 
+## Chrome ProxyPool Extension
+
+The repo includes a local Manifest V3 Chrome extension in [`extension/`](extension/).
+It connects to the ProxyPool sidecar at `http://127.0.0.1:40326`, lists working
+proxies, and applies one proxy to Chrome through the `chrome.proxy` API.
+
+Local load flow:
+
+1. Run `smart launch\run.bat`.
+2. Open **ProxyPool**, click **Connect**, then collect/check until working rows exist.
+3. Open Chrome `chrome://extensions`, enable **Developer mode**, and click **Load unpacked**.
+4. Select the repo `extension` folder.
+5. Open the extension popup, click **Connect**, then use **Use**, **Rotate**, or **Direct**.
+
+This first version allows only local Pool API hosts: `127.0.0.1:40326` and
+`localhost:40326`. Remote VPS URLs should add auth and narrower runtime
+permission handling before publishing.
+
 Example:
 
 ```bash

@@ -121,7 +121,9 @@ def test_collect_job_returns_without_waiting_for_scan(monkeypatch):
         started = time.perf_counter()
         response = client.post("/jobs/collect")
         elapsed = time.perf_counter() - started
+        health = client.get("/health").json()
 
     assert response.status_code == 202
     assert response.json()["status"] == "started"
+    assert health["jobs"] == {"collect": "running"}
     assert elapsed < 0.1

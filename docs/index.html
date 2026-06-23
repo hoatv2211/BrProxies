@@ -92,6 +92,7 @@
           <a href="#screens">Screens</a>
           <a href="#quick-start">Quick start</a>
           <a href="#proxypool">ProxyPool</a>
+          <a href="#extension">Extension</a>
           <a href="#api">API</a>
           <a href="https://github.com/hoatv2211/BrProxies">GitHub</a>
         </nav>
@@ -173,6 +174,16 @@
           <div class="grid two">
             <div class="card"><h3>Collect and recheck</h3><ul><li>Open ProxyPool and click Connect.</li><li>Use Collect now to crawl enabled public sources.</li><li>Use Check now or Refresh to recheck stored proxies.</li><li>Use Clean to clear all cached ProxyPool IPs from Redis.</li></ul></div>
             <div class="card"><h3>Promote proxies</h3><ul><li>Filter working rows by country or source.</li><li>Copy a working proxy string when you need raw output.</li><li>Select multiple rows, then use Copy selected, Add selected, or Delete selected for batch actions.</li><li>Use Add or Add selected to push rows into the main Proxies tab; promoted rows are removed from Redis.</li><li>Add custom sources with parser type <code>text</code>, <code>table</code>, or <code>geonode_json</code>.</li></ul></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="extension">
+        <div class="wrap">
+          <div class="head"><h2>Chrome extension</h2><p>The local Manifest V3 extension in <code>extension/</code> connects to ProxyPool at <code>http://127.0.0.1:40326</code>, lists working proxies, and applies one proxy to Chrome with the <code>chrome.proxy</code> API.</p></div>
+          <div class="grid two">
+            <div class="card"><h3>Load unpacked</h3><ul><li>Run <code>smart launch\run.bat</code>.</li><li>Open ProxyPool and collect/check working proxies.</li><li>Open <code>chrome://extensions</code>, enable Developer mode, then load the repo <code>extension</code> folder.</li></ul></div>
+            <div class="card"><h3>Use local pool</h3><ul><li>Keep Pool API URL as <code>http://127.0.0.1:40326</code>.</li><li>Click Connect to list working proxies.</li><li>Use Use, Rotate, or Direct to control Chrome proxy state.</li><li>Remote VPS URLs should add auth and narrower permissions before publishing.</li></ul></div>
           </div>
         </div>
       </section>
