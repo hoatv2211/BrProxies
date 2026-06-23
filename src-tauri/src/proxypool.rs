@@ -210,19 +210,7 @@ pub async fn proxypool_add_source(source: ProxyPoolSourceCreate) -> Result<Value
 
 #[tauri::command]
 pub async fn proxypool_job(path: String) -> Result<Value, String> {
-    let s = settings::load().map_err(|e| e.to_string())?;
-    let clean_path = if path.starts_with('/') { path.to_string() } else { format!("/{path}") };
-    let url = format!("{}{}", base_url(&s), clean_path);
-    tauri::async_runtime::spawn(async move {
-        let Ok(client) = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(3))
-            .build()
-        else {
-            return;
-        };
-        let _ = client.post(url).send().await;
-    });
-    Ok(serde_json::json!({"status":"queued"}))
+    proxypool_request("POST", &path).await
 }
 
 #[tauri::command]

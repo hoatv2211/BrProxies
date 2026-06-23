@@ -43,3 +43,18 @@ def test_normalizes_url_forms_on_delete():
     assert storage.delete("http://8.8.8.8:8080") is True
     assert storage.count() == 0
 
+def test_clean_removes_cached_proxy_entries():
+    redis = fakeredis.FakeRedis(decode_responses=True)
+    storage = ProxyStorage(redis)
+    storage.save(ProxyRecord(proxy="1.2.3.4:8080", supports_https=True, latency_ms=55, source="unit"))
+    redis.sadd("proxypool:all", "2.2.2.2:8080")
+    redis.sadd("proxypool:https", "2.2.2.2:8080")
+    redis.hset("proxypool:meta:3.3.3.3:8080", mapping={"proxy": "3.3.3.3:8080"})
+
+    result = storage.clean()
+
+    assert result == {"proxies": 3, "meta": 2, "keys": 4, "removed": 3}
+    assert storage.count() == 0
+    assert storage.count(https=True) == 0
+    assert storage.get("1.2.3.4:8080") is None
+    assert redis.exists("proxypool:meta:3.3.3.3:8080") == 0

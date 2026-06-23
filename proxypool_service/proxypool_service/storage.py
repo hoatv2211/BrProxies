@@ -27,7 +27,8 @@ class ProxyStorage:
             pipe.sadd(HTTPS_KEY, record.proxy)
         else:
             pipe.srem(HTTPS_KEY, record.proxy)
-        pipe.hset(self._meta_key(record.proxy), mapping=record.to_hash())
+        hash_items = [item for pair in record.to_hash().items() for item in pair]
+        pipe.execute_command("HMSET", self._meta_key(record.proxy), *hash_items)
         pipe.execute()
 
     def get(self, proxy: str) -> ProxyRecord | None:
@@ -70,3 +71,20 @@ class ProxyStorage:
         removed_all, _removed_https, _removed_meta = pipe.execute()
         return bool(removed_all)
 
+    def clean(self) -> dict[str, int]:
+        all_proxies = set(self.redis.smembers(ALL_KEY))
+        https_proxies = set(self.redis.smembers(HTTPS_KEY))
+        meta_keys = set(self.redis.scan_iter(f"{META_PREFIX}*"))
+        proxy_count = len(all_proxies | https_proxies | {key[len(META_PREFIX):] for key in meta_keys})
+
+        set_keys = [key for key in (ALL_KEY, HTTPS_KEY) if self.redis.exists(key)]
+        keys = [*set_keys, *sorted(meta_keys)]
+        if keys:
+            self.redis.delete(*keys)
+
+        return {
+            "proxies": proxy_count,
+            "meta": len(meta_keys),
+            "keys": len(keys),
+            "removed": proxy_count,
+        }

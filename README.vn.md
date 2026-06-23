@@ -36,9 +36,8 @@ Script nằm trong thư mục [`smart launch`](smart%20launch/):
 
 ```bat
 "smart launch\build.bat"        :: build web assets + desktop app
-"smart launch\run.bat"          :: chạy launcher đã build
-"smart launch\build-redis.bat"  :: tải Redis Docker image
-"smart launch\run-redis.bat"    :: chạy Redis cho ProxyPool
+"smart launch\run.bat"          :: chạy Redis, cleanup ProxyPool, mở launcher
+"smart launch\run-redis.bat"    :: chỉ chạy Redis Windows đi kèm
 ```
 
 Build và chạy:
@@ -54,8 +53,8 @@ File exe mặc định:
 src-tauri\target\release\brproxies.exe
 ```
 
-`run.bat` sẽ gọi `cleanup-proxypool.ps1` để tắt Python sidecar ProxyPool cũ
-trước khi mở app.
+`run.bat` sẽ chạy Redis Windows đi kèm trên `127.0.0.1:6380`, sau đó gọi
+`cleanup-proxypool.ps1` để tắt Python sidecar ProxyPool cũ trước khi mở app.
 
 ## Build thủ công
 
@@ -78,10 +77,9 @@ ProxyPool chạy bằng Python sidecar cục bộ. Service này lấy proxy từ
 public đang bật, test proxy thật, lưu proxy pass vào Redis và xóa proxy chết khi
 recheck.
 
-Chạy Redis nếu muốn lưu pool:
+Redis tự chạy khi mở app bằng `run.bat`. Nếu chỉ muốn bật Redis để debug:
 
 ```bat
-"smart launch\build-redis.bat"
 "smart launch\run-redis.bat"
 ```
 
@@ -97,7 +95,10 @@ Nút trong UI:
 - **Collect now** - cào proxy mới và lưu proxy pass.
 - **Check now / Refresh** - test lại proxy đang có và tải lại bảng.
 - **Copy** - copy proxy sống.
-- **Add** - thêm proxy sống vào tab **Proxies**.
+- **Add** - thêm proxy sống vào tab **Proxies**, sau đó xóa proxy đó khỏi Redis.
+- **Copy selected / Add selected / Delete selected** - chọn nhiều dòng rồi copy, thêm, hoặc xóa 1 lượt.
+- **Country filter / Source filter** - lọc bảng theo quốc gia hoặc nguồn.
+- **Clean** - xóa tất cả IP ProxyPool đang cache trong Redis.
 - **Delete** - xóa proxy xấu khỏi pool.
 - **Add source** - thêm nguồn cào proxy tùy chỉnh.
 
@@ -111,6 +112,7 @@ ProxyPool API:
 | `GET` | `/proxies?https=false` | liệt kê proxy sống |
 | `GET` | `/count?https=false` | đếm proxy sống |
 | `DELETE` | `/proxy/{host}:{port}` | xóa proxy xấu |
+| `POST` | `/clean` | xóa tất cả IP ProxyPool đang cache |
 | `GET` | `/sources` | xem nguồn proxy |
 | `POST` | `/sources` | thêm nguồn tùy chỉnh |
 | `POST` | `/jobs/collect` | đưa job collect vào hàng đợi |

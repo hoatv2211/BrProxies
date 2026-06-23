@@ -65,7 +65,7 @@ def load_config(path: str | None = None) -> ProxyPoolConfig:
     if path:
         cfg_path = Path(path)
         if cfg_path.exists():
-            data.update(json.loads(cfg_path.read_text(encoding="utf-8")))
+            data.update(json.loads(cfg_path.read_text(encoding="utf-8-sig")))
 
     env_map = {
         "PROXYPOOL_HOST": "host",
