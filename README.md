@@ -59,9 +59,8 @@ Helper scripts live in [`smart launch`](smart%20launch/):
 
 ```bat
 "smart launch\build.bat"        :: build web assets + desktop app
-"smart launch\run.bat"          :: run the built launcher
-"smart launch\build-redis.bat"  :: pull Redis Docker image
-"smart launch\run-redis.bat"    :: start Redis for ProxyPool
+"smart launch\run.bat"          :: start Redis, cleanup ProxyPool, run the built launcher
+"smart launch\run-redis.bat"    :: start bundled Windows Redis only
 ```
 
 Build and run:
@@ -77,8 +76,9 @@ Release exe:
 src-tauri\target\release\brproxies.exe
 ```
 
-`run.bat` also calls `cleanup-proxypool.ps1` to stop stale ProxyPool Python
-sidecars before opening the app.
+`run.bat` starts the bundled Windows Redis on `127.0.0.1:6380`, then calls
+`cleanup-proxypool.ps1` to stop stale ProxyPool Python sidecars before opening
+the app.
 
 ## Manual Build
 
@@ -97,10 +97,10 @@ ProxyPool runs as a local Python sidecar. It collects proxies from enabled
 public sources, tests whether they work, saves passing records to Redis, and
 removes dead proxies during rechecks.
 
-Start Redis when you want persistence:
+Redis starts automatically when you launch the app with `run.bat`. To start only
+Redis for debugging:
 
 ```bat
-"smart launch\build-redis.bat"
 "smart launch\run-redis.bat"
 ```
 
@@ -116,8 +116,13 @@ Typical UI flow:
 2. Click **Collect now** to crawl enabled sources and save passing proxies.
 3. Click **Refresh** or **Check now** to recheck stored proxies.
 4. Use **Copy** for a raw proxy string or **Add** to promote a row into the main
-   **Proxies** tab.
-5. Use **Add source** for custom text, table, or Geonode JSON proxy lists.
+   **Proxies** tab. Added rows are removed from Redis so the pool shows what is
+   still waiting to be promoted.
+5. Filter the working table by country or source, select multiple rows, then use
+   **Copy selected**, **Add selected**, or **Delete selected** for batch actions.
+   Added rows are removed from Redis after they are saved.
+6. Use **Clean** to clear all cached ProxyPool IPs from Redis.
+7. Use **Add source** for custom text, table, or Geonode JSON proxy lists.
 
 Public free proxy sources are unstable. Empty results can mean the source is
 blocked, temporarily down, or all candidates failed live checks.
@@ -134,6 +139,7 @@ Default sidecar URL: `http://127.0.0.1:40326`
 | `GET` | `/proxies?https=false` | list working proxies |
 | `GET` | `/count?https=false` | count working proxies |
 | `DELETE` | `/proxy/{host}:{port}` | delete a bad proxy |
+| `POST` | `/clean` | clear all cached ProxyPool IPs |
 | `GET` | `/sources` | list proxy sources |
 | `POST` | `/sources` | add a custom source |
 | `POST` | `/jobs/collect` | queue collect job |

@@ -1,28 +1,38 @@
 @echo off
 setlocal
 
-set "REDIS_CONTAINER=proxy_redis_pool"
-set "REDIS_IMAGE=redis:7-alpine"
-set "REDIS_PORT=6380"
+cd /d "%~dp0.."
 
+set "REDIS_DIR=%CD%\redis"
+set "REDIS_SERVER=%REDIS_DIR%\redis-server.exe"
+set "REDIS_CLI=%REDIS_DIR%\redis-cli.exe"
+set "REDIS_CONF=%REDIS_DIR%\redis.windows.conf"
+set "REDIS_HOST=127.0.0.1"
+set "REDIS_PORT=6380"
 if "%REDIS_PASSWORD%"=="" set "REDIS_PASSWORD=madpool"
 
-echo Starting Redis for ShardX ProxyPool...
-echo Container: %REDIS_CONTAINER%
-echo Port: %REDIS_PORT% -^> 6379
+echo Starting Redis for BrProxies ProxyPool...
+echo Server: %REDIS_SERVER%
+echo Port: %REDIS_PORT%
 
-docker.exe inspect "%REDIS_CONTAINER%" >nul 2>nul
-if not errorlevel 1 goto :start_existing
+if not exist "%REDIS_SERVER%" goto :missing
+if not exist "%REDIS_CONF%" goto :missing
 
-echo Creating Redis container...
-docker.exe run -d --name "%REDIS_CONTAINER%" -p "%REDIS_PORT%:6379" "%REDIS_IMAGE%" redis-server --requirepass "%REDIS_PASSWORD%"
-if errorlevel 1 goto :error
-goto :ok
+"%REDIS_CLI%" -h "%REDIS_HOST%" -p "%REDIS_PORT%" -a "%REDIS_PASSWORD%" ping 2>nul | findstr /x "PONG" >nul
+if not errorlevel 1 goto :already_running
 
-:start_existing
-echo Existing Redis container found. Starting it...
-docker.exe start "%REDIS_CONTAINER%" >nul
-if errorlevel 1 goto :error
+start "BrProxies Redis" /min "%REDIS_SERVER%" "%REDIS_CONF%" --port "%REDIS_PORT%" --requirepass "%REDIS_PASSWORD%"
+
+for /l %%i in (1,1,20) do (
+  "%REDIS_CLI%" -h "%REDIS_HOST%" -p "%REDIS_PORT%" -a "%REDIS_PASSWORD%" ping 2>nul | findstr /x "PONG" >nul
+  if not errorlevel 1 goto :ok
+  timeout /t 1 /nobreak >nul
+)
+
+goto :error
+
+:already_running
+echo Redis is already running.
 goto :ok
 
 :ok
@@ -30,14 +40,17 @@ echo.
 echo Redis is ready.
 echo ProxyPool Redis URL:
 echo redis://:%REDIS_PASSWORD%@127.0.0.1:%REDIS_PORT%/0
-echo.
-echo If container already existed, password may be different from this value.
 goto :done
+
+:missing
+echo.
+echo Redis files not found in %REDIS_DIR%.
+exit /b 1
 
 :error
 echo.
 echo Redis start failed.
-echo Make sure Docker Desktop is running and port %REDIS_PORT% is free.
+echo Make sure port %REDIS_PORT% is free.
 exit /b 1
 
 :done

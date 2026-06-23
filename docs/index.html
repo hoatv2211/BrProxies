@@ -154,17 +154,15 @@
 
       <section id="quick-start">
         <div class="wrap">
-          <div class="head"><h2>Quick start</h2><p>Use the bundled Windows scripts for the shortest path. Redis is needed when you want ProxyPool persistence.</p></div>
+          <div class="head"><h2>Quick start</h2><p>Use the bundled Windows scripts for the shortest path. The run script starts bundled Windows Redis for ProxyPool persistence.</p></div>
           <div class="terminal">
             <div class="bar"><span>smart launch</span><span>Windows</span></div>
             <pre><code>"smart launch\build.bat"
-"smart launch\run-redis.bat"
 "smart launch\run.bat"</code></pre>
           </div>
           <div class="steps">
             <div class="card step"><div class="num">1</div><div><h3>Build</h3><p>Run <code>smart launch\build.bat</code> after cloning or after dependency changes.</p></div></div>
-            <div class="card step"><div class="num">2</div><div><h3>Start Redis</h3><p>Run <code>smart launch\run-redis.bat</code> when ProxyPool should keep working proxies.</p></div></div>
-            <div class="card step"><div class="num">3</div><div><h3>Run app</h3><p>Run <code>smart launch\run.bat</code>. It stops stale ProxyPool sidecars first.</p></div></div>
+            <div class="card step"><div class="num">2</div><div><h3>Run app</h3><p>Run <code>smart launch\run.bat</code>. It starts Redis, stops stale ProxyPool sidecars, then opens BrProxies.</p></div></div>
           </div>
         </div>
       </section>
@@ -173,8 +171,8 @@
         <div class="wrap">
           <div class="head"><h2>ProxyPool workflow</h2><p>ProxyPool is separate from the main Proxies tab. Collect and check candidates first, then promote only working proxies into profile use.</p></div>
           <div class="grid two">
-            <div class="card"><h3>Collect and recheck</h3><ul><li>Open ProxyPool and click Connect.</li><li>Use Collect now to crawl enabled public sources.</li><li>Use Check now or Refresh to recheck stored proxies.</li><li>Delete bad rows when checks fail repeatedly.</li></ul></div>
-            <div class="card"><h3>Promote proxies</h3><ul><li>Copy a working proxy string when you need raw output.</li><li>Use Add to push a working row into the main Proxies tab.</li><li>Bind checked proxies to profiles from the profile or proxy workflow.</li><li>Add custom sources with parser type <code>text</code>, <code>table</code>, or <code>geonode_json</code>.</li></ul></div>
+            <div class="card"><h3>Collect and recheck</h3><ul><li>Open ProxyPool and click Connect.</li><li>Use Collect now to crawl enabled public sources.</li><li>Use Check now or Refresh to recheck stored proxies.</li><li>Use Clean to clear all cached ProxyPool IPs from Redis.</li></ul></div>
+            <div class="card"><h3>Promote proxies</h3><ul><li>Filter working rows by country or source.</li><li>Copy a working proxy string when you need raw output.</li><li>Select multiple rows, then use Copy selected, Add selected, or Delete selected for batch actions.</li><li>Use Add or Add selected to push rows into the main Proxies tab; promoted rows are removed from Redis.</li><li>Add custom sources with parser type <code>text</code>, <code>table</code>, or <code>geonode_json</code>.</li></ul></div>
           </div>
         </div>
       </section>
@@ -187,6 +185,7 @@
             <div class="api-row"><code class="method">GET /proxy/random</code><span>Return one random working proxy, with optional HTTPS filter.</span></div>
             <div class="api-row"><code class="method">GET /proxy/pop</code><span>Return and remove one working proxy.</span></div>
             <div class="api-row"><code class="method">GET /proxies</code><span>List working proxies with country, source, HTTPS support, latency, and last check time.</span></div>
+            <div class="api-row"><code class="method">POST /clean</code><span>Clear all cached ProxyPool IPs.</span></div>
             <div class="api-row"><code class="method">POST /jobs/collect</code><span>Queue a proxy collection job.</span></div>
             <div class="api-row"><code class="method">POST /jobs/check</code><span>Queue a recheck job for stored proxies.</span></div>
             <div class="api-row"><code class="method">POST /sources</code><span>Add a custom public proxy source.</span></div>

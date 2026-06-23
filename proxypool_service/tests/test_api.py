@@ -70,6 +70,17 @@ def test_random_pop_and_delete_endpoints():
     assert storage.count() == 0
 
 
+def test_clean_endpoint_removes_cached_proxy_entries():
+    client, storage = make_client()
+    storage.save(ProxyRecord(proxy="1.2.3.4:8080", supports_https=True, latency_ms=123, source="unit"))
+    storage.redis.sadd("proxypool:all", "4.4.4.4:8080")
+
+    response = client.post("/clean")
+
+    assert response.status_code == 200
+    assert response.json()["removed"] == 2
+    assert storage.count() == 0
+
 def test_sources_endpoint_marks_disabled_sources():
     client, _storage = make_client()
     sources = client.get("/sources").json()

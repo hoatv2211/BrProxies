@@ -3333,6 +3333,9 @@ function ProxyPoolView() {
   const [newSource, setNewSource] = useState<ProxyPoolSourceCreate>({ id: "", url: "", parser: "text" });
   const [sortKey, setSortKey] = useState<ProxyPoolSortKey>("latency");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [countryFilter, setCountryFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [selectedProxies, setSelectedProxies] = useState<Set<string>>(() => new Set());
 
   const apiPath = (path: string) => path + (path.includes("?") ? "&" : "?") + `https=${httpsOnly ? "true" : "false"}`;
 
@@ -3356,6 +3359,9 @@ function ProxyPoolView() {
   };
 
   useEffect(() => { refresh(); }, [httpsOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setSelectedProxies((prev) => new Set([...prev].filter((proxy) => proxies.some((p) => p.proxy === proxy))));
+  }, [proxies]);
   useEffect(() => {
     if (!status?.running) return;
     const timer = window.setInterval(() => { refresh().catch(() => {}); }, 3000);
@@ -3424,14 +3430,16 @@ function ProxyPoolView() {
     toast.ok("Proxy copied");
   };
 
-  const addPoolProxy = async (record: ProxyPoolRecord) => {
+  const selectedPoolRecords = () => proxies.filter((record) => selectedProxies.has(record.proxy));
+
+  const entryFromPoolRecord = (record: ProxyPoolRecord): ProxyEntry | null => {
     const [host, portText] = record.proxy.split(":");
     const port = Number(portText);
     if (!host || !Number.isInteger(port) || port <= 0) {
       toast.err(`Bad proxy: ${record.proxy}`);
-      return;
+      return null;
     }
-    const entry: ProxyEntry = {
+    return {
       id: "",
       name: `pool-${record.proxy}`,
       kind: "http",
@@ -3442,7 +3450,70 @@ function ProxyPoolView() {
       country: record.country,
       notes: `Imported from ProxyPool (${record.source})`,
     };
-    await run("Proxy added", async () => invoke("proxy_save", { entry }));
+  };
+
+  const savePoolProxy = async (record: ProxyPoolRecord) => {
+    const entry = entryFromPoolRecord(record);
+    if (!entry) return;
+    await invoke("proxy_save", { entry });
+    await invoke("proxypool_delete", { proxy: record.proxy });
+  };
+
+  const addPoolProxy = async (record: ProxyPoolRecord) => {
+    await run("Proxy added and removed from Redis", async () => savePoolProxy(record));
+  };
+
+  const addSelectedPoolProxies = async () => {
+    const selected = selectedPoolRecords();
+    if (selected.length === 0) return;
+    setBusy(true);
+    try {
+      for (const record of selected) await savePoolProxy(record);
+      setSelectedProxies(new Set());
+      toast.ok(`${selected.length} proxies added and removed from Redis`);
+      await refresh();
+    } catch (e) {
+      toast.err(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copySelectedPoolProxies = async () => {
+    const selected = selectedPoolRecords();
+    if (selected.length === 0) return;
+    await clip.write(selected.map((record) => record.http).join("\n"));
+    toast.ok(`${selected.length} proxies copied`);
+  };
+
+  const deleteSelectedPoolProxies = async () => {
+    const selected = selectedPoolRecords();
+    if (selected.length === 0) return;
+    setBusy(true);
+    try {
+      for (const record of selected) await invoke("proxypool_delete", { proxy: record.proxy });
+      setSelectedProxies(new Set());
+      toast.ok(`${selected.length} proxies deleted from Redis`);
+      await refresh();
+    } catch (e) {
+      toast.err(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cleanPool = async () => {
+    setBusy(true);
+    try {
+      const result = await invoke<{ removed: number }>("proxypool_post", { path: "/clean" });
+      setSelectedProxies(new Set());
+      toast.ok(`Clean removed ${result.removed ?? 0} cached proxies`);
+      await refresh();
+    } catch (e) {
+      toast.err(String(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const copyRandom = async (pop: boolean) => {
@@ -3467,8 +3538,14 @@ function ProxyPoolView() {
   };
 
   const sortedProxies = useMemo(() => {
+    const countryNeedle = countryFilter.trim().toUpperCase();
+    const sourceNeedle = sourceFilter.trim().toLowerCase();
     const dir = sortDir === "asc" ? 1 : -1;
-    return [...proxies].sort((a, b) => {
+    return proxies.filter((p) => {
+      const countryOk = !countryNeedle || (p.country || "").toUpperCase().includes(countryNeedle);
+      const sourceOk = !sourceNeedle || p.source.toLowerCase().includes(sourceNeedle);
+      return countryOk && sourceOk;
+    }).sort((a, b) => {
       if (sortKey === "latency") return (a.latency_ms - b.latency_ms) * dir;
       if (sortKey === "last_checked") return (a.last_checked - b.last_checked) * dir;
       if (sortKey === "https") return (Number(a.supports_https) - Number(b.supports_https)) * dir;
@@ -3476,7 +3553,28 @@ function ProxyPoolView() {
       const bv = sortKey === "proxy" ? b.proxy : sortKey === "source" ? b.source : b.country;
       return av.localeCompare(bv) * dir;
     });
-  }, [proxies, sortDir, sortKey]);
+  }, [countryFilter, proxies, sortDir, sortKey, sourceFilter]);
+
+  const selectedShownCount = sortedProxies.filter((p) => selectedProxies.has(p.proxy)).length;
+  const allShownSelected = sortedProxies.length > 0 && selectedShownCount === sortedProxies.length;
+  const toggleProxySelection = (proxy: string, checked: boolean) => {
+    setSelectedProxies((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(proxy);
+      else next.delete(proxy);
+      return next;
+    });
+  };
+  const toggleShownSelection = (checked: boolean) => {
+    setSelectedProxies((prev) => {
+      const next = new Set(prev);
+      for (const proxy of sortedProxies.map((p) => p.proxy)) {
+        if (checked) next.add(proxy);
+        else next.delete(proxy);
+      }
+      return next;
+    });
+  };
 
   const sortLabel = (key: ProxyPoolSortKey, label: string) => `${label}${sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : ""}`;
 
@@ -3500,6 +3598,7 @@ function ProxyPoolView() {
           <button className="btn-ghost" onClick={refreshAndCheck} disabled={busy}>{busy ? "Checking..." : "Refresh"}</button>
           <button className="btn-ghost" onClick={() => run("Collection job queued", async () => invoke("proxypool_job", { path: "/jobs/collect" }))} disabled={busy}>Collect now</button>
           <button className="btn-ghost" onClick={() => run("Check job queued", async () => invoke("proxypool_job", { path: "/jobs/check" }))} disabled={busy}>Check now</button>
+          <button className="btn-ghost" onClick={cleanPool} disabled={busy}>Clean</button>
           {status?.running ? (
             <button className="btn-ghost danger" onClick={() => run("ProxyPool stopped", async () => invoke("proxypool_stop"))} disabled={busy}>Stop</button>
           ) : (
@@ -3570,18 +3669,37 @@ function ProxyPoolView() {
         <div className="pp-head-row">
           <h3>Working proxies</h3>
           <div className="pp-inline-actions">
-            <span className="muted small">{sortedProxies.length} shown</span>
+            <span className="muted small">{sortedProxies.length} shown / {proxies.length} total</span>
+            {selectedProxies.size > 0 && <span className="muted small">{selectedProxies.size} selected</span>}
+            <button className="btn-sm btn-ghost" onClick={copySelectedPoolProxies} disabled={busy || selectedProxies.size === 0}>Copy selected</button>
+            <button className="btn-sm btn-ghost" onClick={addSelectedPoolProxies} disabled={busy || selectedProxies.size === 0}>Add selected</button>
+            <button className="btn-sm btn-ghost danger" onClick={deleteSelectedPoolProxies} disabled={busy || selectedProxies.size === 0}>Delete selected</button>
             <button className="btn-sm btn-ghost" onClick={refreshAndCheck} disabled={busy}>{busy ? "Checking..." : "Refresh"}</button>
           </div>
+        </div>
+        <div className="pp-filter-row">
+          <label>
+            <span className="lbl">Country filter</span>
+            <input value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} placeholder="US, TW, VN..." />
+          </label>
+          <label>
+            <span className="lbl">Source filter</span>
+            <input value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} placeholder="free_proxy_list..." />
+          </label>
         </div>
         {proxies.length === 0 ? (
           <div className="empty">
             No working proxies in Redis for this filter.
             {sourceErrors.length > 0 && <span> Last collect reached 0 usable sources; check network/VPN or source access.</span>}
           </div>
+        ) : sortedProxies.length === 0 ? (
+          <div className="empty">No proxies match the country/source filters.</div>
         ) : (
           <div className="pp-table">
             <div className="pp-row pp-row-head">
+              <label className="pp-check">
+                <input type="checkbox" checked={allShownSelected} onChange={(e) => toggleShownSelection(e.target.checked)} />
+              </label>
               <button className="pp-sort" onClick={() => setSort("proxy")}>{sortLabel("proxy", "Proxy")}</button>
               <button className="pp-sort" onClick={() => setSort("https")}>{sortLabel("https", "HTTPS")}</button>
               <button className="pp-sort" onClick={() => setSort("latency")}>{sortLabel("latency", "Latency")}</button>
@@ -3592,6 +3710,9 @@ function ProxyPoolView() {
             </div>
             {sortedProxies.map((p) => (
               <div className="pp-row" key={p.proxy}>
+                <label className="pp-check">
+                  <input type="checkbox" checked={selectedProxies.has(p.proxy)} onChange={(e) => toggleProxySelection(p.proxy, e.target.checked)} />
+                </label>
                 <span className="mono">{p.proxy}</span>
                 <span className={`status-pill ${p.supports_https ? "status-active" : ""}`}>{p.supports_https ? "Yes" : "No"}</span>
                 <span>{p.latency_ms} ms</span>

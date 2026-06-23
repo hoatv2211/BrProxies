@@ -111,6 +111,10 @@ def create_app(config: ProxyPoolConfig, redis: Redis | None = None, start_schedu
         normalized = normalize_proxy(proxy)
         return {"proxy": normalized, "deleted": storage.delete(normalized)}
 
+    @app.post("/clean")
+    def clean() -> dict[str, int]:
+        return storage.clean()
+
     @app.get("/sources")
     def sources() -> list[dict[str, object]]:
         return source_status(config)
