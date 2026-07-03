@@ -46,3 +46,18 @@ def test_create_lifecycle_and_screenshot(tmp_path, monkeypatch):
     assert client.post(f"/instances/{created['id']}/open-screen").json()["ok"] is True
     assert client.delete(f"/instances/{created['id']}").json()["ok"] is True
     assert client.get("/instances").json() == []
+
+def test_create_uses_config_path_fake_runtime(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANDROID_MANAGER_FAKE_RUNTIME", raising=False)
+    monkeypatch.delenv("ANDROID_MANAGER_DATA_DIR", raising=False)
+    config_path = tmp_path / "android-manager.json"
+    config_path.write_text(
+        '{"data_dir":"' + str(tmp_path).replace('\\', '\\\\') + '","fake_runtime":true}',
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(str(config_path)), raise_server_exceptions=False)
+
+    resp = client.post("/instances", json={"name": "phone-config"})
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "running"

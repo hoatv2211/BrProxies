@@ -34,12 +34,12 @@ class SetProxyRequest(BaseModel):
     proxy_id: str | None = None
 
 
-def _cfg() -> AndroidManagerConfig:
-    return load_config()
+def _cfg(config_path: str | None = None) -> AndroidManagerConfig:
+    return load_config(config_path)
 
 
-def _store() -> AndroidStore:
-    cfg = _cfg()
+def _store(config_path: str | None = None) -> AndroidStore:
+    cfg = _cfg(config_path)
     Path(cfg.data_dir).mkdir(parents=True, exist_ok=True)
     return AndroidStore(str(Path(cfg.data_dir) / "android.sqlite3"))
 
@@ -52,7 +52,7 @@ def _not_found(err: KeyError) -> HTTPException:
     return HTTPException(status_code=404, detail=f"unknown Android instance: {err.args[0]}")
 
 
-def create_app() -> FastAPI:
+def create_app(config_path: str | None = None) -> FastAPI:
     app = FastAPI(title="BrProxies Android Manager", version="0.1.0")
 
     @app.get("/health")
@@ -65,12 +65,12 @@ def create_app() -> FastAPI:
 
     @app.get("/instances")
     def list_instances() -> list[dict[str, object]]:
-        return [asdict(item) for item in _store().list_instances()]
+        return [asdict(item) for item in _store(config_path).list_instances()]
 
     @app.post("/instances")
     def create_instance(body: InstanceCreateRequest) -> dict[str, object]:
-        cfg = _cfg()
-        store = _store()
+        cfg = _cfg(config_path)
+        store = _store(config_path)
         port = allocate_adb_port(store.used_adb_ports(), cfg.adb_port_start, cfg.adb_port_end)
         safe = _slug(body.name)
         container_name = f"{cfg.container_prefix}{safe}-{port}"
@@ -89,8 +89,8 @@ def create_app() -> FastAPI:
 
     @app.post("/instances/{instance_id}/start")
     def start_instance(instance_id: str) -> dict[str, object]:
-        cfg = _cfg()
-        store = _store()
+        cfg = _cfg(config_path)
+        store = _store(config_path)
         try:
             item = store.get_instance(instance_id)
             DockerService(fake=cfg.fake_runtime).start(item.container_name)
@@ -101,8 +101,8 @@ def create_app() -> FastAPI:
 
     @app.post("/instances/{instance_id}/stop")
     def stop_instance(instance_id: str) -> dict[str, object]:
-        cfg = _cfg()
-        store = _store()
+        cfg = _cfg(config_path)
+        store = _store(config_path)
         try:
             item = store.get_instance(instance_id)
             DockerService(fake=cfg.fake_runtime).stop(item.container_name)
@@ -112,8 +112,8 @@ def create_app() -> FastAPI:
 
     @app.delete("/instances/{instance_id}")
     def delete_instance(instance_id: str) -> dict[str, object]:
-        cfg = _cfg()
-        store = _store()
+        cfg = _cfg(config_path)
+        store = _store(config_path)
         try:
             item = store.get_instance(instance_id)
             DockerService(fake=cfg.fake_runtime).delete(item.container_name, item.volume_name)
@@ -124,9 +124,9 @@ def create_app() -> FastAPI:
 
     @app.post("/instances/{instance_id}/install-apk")
     def install_apk(instance_id: str, body: ApkInstallRequest) -> dict[str, object]:
-        cfg = _cfg()
+        cfg = _cfg(config_path)
         try:
-            item = _store().get_instance(instance_id)
+            item = _store(config_path).get_instance(instance_id)
             AdbService(fake=cfg.fake_runtime).install_apk(item.adb_host, item.adb_port, body.apk_path)
             return {"ok": True}
         except KeyError as e:
@@ -134,9 +134,9 @@ def create_app() -> FastAPI:
 
     @app.get("/instances/{instance_id}/screenshot")
     def screenshot(instance_id: str):
-        cfg = _cfg()
+        cfg = _cfg(config_path)
         try:
-            item = _store().get_instance(instance_id)
+            item = _store(config_path).get_instance(instance_id)
             out = Path(cfg.data_dir) / "screenshots" / f"{instance_id}.png"
             AdbService(fake=cfg.fake_runtime).screenshot(item.adb_host, item.adb_port, str(out))
             return FileResponse(str(out), media_type="image/png")
@@ -145,8 +145,8 @@ def create_app() -> FastAPI:
 
     @app.post("/instances/{instance_id}/set-proxy")
     def set_proxy(instance_id: str, body: SetProxyRequest) -> dict[str, object]:
-        cfg = _cfg()
-        store = _store()
+        cfg = _cfg(config_path)
+        store = _store(config_path)
         try:
             item = store.get_instance(instance_id)
             AdbService(fake=cfg.fake_runtime).set_http_proxy(item.adb_host, item.adb_port, body.host, body.port)
@@ -156,8 +156,8 @@ def create_app() -> FastAPI:
 
     @app.post("/instances/{instance_id}/clear-proxy")
     def clear_proxy(instance_id: str) -> dict[str, object]:
-        cfg = _cfg()
-        store = _store()
+        cfg = _cfg(config_path)
+        store = _store(config_path)
         try:
             item = store.get_instance(instance_id)
             AdbService(fake=cfg.fake_runtime).clear_http_proxy(item.adb_host, item.adb_port)
@@ -167,9 +167,9 @@ def create_app() -> FastAPI:
 
     @app.post("/instances/{instance_id}/open-screen")
     def open_screen(instance_id: str) -> dict[str, object]:
-        cfg = _cfg()
+        cfg = _cfg(config_path)
         try:
-            item = _store().get_instance(instance_id)
+            item = _store(config_path).get_instance(instance_id)
             ScrcpyService(fake=cfg.fake_runtime).open_screen(item.adb_host, item.adb_port)
             return {"ok": True}
         except KeyError as e:
