@@ -3611,6 +3611,32 @@ function AndroidView() {
     await openPath(path);
   }, false);
 
+  const openAndroidScreen = async (item: AndroidInstance) => {
+    const result = await invoke<{ ok?: boolean; opened?: boolean; message?: string }>("android_post", {
+      path: `/instances/${item.id}/open-screen`,
+      body: {},
+    });
+    if (result.opened === false) throw new Error(result.message || "Fake runtime active; no Android window opened");
+  };
+
+  const startInstance = async (item: AndroidInstance) => {
+    setBusy(true);
+    try {
+      await invoke("android_post", { path: `/instances/${item.id}/start`, body: {} });
+      if (settings?.android_manager_fake_runtime) {
+        toast.err("Fake runtime only marks Android as running; no real screen is opened on Windows.");
+      } else {
+        await openAndroidScreen(item);
+        toast.ok("Started and screen opened");
+      }
+      await refresh();
+    } catch (e) {
+      toast.err(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const endpoint = status?.base_url || "http://127.0.0.1:40327";
 
   return (
@@ -3673,11 +3699,11 @@ function AndroidView() {
                 <td>{new Date(item.created_at).toLocaleString()}</td>
                 <td>
                   <div className="row-actions">
-                    <button className="btn-ghost btn-sm" onClick={() => run("Started", () => invoke("android_post", { path: `/instances/${item.id}/start`, body: {} }))} disabled={busy}>Start</button>
+                    <button className="btn-ghost btn-sm" onClick={() => startInstance(item)} disabled={busy}>Start</button>
                     <button className="btn-ghost btn-sm" onClick={() => run("Stopped", () => invoke("android_post", { path: `/instances/${item.id}/stop`, body: {} }))} disabled={busy}>Stop</button>
                     <button className="btn-ghost btn-sm" onClick={() => installApk(item)} disabled={busy || !apkPath.trim()}>APK</button>
                     <button className="btn-ghost btn-sm" onClick={() => openScreenshot(item)} disabled={busy}>Shot</button>
-                    <button className="btn-ghost btn-sm" onClick={() => run("Screen opened", () => invoke("android_post", { path: `/instances/${item.id}/open-screen`, body: {} }), false)} disabled={busy}>Screen</button>
+                    <button className="btn-ghost btn-sm" onClick={() => run("Screen opened", () => openAndroidScreen(item), false)} disabled={busy}>Screen</button>
                     <button className="btn-ghost btn-sm" onClick={() => setProxy(item)} disabled={busy || !proxyHost.trim() || !Number(proxyPort)}>Proxy</button>
                     <button className="btn-ghost btn-sm" onClick={() => run("Proxy cleared", () => invoke("android_post", { path: `/instances/${item.id}/clear-proxy`, body: {} }))} disabled={busy}>Clear</button>
                     <button className="btn-ghost btn-sm danger" onClick={() => run("Deleted", () => invoke("android_delete", { path: `/instances/${item.id}` }))} disabled={busy}>Delete</button>
