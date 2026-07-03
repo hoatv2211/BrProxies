@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Iterator
 
 from android_manager.models import AndroidInstance, AndroidInstanceCreate
 
@@ -23,8 +25,20 @@ class AndroidStore:
         conn.row_factory = sqlite3.Row
         return conn
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        conn = self._connect()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 create table if not exists android_instances (
@@ -44,12 +58,12 @@ class AndroidStore:
             )
 
     def list_instances(self) -> list[AndroidInstance]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute("select * from android_instances order by created_at desc").fetchall()
         return [AndroidInstance(**dict(row)) for row in rows]
 
     def get_instance(self, instance_id: str) -> AndroidInstance:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute("select * from android_instances where id = ?", (instance_id,)).fetchone()
         if row is None:
             raise KeyError(instance_id)
@@ -81,7 +95,7 @@ class AndroidStore:
             created_at=now,
             updated_at=now,
         )
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 insert into android_instances
@@ -94,22 +108,25 @@ class AndroidStore:
 
     def set_status(self, instance_id: str, status: str) -> AndroidInstance:
         now = _now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute("update android_instances set status = ?, updated_at = ? where id = ?", (status, now, instance_id))
-        if cur.rowcount == 0:
+            rowcount = cur.rowcount
+        if rowcount == 0:
             raise KeyError(instance_id)
         return self.get_instance(instance_id)
 
     def set_proxy(self, instance_id: str, proxy_id: str | None) -> AndroidInstance:
         now = _now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute("update android_instances set proxy_id = ?, updated_at = ? where id = ?", (proxy_id, now, instance_id))
-        if cur.rowcount == 0:
+            rowcount = cur.rowcount
+        if rowcount == 0:
             raise KeyError(instance_id)
         return self.get_instance(instance_id)
 
     def delete_instance(self, instance_id: str) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute("delete from android_instances where id = ?", (instance_id,))
-        if cur.rowcount == 0:
+            rowcount = cur.rowcount
+        if rowcount == 0:
             raise KeyError(instance_id)
