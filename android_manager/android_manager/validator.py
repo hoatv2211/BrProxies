@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from android_manager.tool_locator import find_android_tool
 
 
 @dataclass(slots=True)
@@ -19,19 +20,19 @@ def validate_host(runtime: str = "redroid") -> dict[str, object]:
 
     if runtime == "windows_avd":
         checks = [
-            HostCheck("adb", shutil.which("adb") is not None, "adb CLI on PATH"),
-            HostCheck("emulator", shutil.which("emulator") is not None, "Android emulator CLI on PATH"),
-            HostCheck("avdmanager", shutil.which("avdmanager") is not None, "Android avdmanager CLI on PATH"),
-            HostCheck("sdkmanager", shutil.which("sdkmanager") is not None, "Android sdkmanager CLI on PATH"),
-            HostCheck("scrcpy", shutil.which("scrcpy") is not None, "scrcpy CLI on PATH"),
+            HostCheck("adb", find_android_tool("adb") is not None, "adb CLI in PATH or Android SDK"),
+            HostCheck("emulator", find_android_tool("emulator") is not None, "Android emulator CLI in PATH or Android SDK"),
+            HostCheck("avdmanager", find_android_tool("avdmanager") is not None, "Android avdmanager CLI in PATH or Android SDK cmdline-tools"),
+            HostCheck("sdkmanager", find_android_tool("sdkmanager") is not None, "Android sdkmanager CLI in PATH or Android SDK cmdline-tools"),
+            HostCheck("scrcpy", find_android_tool("scrcpy") is not None, "scrcpy CLI on PATH"),
         ]
-        required = [item for item in checks if item.name in {"adb", "emulator", "avdmanager", "scrcpy"}]
+        required = [item for item in checks if item.name in {"adb", "emulator", "avdmanager"}]
         return {"ok": all(item.ok for item in required), "runtime": runtime, "checks": [asdict(item) for item in checks]}
 
     checks = [
-        HostCheck("docker", shutil.which("docker") is not None, "docker CLI on PATH"),
-        HostCheck("adb", shutil.which("adb") is not None, "adb CLI on PATH"),
-        HostCheck("scrcpy", shutil.which("scrcpy") is not None, "scrcpy CLI on PATH"),
+        HostCheck("docker", find_android_tool("docker") is not None, "docker CLI on PATH"),
+        HostCheck("adb", find_android_tool("adb") is not None, "adb CLI in PATH or Android SDK"),
+        HostCheck("scrcpy", find_android_tool("scrcpy") is not None, "scrcpy CLI on PATH"),
         HostCheck(
             "binder",
             Path("/dev/binder").exists() and Path("/dev/hwbinder").exists() and Path("/dev/vndbinder").exists(),

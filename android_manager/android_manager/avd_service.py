@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import shutil
 import subprocess
 import time
 from pathlib import Path
 from typing import Callable, Protocol
+
+from android_manager.tool_locator import find_android_tool
 
 
 class RunFn(Protocol):
@@ -30,7 +31,7 @@ class AvdService:
         self.device = device
         self.runner = runner or subprocess.run
         self.popen = popen or subprocess.Popen
-        self.which = which or shutil.which
+        self.which = which or find_android_tool
 
     def serial(self, console_port: int) -> str:
         return f"emulator-{console_port}"
@@ -97,5 +98,9 @@ class AvdService:
     def clear_http_proxy(self, console_port: int) -> None:
         self.runner([self._tool("adb"), "-s", self.serial(console_port), "shell", "settings", "put", "global", "http_proxy", ":0"], check=True)
 
-    def open_screen(self, console_port: int) -> None:
-        self.popen([self._tool("scrcpy"), "-s", self.serial(console_port), "--no-audio"])
+    def open_screen(self, console_port: int) -> bool:
+        scrcpy = self.which("scrcpy")
+        if not scrcpy:
+            return False
+        self.popen([scrcpy, "-s", self.serial(console_port), "--no-audio"])
+        return True

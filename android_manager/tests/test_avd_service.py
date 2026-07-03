@@ -48,3 +48,9 @@ def test_avd_service_rejects_missing_required_tool(tmp_path):
         assert "avdmanager" in str(err)
     else:
         raise AssertionError("missing avdmanager should fail")
+
+
+def test_avd_open_screen_is_optional_when_scrcpy_is_missing(tmp_path):
+    service = AvdService(data_dir=str(tmp_path), which=lambda name: None)
+
+    assert service.open_screen(5556) is False
