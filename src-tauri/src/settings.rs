@@ -58,6 +58,16 @@ pub struct Settings {
     pub proxypool_timeout_seconds: f64,
     #[serde(default = "default_proxypool_concurrency")]
     pub proxypool_max_concurrency: u64,
+
+    // ---- Android Manager sidecar/API ----
+    #[serde(default = "default_android_manager_host")]
+    pub android_manager_host: String,
+    #[serde(default = "default_android_manager_port")]
+    pub android_manager_port: u16,
+    #[serde(default)]
+    pub android_manager_token: String,
+    #[serde(default)]
+    pub android_manager_fake_runtime: bool,
 }
 
 fn default_theme() -> String {
@@ -80,6 +90,8 @@ fn default_proxypool_check_interval() -> u64 { 300 }
 fn default_proxypool_timeout() -> f64 { 8.0 }
 fn default_proxypool_concurrency() -> u64 { 50 }
 fn default_source_parser() -> String { "text".into() }
+fn default_android_manager_host() -> String { "127.0.0.1".into() }
+fn default_android_manager_port() -> u16 { 40327 }
 
 pub fn load() -> Result<Settings> {
     let path = store::settings_path()?;
@@ -101,6 +113,10 @@ pub fn load() -> Result<Settings> {
             proxypool_check_interval_seconds: default_proxypool_check_interval(),
             proxypool_timeout_seconds: default_proxypool_timeout(),
             proxypool_max_concurrency: default_proxypool_concurrency(),
+            android_manager_host: default_android_manager_host(),
+            android_manager_port: default_android_manager_port(),
+            android_manager_token: String::new(),
+            android_manager_fake_runtime: false,
         });
     }
     let body = fs::read_to_string(&path)?;

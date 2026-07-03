@@ -6,7 +6,6 @@ BrProxies is a personal desktop launcher for browser profile management,
 fingerprint control, proxy testing, local automation, and crawler proxy pooling.
 It is developed at [hoatv2211/BrProxies](https://github.com/hoatv2211/BrProxies)
 from the original [ProxyShard/ShardBrowser](https://github.com/ProxyShard/ShardBrowser)
-BrProxies codebase.
 
 The upstream project describes ShardX as an anti-detect Chromium launcher with
 engine-level fingerprint spoofing, proxy binding, a local HTTP API, MCP support,
@@ -16,12 +15,12 @@ proxies before promoting working rows into browser profiles.
 
 ## Main Screens
 
-| Browsers | Fingerprints |
-|----------|--------------|
+| Browsers                                             | Fingerprints                                             |
+| ---------------------------------------------------- | -------------------------------------------------------- |
 | ![Browsers workspace](docs/screenshots/Browsers.png) | ![Fingerprint editor](docs/screenshots/fingerprints.png) |
 
-| Proxies | ProxyPool |
-|---------|-----------|
+| Proxies                                        | ProxyPool                                              |
+| ---------------------------------------------- | ------------------------------------------------------ |
 | ![Proxy manager](docs/screenshots/proxies.png) | ![ProxyPool workspace](docs/screenshots/proxypool.png) |
 
 ## What It Does
@@ -41,16 +40,16 @@ proxies before promoting working rows into browser profiles.
 
 ## Validation Screenshots
 
-| fingerprint.com | Twilio WebRTC |
-|-----------------|---------------|
+| fingerprint.com                                                    | Twilio WebRTC                                                  |
+| ------------------------------------------------------------------ | -------------------------------------------------------------- |
 | ![fingerprint.com result](docs/screenshots/03-fingerprint-com.jpg) | ![Twilio WebRTC result](docs/screenshots/04-twilio-webrtc.jpg) |
 
-| Browserscan | Pixelscan |
-|-------------|-----------|
+| Browserscan                                                | Pixelscan                                              |
+| ---------------------------------------------------------- | ------------------------------------------------------ |
 | ![Browserscan result](docs/screenshots/05-browserscan.jpg) | ![Pixelscan result](docs/screenshots/06-pixelscan.jpg) |
 
-| Haru bot detection | reCAPTCHA score |
-|--------------------|-----------------|
+| Haru bot detection                                                    | reCAPTCHA score                                                    |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | ![Haru bot detection result](docs/screenshots/07-haru-bot-detect.jpg) | ![reCAPTCHA score result](docs/screenshots/08-recaptcha-score.jpg) |
 
 ## Quick Start On Windows
@@ -131,19 +130,19 @@ blocked, temporarily down, or all candidates failed live checks.
 
 Default sidecar URL: `http://127.0.0.1:40326`
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| `GET` | `/health` | service and Redis status |
-| `GET` | `/proxy/random?https=false` | get one random working proxy |
-| `GET` | `/proxy/pop?https=false` | get and remove one proxy |
-| `GET` | `/proxies?https=false` | list working proxies |
-| `GET` | `/count?https=false` | count working proxies |
-| `DELETE` | `/proxy/{host}:{port}` | delete a bad proxy |
-| `POST` | `/clean` | clear all cached ProxyPool IPs |
-| `GET` | `/sources` | list proxy sources |
-| `POST` | `/sources` | add a custom source |
-| `POST` | `/jobs/collect` | queue collect job |
-| `POST` | `/jobs/check` | queue recheck job |
+| Method     | Endpoint                      | Purpose                        |
+| ---------- | ----------------------------- | ------------------------------ |
+| `GET`    | `/health`                   | service and Redis status       |
+| `GET`    | `/proxy/random?https=false` | get one random working proxy   |
+| `GET`    | `/proxy/pop?https=false`    | get and remove one proxy       |
+| `GET`    | `/proxies?https=false`      | list working proxies           |
+| `GET`    | `/count?https=false`        | count working proxies          |
+| `DELETE` | `/proxy/{host}:{port}`      | delete a bad proxy             |
+| `POST`   | `/clean`                    | clear all cached ProxyPool IPs |
+| `GET`    | `/sources`                  | list proxy sources             |
+| `POST`   | `/sources`                  | add a custom source            |
+| `POST`   | `/jobs/collect`             | queue collect job              |
+| `POST`   | `/jobs/check`               | queue recheck job              |
 
 ## Chrome ProxyPool Extension
 
