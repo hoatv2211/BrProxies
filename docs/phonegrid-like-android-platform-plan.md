@@ -1,5 +1,9 @@
 # Kế hoạch triển khai Android Cloud Phone Platform giống PhoneGrid
 
+## Repo Integration Decision
+
+For BrProxies, Android runtime is implemented as an external Linux-hosted Android Manager sidecar/API. The Windows Tauri app can develop and control it, but ReDroid containers themselves require Linux host support for binder devices.
+
 ## 1. Mục tiêu
 
 Xây dựng nền tảng tự host cho phép tạo, chạy, quản lý nhiều Android instances giống LDPlayer multi-instance nhưng nhẹ hơn, dùng container thay vì emulator nặng.

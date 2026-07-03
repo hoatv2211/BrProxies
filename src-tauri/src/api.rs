@@ -4,8 +4,9 @@
 use std::sync::{OnceLock, RwLock};
 
 use axum::{
+    body::Body,
     extract::{Path, Query, Request},
-    http::{header::AUTHORIZATION, StatusCode},
+    http::{header::{AUTHORIZATION, CONTENT_TYPE}, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
@@ -543,6 +544,35 @@ async fn list_proxies() -> ApiResult {
     Ok(Json(json!(out)))
 }
 
+// ---- Android Manager forwarder ----
+
+async fn android_forward_get(Path(path): Path<String>) -> Result<Response, ApiError> {
+    let (bytes, status, content_type) = crate::android::android_request_raw("GET", &path, None)
+        .await
+        .map_err(|e| err(StatusCode::BAD_GATEWAY, e))?;
+    let status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    Response::builder()
+        .status(status)
+        .header(CONTENT_TYPE, content_type)
+        .body(Body::from(bytes))
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+
+async fn android_forward_post(Path(path): Path<String>, Json(body): Json<Value>) -> ApiResult {
+    let body = crate::android::unwrap_post_body(Some(body)).unwrap_or(Value::Null);
+    let (value, _) = crate::android::android_request_json("POST", &path, Some(body))
+        .await
+        .map_err(|e| err(StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(value))
+}
+
+async fn android_forward_delete(Path(path): Path<String>) -> ApiResult {
+    let (value, _) = crate::android::android_request_json("DELETE", &path, None)
+        .await
+        .map_err(|e| err(StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(value))
+}
+
 async fn list_folders() -> ApiResult {
     let metas = crate::profile::list_all().map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let mut set = std::collections::BTreeSet::new();
@@ -605,6 +635,7 @@ pub async fn serve(secret: String, port: u16) {
         .route("/running", get(list_running))
         .route("/proxies", get(list_proxies).post(add_proxy))
         .route("/proxies/:id", delete(delete_proxy))
+        .route("/android/*path", get(android_forward_get).post(android_forward_post).delete(android_forward_delete))
         .route_layer(middleware::from_fn(auth));
 
     let app = Router::new()

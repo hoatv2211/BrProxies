@@ -1,6 +1,7 @@
 // BrProxies Tauri backend.
 
 mod api;
+mod android;
 mod cookies;
 mod fingerprints;
 mod launch;
@@ -1125,6 +1126,15 @@ pub fn run() {
             settings_save,
             api_info,
             api_regenerate_token,
+            android::android_start,
+            android::android_stop,
+            android::android_status,
+            android::android_validate,
+            android::android_get,
+            android::android_post,
+            android::android_delete,
+            android::android_screenshot,
+            android::android_config_path,
             ps_get_key,
             ps_set_key,
             ps_me,

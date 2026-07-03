@@ -19,6 +19,7 @@ coverage/
 
 # ===== Rust / Tauri build artifacts =====
 src-tauri/target/
+target-codex-check/
 src-tauri/Cargo.lock.bak
 src-tauri/.cargo-lock
 src-tauri/gen/

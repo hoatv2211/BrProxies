@@ -74,3 +74,13 @@ pub fn proxypool_dir() -> Result<PathBuf> {
 pub fn proxypool_config_path() -> Result<PathBuf> {
     Ok(proxypool_dir()?.join("config.json"))
 }
+
+pub fn android_manager_dir() -> Result<PathBuf> {
+    let p = config_root()?.join("android-manager");
+    std::fs::create_dir_all(&p)?;
+    Ok(p)
+}
+
+pub fn android_manager_config_path() -> Result<PathBuf> {
+    Ok(android_manager_dir()?.join("config.json"))
+}

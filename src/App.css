@@ -2211,3 +2211,50 @@ button.status-pill.status-link:active { transform: translateY(1px); }
   .pp-row .pp-sort:nth-child(7) { display: none; }
   .pp-filter-row { grid-template-columns: 1fr; }
 }
+
+.android-view .android-create-row {
+  align-items: end;
+  grid-template-columns: minmax(180px, 320px) auto;
+  margin: 16px 0;
+}
+
+.android-view .android-tools {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto minmax(160px, .45fr) minmax(110px, .25fr);
+  gap: 10px;
+  align-items: end;
+  margin: 0 0 16px;
+}
+
+.android-view .toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.android-view .android-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.android-view .android-checks span {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.android-view .android-checks .ok { color: var(--ok); }
+.android-view .android-checks .warn { color: var(--warn); }
+
+.android-view .row-actions {
+  min-width: 390px;
+  justify-content: flex-start;
+}
+
+@media (max-width: 1100px) {
+  .android-view .android-tools { grid-template-columns: 1fr; }
+}

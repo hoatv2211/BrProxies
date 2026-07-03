@@ -670,6 +670,104 @@ paths:
                   id: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /android/health:
+    get:
+      tags: [Android]
+      summary: Android manager health
+      security:
+        - bearerAuth: []
+      responses:
+        "200": { description: Android manager health response. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /android/validate:
+    get:
+      tags: [Android]
+      summary: Validate Android host capabilities
+      security:
+        - bearerAuth: []
+      responses:
+        "200": { description: Host validation checks. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /android/instances:
+    get:
+      tags: [Android]
+      summary: List Android instances
+      security:
+        - bearerAuth: []
+      responses:
+        "200": { description: Android instances. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Android]
+      summary: Create Android instance
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                image: { type: string }
+                proxy_id: { type: string, nullable: true }
+      responses:
+        "200": { description: Created Android instance. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /android/instances/{id}/start:
+    post:
+      tags: [Android]
+      summary: Start Android instance
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Updated Android instance. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /android/instances/{id}/stop:
+    post:
+      tags: [Android]
+      summary: Stop Android instance
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Updated Android instance. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /android/instances/{id}/screenshot:
+    get:
+      tags: [Android]
+      summary: Capture Android screenshot
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: PNG screenshot.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
 components:
   securitySchemes:
     bearerAuth:

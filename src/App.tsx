@@ -237,6 +237,10 @@ type Settings = {
   proxypool_check_interval_seconds?: number;
   proxypool_timeout_seconds?: number;
   proxypool_max_concurrency?: number;
+  android_manager_host?: string;
+  android_manager_port?: number;
+  android_manager_token?: string;
+  android_manager_fake_runtime?: boolean;
 };
 type ApiInfo = {
   enabled: boolean;
@@ -244,7 +248,23 @@ type ApiInfo = {
   base_url: string;
   token: string;
 };
-type Section = "browsers" | "proxies" | "proxypool" | "proxyshard" | "fingerprints" | "settings";
+type Section = "browsers" | "android" | "proxies" | "proxypool" | "proxyshard" | "fingerprints" | "settings";
+type AndroidManagerStatus = { running: boolean; pid: number | null; base_url: string; config_path: string };
+type AndroidHostCheck = { name: string; ok: boolean; detail: string };
+type AndroidValidation = { ok: boolean; checks: AndroidHostCheck[] };
+type AndroidInstance = {
+  id: string;
+  name: string;
+  image: string;
+  adb_host: string;
+  adb_port: number;
+  container_name: string;
+  volume_name: string;
+  status: string;
+  proxy_id?: string | null;
+  created_at: string;
+  updated_at: string;
+};
 type ProxyPoolStatus = { running: boolean; pid: number | null; base_url: string; config_path: string };
 type ProxyPoolHealth = {
   ok: boolean;
@@ -640,6 +660,7 @@ export default function App() {
           />
           <main className="main">
             {section === "browsers" && <BrowsersView />}
+            {section === "android" && <AndroidView />}
             {section === "proxies" && <ProxiesView />}
             {section === "proxypool" && <ProxyPoolView />}
             {section === "proxyshard" && <ProxyShardView />}
@@ -667,6 +688,7 @@ function Sidebar({
       label: "Workspace",
       items: [
         { id: "browsers", label: "Browsers", svg: <IconShard /> },
+        { id: "android", label: "Android", svg: <IconPhone /> },
         { id: "proxies", label: "Proxies", svg: <IconWire /> },
         { id: "proxypool", label: "ProxyPool", svg: <IconPool /> },
         { id: "proxyshard", label: "ProxyShard", svg: <IconCart /> },
@@ -799,6 +821,12 @@ const IconPool = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
     <path d="M3 3.5c0-1 1.8-1.8 4-1.8s4 .8 4 1.8-1.8 1.8-4 1.8-4-.8-4-1.8Z" stroke="currentColor" strokeWidth="1.2"/>
     <path d="M3 3.5v3c0 1 1.8 1.8 4 1.8s4-.8 4-1.8v-3M3 6.5v3c0 1 1.8 1.8 4 1.8s4-.8 4-1.8v-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+  </svg>
+);
+const IconPhone = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <rect x="4" y="1.5" width="6" height="11" rx="1.4" stroke="currentColor" strokeWidth="1.3"/>
+    <path d="M6.3 10.5h1.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
   </svg>
 );
 const IconHex = () => (
@@ -3322,6 +3350,149 @@ function PsBuyCard({ onPurchased }: { onPurchased: () => void }) {
 
 // ---- ProxyPool ----
 
+function AndroidView() {
+  const [status, setStatus] = useState<AndroidManagerStatus | null>(null);
+  const [validation, setValidation] = useState<AndroidValidation | null>(null);
+  const [instances, setInstances] = useState<AndroidInstance[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("phone-1");
+  const [apkPath, setApkPath] = useState("");
+  const [proxyHost, setProxyHost] = useState("127.0.0.1");
+  const [proxyPort, setProxyPort] = useState("8080");
+
+  const refresh = async () => {
+    const [st, val, list] = await Promise.allSettled([
+      invoke<AndroidManagerStatus>("android_status"),
+      invoke<AndroidValidation>("android_validate"),
+      invoke<AndroidInstance[]>("android_get", { path: "/instances" }),
+    ]);
+    if (st.status === "fulfilled") setStatus(st.value);
+    if (val.status === "fulfilled") setValidation(val.value);
+    if (list.status === "fulfilled") setInstances(list.value);
+  };
+
+  useEffect(() => { refresh().catch(() => {}); }, []);
+
+  const run = async (label: string, fn: () => Promise<unknown>, reload = true) => {
+    setBusy(true);
+    try {
+      await fn();
+      toast.ok(label);
+      if (reload) await refresh();
+    } catch (e) {
+      toast.err(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createInstance = () => run("Android instance created", async () => {
+    await invoke("android_post", { path: "/instances", body: { name } });
+  });
+
+  const chooseApk = async () => {
+    const selected = await open({ multiple: false, filters: [{ name: "Android APK", extensions: ["apk"] }] });
+    if (typeof selected === "string") setApkPath(selected);
+  };
+
+  const installApk = (item: AndroidInstance) => run("APK installed", async () => {
+    await invoke("android_post", { path: `/instances/${item.id}/install-apk`, body: { apk_path: apkPath } });
+  });
+
+  const setProxy = (item: AndroidInstance) => run("Proxy assigned", async () => {
+    await invoke("android_post", {
+      path: `/instances/${item.id}/set-proxy`,
+      body: { host: proxyHost, port: Number(proxyPort), proxy_id: `${proxyHost}:${proxyPort}` },
+    });
+  });
+
+  const openScreenshot = (item: AndroidInstance) => run("Screenshot captured", async () => {
+    const path = await invoke<string>("android_screenshot", { path: `/instances/${item.id}/screenshot` });
+    await openPath(path);
+  }, false);
+
+  const endpoint = status?.base_url || "http://127.0.0.1:40327";
+
+  return (
+    <div className="launcher-panel android-view">
+      <div className="panel-head">
+        <div>
+          <p className="eyebrow">Android Cloud Phone</p>
+          <h2>Android instances</h2>
+        </div>
+        <div className="toolbar-actions">
+          <button className="btn-ghost" onClick={() => refresh()} disabled={busy}>Refresh</button>
+          {status?.running ? (
+            <button className="btn-ghost danger" onClick={() => run("Android Manager stopped", () => invoke("android_stop"))} disabled={busy}>Stop manager</button>
+          ) : (
+            <button className="btn-primary" onClick={() => run("Android Manager started", () => invoke("android_start"))} disabled={busy}><IconPhone /> Start manager</button>
+          )}
+        </div>
+      </div>
+
+      <div className="metrics-row">
+        <Metric label="Manager" value={status?.running ? "Running" : "Stopped"} accent={status?.running} />
+        <Metric label="Host" value={validation?.ok ? "Ready" : "Needs setup"} accent={validation?.ok} />
+        <Metric label="Instances" value={String(instances.length)} />
+        <Metric label="Endpoint" value={endpoint.replace("http://", "")} />
+      </div>
+
+      {validation && !validation.ok && (
+        <div className="hint-list android-checks">
+          {validation.checks.map((check) => (
+            <span key={check.name} className={check.ok ? "ok" : "warn"}>{check.name}: {check.ok ? "ok" : check.detail}</span>
+          ))}
+        </div>
+      )}
+
+      <div className="form-row android-create-row">
+        <Field label="Name" value={name} onChange={setName} />
+        <button className="btn-primary" onClick={createInstance} disabled={busy || !name.trim()}><IconPhone /> Create</button>
+      </div>
+
+      <div className="android-tools">
+        <Field label="APK path" value={apkPath} onChange={setApkPath} />
+        <button className="btn-ghost" onClick={chooseApk} disabled={busy}>Browse</button>
+        <Field label="Proxy host" value={proxyHost} onChange={setProxyHost} />
+        <Field label="Proxy port" value={proxyPort} onChange={setProxyPort} />
+      </div>
+
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Status</th><th>ADB</th><th>Proxy</th><th>Image</th><th>Created</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {instances.map((item) => (
+              <tr key={item.id}>
+                <td>{item.name}</td>
+                <td><span className="status-pill">{item.status}</span></td>
+                <td className="mono">{item.adb_host}:{item.adb_port}</td>
+                <td className="mono">{item.proxy_id || "-"}</td>
+                <td className="mono">{item.image}</td>
+                <td>{new Date(item.created_at).toLocaleString()}</td>
+                <td>
+                  <div className="row-actions">
+                    <button className="btn-ghost btn-sm" onClick={() => run("Started", () => invoke("android_post", { path: `/instances/${item.id}/start`, body: {} }))} disabled={busy}>Start</button>
+                    <button className="btn-ghost btn-sm" onClick={() => run("Stopped", () => invoke("android_post", { path: `/instances/${item.id}/stop`, body: {} }))} disabled={busy}>Stop</button>
+                    <button className="btn-ghost btn-sm" onClick={() => installApk(item)} disabled={busy || !apkPath.trim()}>APK</button>
+                    <button className="btn-ghost btn-sm" onClick={() => openScreenshot(item)} disabled={busy}>Shot</button>
+                    <button className="btn-ghost btn-sm" onClick={() => run("Screen opened", () => invoke("android_post", { path: `/instances/${item.id}/open-screen`, body: {} }), false)} disabled={busy}>Screen</button>
+                    <button className="btn-ghost btn-sm" onClick={() => setProxy(item)} disabled={busy || !proxyHost.trim() || !Number(proxyPort)}>Proxy</button>
+                    <button className="btn-ghost btn-sm" onClick={() => run("Proxy cleared", () => invoke("android_post", { path: `/instances/${item.id}/clear-proxy`, body: {} }))} disabled={busy}>Clear</button>
+                    <button className="btn-ghost btn-sm danger" onClick={() => run("Deleted", () => invoke("android_delete", { path: `/instances/${item.id}` }))} disabled={busy}>Delete</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {instances.length === 0 && <div className="empty">No Android instances yet.</div>}
+    </div>
+  );
+}
+
 function ProxyPoolView() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [status, setStatus] = useState<ProxyPoolStatus | null>(null);
@@ -5154,6 +5325,10 @@ function SettingsView() {
     screen_resolution_mode: "fingerprint",
     api_enabled: true,
     api_port: 40325,
+    android_manager_host: "127.0.0.1",
+    android_manager_port: 40327,
+    android_manager_token: "",
+    android_manager_fake_runtime: false,
   });
   const [api, setApi] = useState<ApiInfo | null>(null);
   const refreshApi = () => invoke<ApiInfo>("api_info").then(setApi).catch(() => {});
@@ -5267,6 +5442,35 @@ function SettingsView() {
             </p>
           </>
         )}
+      </div>
+
+      <div className="card" style={{ marginBottom: 14 }}>
+        <h3>Android Manager</h3>
+        <p className="muted small">
+          Controls ReDroid Android containers through a Linux-hosted manager API. Use <strong>127.0.0.1</strong> for local sidecar development or a private host address for remote Ubuntu.
+        </p>
+        <div className="form-row form-row-3">
+          <label>
+            <span className="lbl">Host</span>
+            <input value={s.android_manager_host ?? "127.0.0.1"} onChange={(e) => setS({ ...s, android_manager_host: e.target.value })} />
+          </label>
+          <label>
+            <span className="lbl">Port</span>
+            <input type="number" value={s.android_manager_port ?? 40327} onChange={(e) => setS({ ...s, android_manager_port: Number(e.target.value) || 40327 })} />
+          </label>
+          <label>
+            <span className="lbl">Token</span>
+            <input type="password" value={s.android_manager_token ?? ""} onChange={(e) => setS({ ...s, android_manager_token: e.target.value })} />
+          </label>
+        </div>
+        <label className="row-inline" style={{ marginTop: 10 }}>
+          <input
+            type="checkbox"
+            checked={s.android_manager_fake_runtime ?? false}
+            onChange={(e) => setS({ ...s, android_manager_fake_runtime: e.target.checked })}
+          />
+          <span className="lbl">Fake runtime for Windows UI/API testing</span>
+        </label>
       </div>
 
       <div className="card" style={{ marginBottom: 14 }}>
