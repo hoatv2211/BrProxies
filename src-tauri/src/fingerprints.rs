@@ -1,7 +1,7 @@
 // User-managed Fingerprint Library.
 //
 // Each entry is a full FingerprintConfig JSON stored under
-// `$CONFIG/shardx-launcher/fingerprints/<id>.json`.  The GPU select in
+// `$CONFIG/brproxies-launcher/fingerprints/<id>.json`.  The GPU select in
 // the profile editor pulls its options from here — i.e. the user can
 // curate which GPUs/devices show up by importing their own JSON files
 // (or by deleting bundled ones).
@@ -61,7 +61,7 @@ fn tag_color_for(platform: &str) -> String {
 
 pub fn list_all() -> Result<Vec<LibraryEntry>> {
     // Pure filesystem read.  Everything in
-    //   $CONFIG/shardx-launcher/fingerprints/*.json
+    //   $CONFIG/brproxies-launcher/fingerprints/*.json
     // becomes a library entry, no matter how it got there — UI
     // imports, drag-and-drop, or the user dumping files in by hand.
     // No bundled set, no compile-time tables, no "builtin" concept.
@@ -78,7 +78,7 @@ pub fn list_all() -> Result<Vec<LibraryEntry>> {
         } else if let Ok(payload) = serde_json::from_str::<Value>(&body) {
             // Bare FingerprintConfig (no LibraryEntry wrapper) — wrap on
             // the fly so user-imported files that came straight from
-            // ShardX still show up.
+            // older ShardX exports still show up.
             let id = entry
                 .path()
                 .file_stem()

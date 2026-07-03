@@ -1,10 +1,10 @@
-"""ShardX Python SDK — launch isolated anti-detect browser profiles from Python.
+"""BrProxies Python SDK — launch isolated anti-detect browser profiles from Python.
 
 Quickstart:
 
-    from shardx import ShardX
+    from brproxies import BrProxies
 
-    sdk = ShardX()
+    sdk = BrProxies()
     # Engine + Widevine + fingerprint library auto-download from CDN on
     # first call — no separate install step.
 
@@ -51,7 +51,7 @@ from .runtime import RUNTIME_DIR, Runtime
 from .screen import apply_screen_strategy, default_mode_for
 
 
-class ShardX:
+class BrProxies:
     """Top-level facade: bundles the runtime + fingerprint library + launcher."""
 
     def __init__(
@@ -64,7 +64,7 @@ class ShardX:
             cache_dir: where the engine, Widevine, and bundled fingerprint
                 library live (defaults to the per-OS app-data dir).
             profiles_dir: per-profile user-data-dir root (cookies, IndexedDB,
-                cache). Defaults to `./shardx-profiles/` relative to the
+                cache). Defaults to `./brproxies-profiles/` relative to the
                 running script — easy for users to find. Per-launch override
                 also available via `launch(..., user_data_dir=...)`.
         """
@@ -143,7 +143,7 @@ class ShardX:
                 page = await ctx.new_page()
                 await page.goto("https://example.com")
 
-        The underlying `BrowserSession` is attached as `browser._shardx`
+        The underlying `BrowserSession` is attached as `browser._brproxies`
         if you need `cdp_url`, `geo`, `proxy_udp_ms`, etc.
         """
         kwargs.setdefault("cdp", True)
@@ -154,6 +154,7 @@ class ShardX:
 
         async with async_playwright() as pw:
             browser: PatchrightBrowser = await pw.chromium.connect_over_cdp(bsess.cdp_url)
+            browser._brproxies = bsess  # type: ignore[attr-defined]
             browser._shardx = bsess  # type: ignore[attr-defined]
             try:
                 yield browser
@@ -190,7 +191,7 @@ class ShardX:
 
 
 __all__ = [
-    "ShardX",
+    "BrProxies", "ShardX",
     "Runtime", "RUNTIME_DIR",
     "Profile", "FingerprintLibrary",
     "Browser", "BrowserSession",
@@ -202,3 +203,6 @@ __all__ = [
     "has_auto_fields", "resolve_auto_fields",
 ]
 __version__ = "0.1.0"
+
+# Backward-compatible alias for code written against the original SDK name.
+ShardX = BrProxies

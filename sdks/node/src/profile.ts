@@ -81,9 +81,9 @@ export class FingerprintLibrary {
 }
 
 /** Per-profile state (cookies / IndexedDB / cache) — preserved across
- *  launches. Defaults to `./shardx-profiles/<id>/` next to the running
+ *  launches. Defaults to `./brproxies-profiles/<id>/` next to the running
  *  script. Override per launch with `userDataDir` or per SDK with
- *  `new ShardX({ profilesDir })`. */
+ *  `new BrProxies({ profilesDir })`. */
 export function userDataDir(runtime: Runtime, profileId: string, base?: string): string {
   const root = base ?? runtime.profilesRoot;
   const d = join(root, profileId);

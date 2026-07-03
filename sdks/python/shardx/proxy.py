@@ -49,8 +49,8 @@ class ParsedProxy:
         return self.scheme == "socks5"
 
     def to_arg(self) -> str:
-        """Format as ShardX engine's `--proxy-server` argument.  Includes
-        URL-encoded `user:pass@` when present — the ShardX fork honours
+        """Format as BrProxies engine's `--proxy-server` argument.  Includes
+        URL-encoded `user:pass@` when present — the BrProxies fork honours
         inline credentials in `--proxy-server` (stock Chromium does not)
         so this is the only mechanism the SDK needs to authenticate
         SOCKS5 / HTTP-proxy traffic.  Mirrors the launcher's Rust

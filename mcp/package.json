@@ -1,9 +1,9 @@
 {
-  "name": "shardx-mcp",
+  "name": "brproxies-mcp",
   "version": "0.1.0",
-  "description": "MCP server for the ShardX Launcher — drives the local automation API and a profile's browser over CDP.",
+  "description": "MCP server for BrProxies — drives the local automation API and a profile's browser over CDP.",
   "type": "module",
-  "bin": { "shardx-mcp": "index.js" },
+  "bin": { "brproxies-mcp": "index.js" },
   "scripts": { "start": "node index.js" },
   "engines": { "node": ">=18" },
   "dependencies": {

@@ -11,7 +11,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "shardx_launcher_lib"
+name = "brproxies_launcher_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -36,7 +36,7 @@ axum = "0.7"
 jsonwebtoken = "9"
 # Cookie import/export from the profile's Chromium Cookies SQLite DB.
 # Values are v10 (AES-128-CBC) with a SHA-256 domain prefix; the OSCrypt
-# key is fixed because ShardX runs with --use-mock-keychain (patch 0041).
+# key is fixed because BrProxies runs with --use-mock-keychain (patch 0041).
 # MCP bootstrap: download the server tarball from GitHub + extract.
 flate2 = "1"
 tar = "0.4"

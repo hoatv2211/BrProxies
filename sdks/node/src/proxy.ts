@@ -41,8 +41,8 @@ export function parseProxy(url: string): ParsedProxy {
   };
 }
 
-/** Format as the ShardX engine's `--proxy-server` argument.  Includes
- *  URL-encoded `user:pass@` when present — the ShardX fork honours
+/** Format as the BrProxies engine's `--proxy-server` argument.  Includes
+ *  URL-encoded `user:pass@` when present — the BrProxies fork honours
  *  inline credentials in `--proxy-server` (stock Chromium does not)
  *  so this is the only mechanism the SDK needs to authenticate
  *  SOCKS5 / HTTP-proxy traffic.  Mirrors the launcher's Rust

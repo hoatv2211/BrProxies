@@ -26,7 +26,7 @@ pub fn resolve_binary() -> Result<PathBuf> {
         }
     }
     #[cfg(target_os = "macos")]
-    let guess = "/Users/kritos/Documents/GitHub/ShardXBrowser/build/src/out/Release_GN_arm64/ShardX.app/Contents/MacOS/ShardX";
+    let guess = "/Users/kritos/Documents/GitHub/BrProxiesBrowser/build/src/out/Release_GN_arm64/BrProxies.app/Contents/MacOS/BrProxies";
     #[cfg(target_os = "windows")]
     let guess = "C:\\Program Files\\BrProxies\\BrProxies.exe";
     #[cfg(target_os = "linux")]

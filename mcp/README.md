@@ -1,7 +1,7 @@
-# ShardX MCP server
+# BrProxies MCP server
 
 An [MCP](https://modelcontextprotocol.io) server that lets an AI client
-(Claude Desktop, Cursor, …) drive the **ShardX Launcher**:
+(Claude Desktop, Cursor, …) drive **BrProxies**:
 
 - the local automation **HTTP API** — create/edit/launch/close profiles,
   manage proxies, fingerprints, folders and cookies;
@@ -16,7 +16,7 @@ MCP client.
 
 ### 1. Install deps
 
-`connectOverCDP` only *connects* to the already-running ShardX browser, so
+`connectOverCDP` only *connects* to the already-running BrProxies browser, so
 patchright's own Chromium is never needed — install with the browser
 download skipped to keep `node_modules` small:
 
@@ -30,12 +30,12 @@ PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 PATCHRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm instal
 ```json
 {
   "mcpServers": {
-    "shardx": {
+    "brproxies": {
       "command": "node",
       "args": ["/ABSOLUTE/PATH/mcp/index.js"],
       "env": {
-        "SHARDX_API": "http://127.0.0.1:40325",
-        "SHARDX_TOKEN": "<Bearer token from Settings → Automation API>"
+        "BRPROXIES_API": "http://127.0.0.1:40325",
+        "BRPROXIES_TOKEN": "<Bearer token from Settings → Automation API>"
       }
     }
   }
@@ -48,16 +48,18 @@ If you'd rather host it yourself and connect by URL, run it with
 `MCP_HTTP_PORT` set — it then serves at `http://127.0.0.1:<port>/mcp`:
 
 ```bash
-MCP_HTTP_PORT=40326 SHARDX_API=http://127.0.0.1:40325 SHARDX_TOKEN=… node index.js
+MCP_HTTP_PORT=40326 BRPROXIES_API=http://127.0.0.1:40325 BRPROXIES_TOKEN=… node index.js
 ```
 
 ## Environment
 
 | Var             | Default                  | Notes                                               |
 | --------------- | ------------------------ | --------------------------------------------------- |
-| `SHARDX_API`    | `http://127.0.0.1:40325` | Launcher API base URL.                              |
-| `SHARDX_TOKEN`  | —                        | Bearer token (Settings). Required.                  |
+| `BRPROXIES_API` | `http://127.0.0.1:40325` | Launcher API base URL.                              |
+| `BRPROXIES_TOKEN` | —                      | Bearer token (Settings). Required.                  |
 | `MCP_HTTP_PORT` | — (stdio)                | When set, serve HTTP at `127.0.0.1:<port>/mcp`.     |
+
+Legacy `SHARDX_API` and `SHARDX_TOKEN` env vars still work as aliases.
 
 ## Tools
 

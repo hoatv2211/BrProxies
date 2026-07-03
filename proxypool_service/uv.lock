@@ -563,7 +563,7 @@ wheels = [
 ]
 
 [[package]]
-name = "shardx-proxypool-service"
+name = "brproxies-proxypool-service"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

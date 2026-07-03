@@ -26,7 +26,7 @@ def create_app(config: ProxyPoolConfig, redis: Redis | None = None, start_schedu
     redis_client = redis or Redis.from_url(config.redis_url, decode_responses=True)
     storage = ProxyStorage(redis_client)
     runtime = ProxyPoolRuntime(config, storage)
-    app = FastAPI(title="ShardX ProxyPool", version="0.1.0")
+app = FastAPI(title="BrProxies ProxyPool", version="0.1.0")
     app.state.config = config
     app.state.storage = storage
     app.state.runtime = runtime

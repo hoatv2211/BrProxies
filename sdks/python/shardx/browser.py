@@ -1,4 +1,4 @@
-"""Browser launch + lifecycle. Spawns the ShardX engine with the same
+"""Browser launch + lifecycle. Spawns the BrProxies engine with the same
 spoofing flags the desktop launcher uses, plus pre-launch:
 
   • resolve_auto_fields  — fill timezone/language/geolocation from a
@@ -88,7 +88,7 @@ class Browser:
         probe_timeout: float = 6.0,
         user_data_dir: Optional[str | Path] = None,
     ) -> BrowserSession:
-        # Auto-install on first use (high-level ShardX.launch already does
+        # Auto-install on first use (high-level BrProxies.launch already does
         # this; the call is here too so low-level Browser.launch users
         # don't have to remember).
         self.runtime.install()
@@ -115,7 +115,7 @@ class Browser:
         # ---- profile + udd ---------------------------------------------
         udd_base = Path(user_data_dir).resolve() if user_data_dir else None
         udd = _user_data_dir(self.runtime, profile.id, base=udd_base)
-        print(f"[shardx] profile '{profile.id}' → {udd}", flush=True)
+        print(f"[brproxies] profile '{profile.id}' → {udd}", flush=True)
         fp_file = udd / "fingerprint.json"
         fp_file.write_text(json.dumps(profile.config))
 

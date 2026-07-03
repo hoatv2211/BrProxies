@@ -1,7 +1,7 @@
-# shardx (Python)
+# brproxies (Python)
 
-Self-contained Python SDK for the **ShardX anti-detect browser** by the
-ShardBrowser project.
+Self-contained Python SDK for the **BrProxies anti-detect browser** by the
+BrProxies project.
 
 This package does **not** depend on the desktop launcher. On first use
 it downloads the patched Chromium 148 engine, Widevine CDM, and the
@@ -15,7 +15,7 @@ Driven by [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-python
 ## Install
 
 ```bash
-pip install shardx
+pip install brproxies
 ```
 
 Supported hosts: **macOS arm64**, **Windows x64**, **Linux x64**.
@@ -44,10 +44,10 @@ await sdk.session(..., extra_args=["--no-sandbox", "--disable-dev-shm-usage"])
 
 ```python
 import asyncio
-from shardx import ShardX
+from brproxies import BrProxies
 
 async def main():
-    sdk = ShardX()
+    sdk = BrProxies()
     # Engine + Widevine + fingerprint library auto-download from CDN on
     # the first `session`/`launch`/`list_profiles` call (~170 MB once,
     # etag-cached afterward).  No separate install step.
@@ -60,7 +60,7 @@ async def main():
         print(await page.title())
 
         # Inspect what the SDK resolved before launch:
-        sess = browser._shardx
+        sess = browser._brproxies
         print(sess.geo)                   # GeoInfo(...) from ip-api / ipapi.co
         print(sess.proxy_udp_ms,          # UDP RTT in ms or None
               sess.quic_enabled,          # bool
@@ -174,7 +174,7 @@ async with sdk.session(profile, proxy="socks5://...") as browser:
 ### Use your own fingerprint JSON
 
 ```python
-from shardx import Profile
+from brproxies import Profile
 
 profile = Profile.from_file("/path/to/my-custom.json")
 async with sdk.session(profile) as browser:
@@ -214,12 +214,12 @@ with `cdp_url`, `geo`, `proxy_udp_ms`, `quic_enabled`, `webrtc_mode`,
 ## Cache layout
 
 ```
-~/Library/Application Support/shardx-sdk/    (mac)
-%LOCALAPPDATA%\shardx-sdk\                   (win)
-~/.cache/shardx-sdk/                         (linux)
+~/Library/Application Support/brproxies-sdk/    (mac)
+%LOCALAPPDATA%\brproxies-sdk\                   (win)
+~/.cache/brproxies-sdk/                         (linux)
 ├── manifest.json             ← etag cache for browser/widevine/fingerprints
-├── ShardX-Mac-arm64/         ← extracted engine
-│   └── ShardX.app/…
+├── BrProxies runtime/       ← extracted engine cache
+│   └── BrProxies.app/…
 ├── fingerprints/             ← 170 bundled .json profiles
 │   ├── win-rtx4060.json
 │   └── …
@@ -230,7 +230,7 @@ with `cdp_url`, `geo`, `proxy_udp_ms`, `quic_enabled`, `webrtc_mode`,
 Override the cache root:
 
 ```python
-sdk = ShardX(cache_dir="/data/shardx")
+sdk = BrProxies(cache_dir="/data/brproxies")
 ```
 
 ## Update the runtime
@@ -247,5 +247,5 @@ sdk.runtime.install(force=True)
 
 MIT (this SDK). The Chromium-fork engine binary downloaded at runtime
 is a closed-source product — see the
-[main repo](https://github.com/hoatv2211/ShardBrowser) for engine
+[main repo](https://github.com/hoatv2211/BrProxies) for engine
 licensing.

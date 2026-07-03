@@ -9,7 +9,7 @@ use tauri::{Emitter, Window};
 use tokio::io::AsyncWriteExt;
 
 const PUB_BASE: &str = "https://pub-e57a7c60f6934eb09a6600bf2fc59cdc.r2.dev";
-const LAUNCHER_RELEASE_REPO: &str = "hoatv2211/ShardBrowser";
+const LAUNCHER_RELEASE_REPO: &str = "hoatv2211/BrProxies";
 /// Chromium version baked into the current bundle (used for Mac Framework path).
 const CHROMIUM_VERSION: &str = "148.0.7778.216";
 
@@ -66,10 +66,16 @@ pub fn host_spec() -> Option<PlatformSpec> {
 
 /// Runtime dir under the platform data dir; kept outside the launcher bundle.
 pub fn runtime_dir() -> Result<PathBuf> {
-    Ok(dirs::data_dir()
-        .context("platform data dir not available")?
-        .join("shardx-launcher")
-        .join("runtime"))
+    let base = dirs::data_dir().context("platform data dir not available")?;
+    let root = base.join("brproxies-launcher");
+    let legacy = base.join("shardx-launcher");
+    if !root.exists() && legacy.exists() {
+        std::fs::rename(&legacy, &root).or_else(|_| {
+            std::fs::create_dir_all(&root)?;
+            Ok::<(), std::io::Error>(())
+        })?;
+    }
+    Ok(root.join("runtime"))
 }
 
 /// Path to the chrome binary inside the extracted runtime.

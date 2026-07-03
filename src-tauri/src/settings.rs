@@ -13,7 +13,7 @@ pub struct ProxyPoolCustomSource {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Settings {
-    /// Absolute path to the ShardX executable.
+    /// Absolute path to the BrProxies browser executable.
     pub browser_path: Option<String>,
     /// Theme: "dark" (default) or "light".
     #[serde(default = "default_theme")]
@@ -23,7 +23,7 @@ pub struct Settings {
     #[serde(default)]
     pub geo_checker: Option<String>,
     /// "fingerprint" (use the screen from the bound fingerprint) or
-    /// "real" (let ShardX use the host's real screen).
+    /// "real" (let BrProxies use the host's real screen).
     #[serde(default)]
     pub screen_resolution_mode: Option<String>,
 
