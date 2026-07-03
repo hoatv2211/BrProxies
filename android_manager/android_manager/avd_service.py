@@ -64,6 +64,11 @@ class AvdService:
             check=True,
         )
 
+    def exists(self, avd_name: str) -> bool:
+        result = self.runner([self._tool("avdmanager"), "list", "avd"], check=True, capture_output=True, text=True)
+        output = str(getattr(result, "stdout", ""))
+        return any(line.strip() == f"Name: {avd_name}" for line in output.splitlines())
+
     def resolve_system_image(self) -> str:
         configured = self.system_image
         parts = configured.split(";")

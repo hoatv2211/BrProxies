@@ -87,6 +87,8 @@ def test_windows_avd_runtime_lifecycle_uses_avd_service(tmp_path, monkeypatch):
             calls.append(("init", data_dir, system_image, device))
         def create(self, name):
             calls.append(("create", name))
+        def exists(self, name):
+            return True
         def start(self, name, port):
             calls.append(("start", name, port))
         def open_screen(self, port):
@@ -118,3 +120,41 @@ def test_windows_avd_runtime_lifecycle_uses_avd_service(tmp_path, monkeypatch):
     assert ("screen", 5556) in calls
     assert ("stop", 5556) in calls
     assert ("delete", avd_name) in calls
+
+def test_windows_avd_start_creates_legacy_instance_avd_when_missing(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeAvdService:
+        def __init__(self, data_dir, system_image="", device=""):
+            pass
+        def create(self, name):
+            calls.append(("create", name))
+        def exists(self, name):
+            calls.append(("exists", name))
+            return False
+        def start(self, name, port):
+            calls.append(("start", name, port))
+
+    monkeypatch.setattr("android_manager.api.AvdService", FakeAvdService)
+    config_path = tmp_path / "android-manager.json"
+    config_path.write_text(
+        '{"runtime":"windows_avd","data_dir":"' + str(tmp_path).replace('\\', '\\\\') + '","fake_runtime":true}',
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(str(config_path)))
+    created = client.post("/instances", json={"name": "legacy phone"}).json()
+    store_path = tmp_path / "android-manager.json"
+    store_path.write_text(
+        '{"runtime":"windows_avd","data_dir":"' + str(tmp_path).replace('\\', '\\\\') + '"}',
+        encoding="utf-8",
+    )
+
+    resp = client.post(f"/instances/{created['id']}/start")
+
+    assert resp.status_code == 200
+    assert resp.json()["adb_port"] == 5556
+    assert calls == [
+        ("exists", created["container_name"]),
+        ("create", created["container_name"]),
+        ("start", created["container_name"], 5556),
+    ]

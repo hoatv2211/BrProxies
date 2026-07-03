@@ -115,6 +115,15 @@ class AndroidStore:
             raise KeyError(instance_id)
         return self.get_instance(instance_id)
 
+    def set_adb_port(self, instance_id: str, adb_port: int) -> AndroidInstance:
+        now = _now()
+        with self._connection() as conn:
+            cur = conn.execute("update android_instances set adb_port = ?, updated_at = ? where id = ?", (adb_port, now, instance_id))
+            rowcount = cur.rowcount
+        if rowcount == 0:
+            raise KeyError(instance_id)
+        return self.get_instance(instance_id)
+
     def set_proxy(self, instance_id: str, proxy_id: str | None) -> AndroidInstance:
         now = _now()
         with self._connection() as conn:

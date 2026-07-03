@@ -125,7 +125,12 @@ def create_app(config_path: str | None = None) -> FastAPI:
         try:
             item = store.get_instance(instance_id)
             if _runtime(cfg) == "windows_avd":
-                _avd(cfg).start(item.container_name, item.adb_port)
+                if item.adb_port % 2 != 0:
+                    item = store.set_adb_port(instance_id, _allocate_port(store, cfg))
+                service = _avd(cfg)
+                if not service.exists(item.container_name):
+                    service.create(item.container_name)
+                service.start(item.container_name, item.adb_port)
             else:
                 DockerService(fake=_is_fake(cfg)).start(item.container_name)
                 AdbService(fake=_is_fake(cfg)).connect(item.adb_host, item.adb_port)
