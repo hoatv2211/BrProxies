@@ -68,6 +68,8 @@ pub struct Settings {
     pub android_manager_token: String,
     #[serde(default)]
     pub android_manager_fake_runtime: bool,
+    #[serde(default = "default_android_auto_create_default_instance")]
+    pub android_auto_create_default_instance: bool,
 }
 
 fn default_theme() -> String {
@@ -92,6 +94,7 @@ fn default_proxypool_concurrency() -> u64 { 50 }
 fn default_source_parser() -> String { "text".into() }
 fn default_android_manager_host() -> String { "127.0.0.1".into() }
 fn default_android_manager_port() -> u16 { 40327 }
+fn default_android_auto_create_default_instance() -> bool { true }
 
 pub fn load() -> Result<Settings> {
     let path = store::settings_path()?;
@@ -117,6 +120,7 @@ pub fn load() -> Result<Settings> {
             android_manager_port: default_android_manager_port(),
             android_manager_token: String::new(),
             android_manager_fake_runtime: false,
+            android_auto_create_default_instance: default_android_auto_create_default_instance(),
         });
     }
     let body = fs::read_to_string(&path)?;

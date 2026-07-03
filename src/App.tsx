@@ -241,6 +241,7 @@ type Settings = {
   android_manager_port?: number;
   android_manager_token?: string;
   android_manager_fake_runtime?: boolean;
+  android_auto_create_default_instance?: boolean;
 };
 type ApiInfo = {
   enabled: boolean;
@@ -248,10 +249,23 @@ type ApiInfo = {
   base_url: string;
   token: string;
 };
-type Section = "browsers" | "android" | "proxies" | "proxypool" | "proxyshard" | "fingerprints" | "settings";
+type Section = "browsers" | "android" | "proxies" | "proxypool" | "proxyshard" | "fingerprints" | "androidTemplates" | "settings";
 type AndroidManagerStatus = { running: boolean; pid: number | null; base_url: string; config_path: string };
 type AndroidHostCheck = { name: string; ok: boolean; detail: string };
 type AndroidValidation = { ok: boolean; checks: AndroidHostCheck[] };
+type AndroidTemplate = {
+  id: string;
+  label: string;
+  vendor: string;
+  codename: string;
+  androidVersion: string;
+  runtime: "redroid" | "docker-android";
+  image: string;
+  deviceType: "phone" | "tablet";
+  screen: string;
+  source: "BrProxies" | "MiCode" | "docker-android";
+  notes: string;
+};
 type AndroidInstance = {
   id: string;
   name: string;
@@ -265,6 +279,97 @@ type AndroidInstance = {
   created_at: string;
   updated_at: string;
 };
+
+const ANDROID_TEMPLATES: AndroidTemplate[] = [
+  {
+    id: "brproxies-default-redroid-12",
+    label: "BrProxies Default Android",
+    vendor: "BrProxies",
+    codename: "default-redroid-12",
+    androidVersion: "12",
+    runtime: "redroid",
+    image: "redroid/redroid:12.0.0-latest",
+    deviceType: "phone",
+    screen: "1080x2400",
+    source: "BrProxies",
+    notes: "Safe default for fake runtime and Linux ReDroid host.",
+  },
+  {
+    id: "pixel-like-redroid-13",
+    label: "Pixel-like ReDroid 13",
+    vendor: "Google-like",
+    codename: "pixel-redroid-13",
+    androidVersion: "13",
+    runtime: "redroid",
+    image: "redroid/redroid:13.0.0-latest",
+    deviceType: "phone",
+    screen: "1080x2400",
+    source: "BrProxies",
+    notes: "Metadata-only profile for newer Android app testing.",
+  },
+  {
+    id: "xiaomi-sunstone-u",
+    label: "Redmi Note 12 5G",
+    vendor: "Xiaomi",
+    codename: "sunstone",
+    androidVersion: "U",
+    runtime: "redroid",
+    image: "redroid/redroid:12.0.0-latest",
+    deviceType: "phone",
+    screen: "1080x2400",
+    source: "MiCode",
+    notes: "Codename metadata inspired by Xiaomi kernel source index; runtime remains ReDroid.",
+  },
+  {
+    id: "xiaomi-agate-u",
+    label: "Xiaomi 11T",
+    vendor: "Xiaomi",
+    codename: "agate",
+    androidVersion: "U",
+    runtime: "redroid",
+    image: "redroid/redroid:12.0.0-latest",
+    deviceType: "phone",
+    screen: "1080x2400",
+    source: "MiCode",
+    notes: "Device metadata only; no Xiaomi kernel source is bundled or used.",
+  },
+  {
+    id: "docker-android-galaxy-s10",
+    label: "Samsung Galaxy S10",
+    vendor: "Samsung",
+    codename: "galaxy-s10",
+    androidVersion: "11",
+    runtime: "docker-android",
+    image: "redroid/redroid:12.0.0-latest",
+    deviceType: "phone",
+    screen: "1440x3040",
+    source: "docker-android",
+    notes: "Reference device name from docker-android; MVP creates a ReDroid-compatible instance.",
+  },
+  {
+    id: "docker-android-nexus-5",
+    label: "Nexus 5",
+    vendor: "Google",
+    codename: "nexus-5",
+    androidVersion: "9",
+    runtime: "docker-android",
+    image: "redroid/redroid:12.0.0-latest",
+    deviceType: "phone",
+    screen: "1080x1920",
+    source: "docker-android",
+    notes: "Reference device name from docker-android; MVP creates a ReDroid-compatible instance.",
+  },
+];
+
+const ANDROID_DEFAULT_TEMPLATE = ANDROID_TEMPLATES[0];
+
+function androidInstanceBodyFromTemplate(t: AndroidTemplate) {
+  return {
+    name: t.label,
+    image: t.image,
+    proxy_id: null,
+  };
+}
 type ProxyPoolStatus = { running: boolean; pid: number | null; base_url: string; config_path: string };
 type ProxyPoolHealth = {
   ok: boolean;
@@ -665,6 +770,7 @@ export default function App() {
             {section === "proxypool" && <ProxyPoolView />}
             {section === "proxyshard" && <ProxyShardView />}
             {section === "fingerprints" && <FingerprintsView />}
+            {section === "androidTemplates" && <AndroidTemplatesView onOpenAndroid={() => setSection("android")} />}
             {section === "settings" && <SettingsView />}
           </main>
           <ToastHost />
@@ -696,7 +802,10 @@ function Sidebar({
     },
     {
       label: "Library",
-      items: [{ id: "fingerprints", label: "Fingerprints", svg: <IconHex /> }],
+      items: [
+        { id: "fingerprints", label: "Fingerprints", svg: <IconHex /> },
+        { id: "androidTemplates", label: "Android", svg: <IconPhone /> },
+      ],
     },
     {
       label: "System",
@@ -3350,7 +3459,86 @@ function PsBuyCard({ onPurchased }: { onPurchased: () => void }) {
 
 // ---- ProxyPool ----
 
+function AndroidTemplatesView({ onOpenAndroid }: { onOpenAndroid: () => void }) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const groups = useMemo(() => {
+    const buckets = new Map<string, AndroidTemplate[]>();
+    for (const t of ANDROID_TEMPLATES) {
+      const key = `${t.source} - ${t.runtime}`;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key)!.push(t);
+    }
+    return [...buckets.entries()];
+  }, []);
+
+  const useTemplate = async (t: AndroidTemplate) => {
+    setBusyId(t.id);
+    try {
+      await invoke("android_start");
+      await invoke("android_post", { path: "/instances", body: androidInstanceBodyFromTemplate(t) });
+      toast.ok(`Created "${t.label}"`);
+      onOpenAndroid();
+    } catch (e) {
+      toast.err(String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <section className="page android-template-view">
+      <Topbar crumbs={["Library", "Android"]} search="" onSearch={() => {}} />
+      <div className="page-title">
+        <h1>Android Template Library</h1>
+        <div className="page-actions">
+          <button className="btn-ghost" onClick={onOpenAndroid}><IconPhone /> Android tab</button>
+        </div>
+      </div>
+      <p className="muted small" style={{ marginBottom: 14 }}>
+        Metadata-only templates for creating Android Manager instances. Xiaomi and docker-android entries provide device hints; MVP runtime remains ReDroid-compatible.
+      </p>
+      <div className="lib-groups">
+        {groups.map(([group, list]) => (
+          <div key={group} className="lib-group">
+            <div className="lib-group-head">
+              <span className="lib-group-dot lib-dot-android" />
+              <h3>{group}</h3>
+              <span className="lib-group-count">{list.length}</span>
+            </div>
+            <div className="android-template-grid">
+              {list.map((t) => (
+                <article key={t.id} className="android-template-card">
+                  <div className="android-template-head">
+                    <div>
+                      <h4>{t.label}</h4>
+                      <p>{t.vendor} / {t.codename}</p>
+                    </div>
+                    <span className={`status-pill ${t.runtime === "redroid" ? "status-active" : ""}`}>{t.runtime}</span>
+                  </div>
+                  <div className="android-template-meta">
+                    <span>Android {t.androidVersion}</span>
+                    <span>{t.deviceType}</span>
+                    <span>{t.screen}</span>
+                    <span className="mono">{t.image}</span>
+                  </div>
+                  <p className="muted small">{t.notes}</p>
+                  <div className="row-actions">
+                    <button className="btn-ghost btn-sm" onClick={() => useTemplate(t)} disabled={busyId !== null}>
+                      {busyId === t.id ? "Creating..." : "Use ->"}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function AndroidView() {
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [status, setStatus] = useState<AndroidManagerStatus | null>(null);
   const [validation, setValidation] = useState<AndroidValidation | null>(null);
   const [instances, setInstances] = useState<AndroidInstance[]>([]);
@@ -3361,11 +3549,13 @@ function AndroidView() {
   const [proxyPort, setProxyPort] = useState("8080");
 
   const refresh = async () => {
-    const [st, val, list] = await Promise.allSettled([
+    const [cfg, st, val, list] = await Promise.allSettled([
+      invoke<Settings>("settings_get"),
       invoke<AndroidManagerStatus>("android_status"),
       invoke<AndroidValidation>("android_validate"),
       invoke<AndroidInstance[]>("android_get", { path: "/instances" }),
     ]);
+    if (cfg.status === "fulfilled") setSettings(cfg.value);
     if (st.status === "fulfilled") setStatus(st.value);
     if (val.status === "fulfilled") setValidation(val.value);
     if (list.status === "fulfilled") setInstances(list.value);
@@ -3388,6 +3578,16 @@ function AndroidView() {
 
   const createInstance = () => run("Android instance created", async () => {
     await invoke("android_post", { path: "/instances", body: { name } });
+  });
+
+  const startManagerAndMaybeCreateDefault = () => run("Android Manager started", async () => {
+    await invoke("android_start");
+    const list = await invoke<AndroidInstance[]>("android_get", { path: "/instances" }).catch(() => []);
+    const autoCreate = settings?.android_auto_create_default_instance ?? true;
+    if (autoCreate && list.length === 0) {
+      await invoke("android_post", { path: "/instances", body: androidInstanceBodyFromTemplate(ANDROID_DEFAULT_TEMPLATE) });
+      toast.ok("Default Android instance created");
+    }
   });
 
   const chooseApk = async () => {
@@ -3425,7 +3625,7 @@ function AndroidView() {
           {status?.running ? (
             <button className="btn-ghost danger" onClick={() => run("Android Manager stopped", () => invoke("android_stop"))} disabled={busy}>Stop manager</button>
           ) : (
-            <button className="btn-primary" onClick={() => run("Android Manager started", () => invoke("android_start"))} disabled={busy}><IconPhone /> Start manager</button>
+            <button className="btn-primary" onClick={startManagerAndMaybeCreateDefault} disabled={busy}><IconPhone /> Start manager</button>
           )}
         </div>
       </div>
@@ -5329,6 +5529,7 @@ function SettingsView() {
     android_manager_port: 40327,
     android_manager_token: "",
     android_manager_fake_runtime: false,
+    android_auto_create_default_instance: true,
   });
   const [api, setApi] = useState<ApiInfo | null>(null);
   const refreshApi = () => invoke<ApiInfo>("api_info").then(setApi).catch(() => {});
@@ -5470,6 +5671,14 @@ function SettingsView() {
             onChange={(e) => setS({ ...s, android_manager_fake_runtime: e.target.checked })}
           />
           <span className="lbl">Fake runtime for Windows UI/API testing</span>
+        </label>
+        <label className="row-inline" style={{ marginTop: 10 }}>
+          <input
+            type="checkbox"
+            checked={s.android_auto_create_default_instance ?? true}
+            onChange={(e) => setS({ ...s, android_auto_create_default_instance: e.target.checked })}
+          />
+          <span className="lbl">Auto-create default Android after manager starts</span>
         </label>
       </div>
 
