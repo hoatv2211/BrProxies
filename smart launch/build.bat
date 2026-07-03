@@ -26,11 +26,32 @@ if errorlevel 1 (
 
 echo Building BrProxies...
 
+set "ANDROID_MANAGER_VENV=android_manager\.venv"
+set "ANDROID_MANAGER_PYTHON=%CD%\%ANDROID_MANAGER_VENV%\Scripts\python.exe"
+
 if not exist "node_modules" (
   echo Installing npm dependencies...
   call npm.cmd install
   if errorlevel 1 goto :error
 )
+
+where python >nul 2>nul
+if errorlevel 1 (
+  echo.
+  echo Missing Python in PATH.
+  echo Install Python 3.11+ from https://www.python.org/downloads/ then reopen terminal or VS Code.
+  goto :error
+)
+
+if not exist "%ANDROID_MANAGER_PYTHON%" (
+  echo Creating Android Manager Python venv...
+  python -m venv "%ANDROID_MANAGER_VENV%"
+  if errorlevel 1 goto :error
+)
+
+echo Installing Android Manager dependencies...
+"%ANDROID_MANAGER_PYTHON%" -m pip install -e "android_manager[dev]"
+if errorlevel 1 goto :error
 
 echo Building web assets...
 call npm.cmd run build
