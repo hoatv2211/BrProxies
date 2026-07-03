@@ -1,13 +1,27 @@
 # Android Manager
 
-Android Manager controls ReDroid containers on a Linux host for BrProxies.
+Android Manager controls Android instances for BrProxies. On Windows it can run real Android Emulator/AVD instances. On Linux it can run ReDroid containers when binder devices are available.
 
 ## Supported MVP Topology
 
 - BrProxies may run on Windows, macOS, or Linux.
+- Windows real runtime uses Android Emulator/AVD plus ADB and scrcpy.
 - ReDroid containers run on Ubuntu 22.04/24.04 Linux host.
-- Windows development can use a fake manager or remote Ubuntu host.
-- Windows-native ReDroid is not required for MVP.
+- Fake runtime is only for UI/API debugging and does not open a real Android screen.
+- Windows-native ReDroid is not supported.
+
+## Windows AVD Runtime
+
+Install Android Studio or Android Command Line Tools, then make these commands available on `PATH`:
+
+```powershell
+adb version
+emulator -version
+avdmanager list avd
+scrcpy --version
+```
+
+In BrProxies Settings, set Android Manager runtime to `Windows AVD (real local emulator)`. Press `Start manager`, create an Android instance, then press `Start`. The manager creates an AVD, starts `emulator.exe`, waits for ADB boot, and opens `scrcpy`.
 
 ## Linux Host Packages
 

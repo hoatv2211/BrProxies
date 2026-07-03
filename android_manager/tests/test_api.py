@@ -21,6 +21,20 @@ def test_validate_endpoint_returns_checks():
     assert "checks" in body
     assert {item["name"] for item in body["checks"]} >= {"docker", "adb", "binder"}
 
+def test_validate_endpoint_uses_windows_avd_runtime(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANDROID_MANAGER_RUNTIME", raising=False)
+    config_path = tmp_path / "android-manager.json"
+    config_path.write_text('{"runtime":"windows_avd","data_dir":"' + str(tmp_path).replace('\\', '\\\\') + '"}', encoding="utf-8")
+    client = TestClient(create_app(str(config_path)))
+
+    resp = client.get("/validate")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["runtime"] == "windows_avd"
+    assert {item["name"] for item in body["checks"]} >= {"adb", "emulator", "avdmanager", "scrcpy"}
+    assert "binder" not in {item["name"] for item in body["checks"]}
+
 
 def test_create_lifecycle_and_screenshot(tmp_path, monkeypatch):
     monkeypatch.setenv("ANDROID_MANAGER_DATA_DIR", str(tmp_path))
@@ -64,3 +78,43 @@ def test_create_uses_config_path_fake_runtime(tmp_path, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "running"
+
+def test_windows_avd_runtime_lifecycle_uses_avd_service(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeAvdService:
+        def __init__(self, data_dir, system_image="", device=""):
+            calls.append(("init", data_dir, system_image, device))
+        def create(self, name):
+            calls.append(("create", name))
+        def start(self, name, port):
+            calls.append(("start", name, port))
+        def open_screen(self, port):
+            calls.append(("screen", port))
+        def stop(self, port):
+            calls.append(("stop", port))
+        def delete(self, name):
+            calls.append(("delete", name))
+
+    monkeypatch.setattr("android_manager.api.AvdService", FakeAvdService)
+    monkeypatch.setattr("android_manager.api.AdbService", lambda fake=False: None)
+    config_path = tmp_path / "android-manager.json"
+    config_path.write_text(
+        '{"runtime":"windows_avd","data_dir":"' + str(tmp_path).replace('\\', '\\\\') + '","adb_port_start":5555,"adb_port_end":5559}',
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(str(config_path)))
+
+    created = client.post("/instances", json={"name": "phone-avd"}).json()
+    assert created["status"] == "running"
+    assert created["adb_port"] == 5556
+    assert client.post(f"/instances/{created['id']}/open-screen").json()["opened"] is True
+    assert client.post(f"/instances/{created['id']}/stop").json()["status"] == "stopped"
+    assert client.delete(f"/instances/{created['id']}").json()["ok"] is True
+
+    avd_name = "brproxies_android_phone_avd_5556"
+    assert ("create", avd_name) in calls
+    assert ("start", avd_name, 5556) in calls
+    assert ("screen", 5556) in calls
+    assert ("stop", 5556) in calls
+    assert ("delete", avd_name) in calls
