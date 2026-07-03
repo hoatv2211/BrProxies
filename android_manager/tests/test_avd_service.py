@@ -62,3 +62,16 @@ def test_avd_service_selects_installed_playstore_image(tmp_path):
     service = AvdService(data_dir=str(tmp_path), sdk_root=str(sdk), which=lambda name: name)
 
     assert service.resolve_system_image() == "system-images;android-35;google_apis_playstore;x86_64"
+
+
+def test_avd_service_checks_existing_avd_by_name(tmp_path):
+    class Runner:
+        def __call__(self, args, **kwargs):
+            class Result:
+                stdout = "Available Android Virtual Devices:\n    Name: phone_a\n    Path: C:\\avd\\phone_a.avd\n"
+            return Result()
+
+    service = AvdService(data_dir=str(tmp_path), runner=Runner(), which=lambda name: name)
+
+    assert service.exists("phone_a") is True
+    assert service.exists("phone_b") is False
