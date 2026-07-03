@@ -66,6 +66,8 @@ pub struct Settings {
     pub android_manager_port: u16,
     #[serde(default)]
     pub android_manager_token: String,
+    #[serde(default = "default_android_manager_runtime")]
+    pub android_manager_runtime: String,
     #[serde(default)]
     pub android_manager_fake_runtime: bool,
     #[serde(default = "default_android_auto_create_default_instance")]
@@ -84,17 +86,49 @@ fn default_api_port() -> u16 {
     40325
 }
 
-fn default_proxypool_host() -> String { "127.0.0.1".into() }
-fn default_proxypool_port() -> u16 { 40326 }
-fn default_proxypool_redis_url() -> String { "redis://127.0.0.1:6379/0".into() }
-fn default_proxypool_collect_interval() -> u64 { 900 }
-fn default_proxypool_check_interval() -> u64 { 300 }
-fn default_proxypool_timeout() -> f64 { 8.0 }
-fn default_proxypool_concurrency() -> u64 { 50 }
-fn default_source_parser() -> String { "text".into() }
-fn default_android_manager_host() -> String { "127.0.0.1".into() }
-fn default_android_manager_port() -> u16 { 40327 }
-fn default_android_auto_create_default_instance() -> bool { true }
+fn default_proxypool_host() -> String {
+    "127.0.0.1".into()
+}
+fn default_proxypool_port() -> u16 {
+    40326
+}
+fn default_proxypool_redis_url() -> String {
+    "redis://127.0.0.1:6379/0".into()
+}
+fn default_proxypool_collect_interval() -> u64 {
+    900
+}
+fn default_proxypool_check_interval() -> u64 {
+    300
+}
+fn default_proxypool_timeout() -> f64 {
+    8.0
+}
+fn default_proxypool_concurrency() -> u64 {
+    50
+}
+fn default_source_parser() -> String {
+    "text".into()
+}
+fn default_android_manager_host() -> String {
+    "127.0.0.1".into()
+}
+fn default_android_manager_port() -> u16 {
+    40327
+}
+fn default_android_manager_runtime() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        "windows_avd".into()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "redroid".into()
+    }
+}
+fn default_android_auto_create_default_instance() -> bool {
+    true
+}
 
 pub fn load() -> Result<Settings> {
     let path = store::settings_path()?;
@@ -119,6 +153,7 @@ pub fn load() -> Result<Settings> {
             android_manager_host: default_android_manager_host(),
             android_manager_port: default_android_manager_port(),
             android_manager_token: String::new(),
+            android_manager_runtime: default_android_manager_runtime(),
             android_manager_fake_runtime: false,
             android_auto_create_default_instance: default_android_auto_create_default_instance(),
         });

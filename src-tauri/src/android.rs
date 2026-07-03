@@ -29,10 +29,16 @@ struct AndroidPostBody {
 }
 
 fn base_url(s: &settings::Settings) -> String {
-    format!("http://{}:{}", s.android_manager_host, s.android_manager_port)
+    format!(
+        "http://{}:{}",
+        s.android_manager_host, s.android_manager_port
+    )
 }
 
-fn status_with(s: &settings::Settings, child: Option<&Child>) -> Result<AndroidManagerStatus, String> {
+fn status_with(
+    s: &settings::Settings,
+    child: Option<&Child>,
+) -> Result<AndroidManagerStatus, String> {
     Ok(AndroidManagerStatus {
         running: child.is_some(),
         pid: child.and_then(|c| c.id()),
@@ -61,14 +67,23 @@ fn service_workdir() -> PathBuf {
 
 fn write_config(s: &settings::Settings) -> Result<PathBuf, String> {
     let path = store::android_manager_config_path().map_err(|e| e.to_string())?;
+    let runtime = if s.android_manager_fake_runtime {
+        "fake"
+    } else {
+        s.android_manager_runtime.as_str()
+    };
     let body = serde_json::json!({
         "host": s.android_manager_host,
         "port": s.android_manager_port,
+        "runtime": runtime,
         "data_dir": store::android_manager_dir().map_err(|e| e.to_string())?.display().to_string(),
         "fake_runtime": s.android_manager_fake_runtime,
     });
-    std::fs::write(&path, serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(path)
 }
 
@@ -115,7 +130,9 @@ async fn spawn_sidecar(config_path: PathBuf) -> Result<Child, String> {
             Err(err) => last_error = format!("{program}: {err}"),
         }
     }
-    Err(format!("failed to start Android Manager sidecar ({last_error})"))
+    Err(format!(
+        "failed to start Android Manager sidecar ({last_error})"
+    ))
 }
 
 #[tauri::command]
@@ -189,7 +206,9 @@ pub fn android_config_path() -> Result<String, String> {
 pub async fn android_screenshot(path: String) -> Result<String, String> {
     let (bytes, _, content_type) = android_request_raw("GET", &path, None).await?;
     if !content_type.contains("image/png") {
-        return Err(format!("Android Manager returned non-PNG content-type: {content_type}"));
+        return Err(format!(
+            "Android Manager returned non-PNG content-type: {content_type}"
+        ));
     }
     let dir = store::android_manager_dir()
         .map_err(|e| e.to_string())?
@@ -201,25 +220,45 @@ pub async fn android_screenshot(path: String) -> Result<String, String> {
         .last()
         .unwrap_or("android")
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
         .collect::<String>();
     let out = dir.join(format!("{name}.png"));
     fs::write(&out, bytes).map_err(|e| e.to_string())?;
     Ok(out.display().to_string())
 }
 
-pub async fn android_request_json(method: &str, path: &str, body: Option<Value>) -> Result<(Value, reqwest::StatusCode), String> {
+pub async fn android_request_json(
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+) -> Result<(Value, reqwest::StatusCode), String> {
     let (bytes, status, content_type) = android_request_raw(method, path, body).await?;
     if !content_type.contains("application/json") {
-        return Err(format!("Android Manager returned non-JSON content-type: {content_type}"));
+        return Err(format!(
+            "Android Manager returned non-JSON content-type: {content_type}"
+        ));
     }
     let value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     Ok((value, status))
 }
 
-pub async fn android_request_raw(method: &str, path: &str, body: Option<Value>) -> Result<(Vec<u8>, reqwest::StatusCode, String), String> {
+pub async fn android_request_raw(
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+) -> Result<(Vec<u8>, reqwest::StatusCode, String), String> {
     let s = settings::load().map_err(|e| e.to_string())?;
-    let clean = if path.starts_with('/') { path.to_string() } else { format!("/{path}") };
+    let clean = if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    };
     let url = format!("{}{}", base_url(&s), clean);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -230,12 +269,18 @@ pub async fn android_request_raw(method: &str, path: &str, body: Option<Value>) 
         "DELETE" => client.delete(url),
         _ => client.get(url),
     };
-    let req = if let Some(token) = (!s.android_manager_token.is_empty()).then_some(s.android_manager_token) {
+    let req = if let Some(token) =
+        (!s.android_manager_token.is_empty()).then_some(s.android_manager_token)
+    {
         req.bearer_auth(token)
     } else {
         req
     };
-    let req = if let Some(body) = body { req.json(&body) } else { req };
+    let req = if let Some(body) = body {
+        req.json(&body)
+    } else {
+        req
+    };
     let resp = req.send().await.map_err(|e| e.to_string())?;
     let status = resp.status();
     let content_type = resp
@@ -246,14 +291,19 @@ pub async fn android_request_raw(method: &str, path: &str, body: Option<Value>) 
         .to_string();
     let bytes = resp.bytes().await.map_err(|e| e.to_string())?.to_vec();
     if !status.is_success() {
-        return Err(format!("Android Manager API {status}: {}", String::from_utf8_lossy(&bytes)));
+        return Err(format!(
+            "Android Manager API {status}: {}",
+            String::from_utf8_lossy(&bytes)
+        ));
     }
     Ok((bytes, status, content_type))
 }
 
 pub fn unwrap_post_body(value: Option<Value>) -> Option<Value> {
-    value.map(|v| match serde_json::from_value::<AndroidPostBody>(v.clone()) {
-        Ok(wrapper) => wrapper.body,
-        Err(_) => v,
-    })
+    value.map(
+        |v| match serde_json::from_value::<AndroidPostBody>(v.clone()) {
+            Ok(wrapper) => wrapper.body,
+            Err(_) => v,
+        },
+    )
 }

@@ -240,6 +240,7 @@ type Settings = {
   android_manager_host?: string;
   android_manager_port?: number;
   android_manager_token?: string;
+  android_manager_runtime?: "windows_avd" | "redroid" | "fake" | string;
   android_manager_fake_runtime?: boolean;
   android_auto_create_default_instance?: boolean;
 };
@@ -252,7 +253,7 @@ type ApiInfo = {
 type Section = "browsers" | "android" | "proxies" | "proxypool" | "proxyshard" | "fingerprints" | "androidTemplates" | "settings";
 type AndroidManagerStatus = { running: boolean; pid: number | null; base_url: string; config_path: string };
 type AndroidHostCheck = { name: string; ok: boolean; detail: string };
-type AndroidValidation = { ok: boolean; checks: AndroidHostCheck[] };
+type AndroidValidation = { ok: boolean; runtime?: string; checks: AndroidHostCheck[] };
 type AndroidTemplate = {
   id: string;
   label: string;
@@ -3611,6 +3612,8 @@ function AndroidView() {
     await openPath(path);
   }, false);
 
+  const activeAndroidRuntime = settings?.android_manager_fake_runtime ? "fake" : settings?.android_manager_runtime;
+
   const openAndroidScreen = async (item: AndroidInstance) => {
     const result = await invoke<{ ok?: boolean; opened?: boolean; message?: string }>("android_post", {
       path: `/instances/${item.id}/open-screen`,
@@ -3623,7 +3626,7 @@ function AndroidView() {
     setBusy(true);
     try {
       await invoke("android_post", { path: `/instances/${item.id}/start`, body: {} });
-      if (settings?.android_manager_fake_runtime) {
+      if (activeAndroidRuntime === "fake") {
         toast.err("Fake runtime only marks Android as running; no real screen is opened on Windows.");
       } else {
         await openAndroidScreen(item);
@@ -3659,6 +3662,7 @@ function AndroidView() {
       <div className="metrics-row">
         <Metric label="Manager" value={status?.running ? "Running" : "Stopped"} accent={status?.running} />
         <Metric label="Host" value={validation?.ok ? "Ready" : "Needs setup"} accent={validation?.ok} />
+        <Metric label="Runtime" value={validation?.runtime || activeAndroidRuntime || "redroid"} />
         <Metric label="Instances" value={String(instances.length)} />
         <Metric label="Endpoint" value={endpoint.replace("http://", "")} />
       </div>
@@ -5554,6 +5558,7 @@ function SettingsView() {
     android_manager_host: "127.0.0.1",
     android_manager_port: 40327,
     android_manager_token: "",
+    android_manager_runtime: HOST_OS === "Windows" ? "windows_avd" : "redroid",
     android_manager_fake_runtime: false,
     android_auto_create_default_instance: true,
   });
@@ -5674,8 +5679,26 @@ function SettingsView() {
       <div className="card" style={{ marginBottom: 14 }}>
         <h3>Android Manager</h3>
         <p className="muted small">
-          Controls ReDroid Android containers through a Linux-hosted manager API. Use <strong>127.0.0.1</strong> for local sidecar development or a private host address for remote Ubuntu.
+          Controls Android instances through a local or remote manager API. Use <strong>Windows AVD</strong> for real Android on Windows; use <strong>ReDroid</strong> only on a Linux host with binder devices.
         </p>
+        <label>
+          <span className="lbl">Runtime</span>
+          <select
+            value={s.android_manager_fake_runtime ? "fake" : (s.android_manager_runtime ?? (HOST_OS === "Windows" ? "windows_avd" : "redroid"))}
+            onChange={(e) => {
+              const runtime = e.target.value;
+              setS({
+                ...s,
+                android_manager_runtime: runtime === "fake" ? (s.android_manager_runtime === "fake" ? "windows_avd" : s.android_manager_runtime ?? "windows_avd") : runtime,
+                android_manager_fake_runtime: runtime === "fake",
+              });
+            }}
+          >
+            <option value="windows_avd">Windows AVD (real local emulator)</option>
+            <option value="redroid">ReDroid (Linux host)</option>
+            <option value="fake">Fake (UI/API debug only)</option>
+          </select>
+        </label>
         <div className="form-row form-row-3">
           <label>
             <span className="lbl">Host</span>
@@ -5690,14 +5713,6 @@ function SettingsView() {
             <input type="password" value={s.android_manager_token ?? ""} onChange={(e) => setS({ ...s, android_manager_token: e.target.value })} />
           </label>
         </div>
-        <label className="row-inline" style={{ marginTop: 10 }}>
-          <input
-            type="checkbox"
-            checked={s.android_manager_fake_runtime ?? false}
-            onChange={(e) => setS({ ...s, android_manager_fake_runtime: e.target.checked })}
-          />
-          <span className="lbl">Fake runtime for Windows UI/API testing</span>
-        </label>
         <label className="row-inline" style={{ marginTop: 10 }}>
           <input
             type="checkbox"
