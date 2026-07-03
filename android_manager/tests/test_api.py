@@ -158,3 +158,23 @@ def test_windows_avd_start_creates_legacy_instance_avd_when_missing(tmp_path, mo
         ("create", created["container_name"]),
         ("start", created["container_name"], 5556),
     ]
+
+def test_windows_avd_create_runtime_error_returns_400(tmp_path, monkeypatch):
+    class FakeAvdService:
+        def __init__(self, data_dir, system_image="", device=""):
+            pass
+        def create(self, name):
+            raise RuntimeError("No Android x86_64 system image is installed")
+
+    monkeypatch.setattr("android_manager.api.AvdService", FakeAvdService)
+    config_path = tmp_path / "android-manager.json"
+    config_path.write_text(
+        '{"runtime":"windows_avd","data_dir":"' + str(tmp_path).replace('\\', '\\\\') + '","adb_port_start":5555,"adb_port_end":5559}',
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(str(config_path)), raise_server_exceptions=False)
+
+    resp = client.post("/instances", json={"name": "phone-avd"})
+
+    assert resp.status_code == 400
+    assert "No Android x86_64 system image" in resp.json()["detail"]
