@@ -43,7 +43,10 @@ def test_create_lifecycle_and_screenshot(tmp_path, monkeypatch):
     apk.write_bytes(b"fake")
     assert client.post(f"/instances/{created['id']}/install-apk", json={"apk_path": str(apk)}).json()["ok"] is True
     assert client.get(f"/instances/{created['id']}/screenshot").headers["content-type"] == "image/png"
-    assert client.post(f"/instances/{created['id']}/open-screen").json()["ok"] is True
+    opened = client.post(f"/instances/{created['id']}/open-screen").json()
+    assert opened["ok"] is True
+    assert opened["opened"] is False
+    assert "fake runtime" in opened["message"]
     assert client.delete(f"/instances/{created['id']}").json()["ok"] is True
     assert client.get("/instances").json() == []
 

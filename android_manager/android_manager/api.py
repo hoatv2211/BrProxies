@@ -171,7 +171,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
         try:
             item = _store(config_path).get_instance(instance_id)
             ScrcpyService(fake=cfg.fake_runtime).open_screen(item.adb_host, item.adb_port)
-            return {"ok": True}
+            if cfg.fake_runtime:
+                return {"ok": True, "opened": False, "message": "fake runtime active; no Android window opened"}
+            return {"ok": True, "opened": True}
         except KeyError as e:
             raise _not_found(e)
 
