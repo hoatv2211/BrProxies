@@ -27,3 +27,19 @@ def test_status_proxy_and_delete(tmp_path):
     assert store.set_proxy(created.id, "127.0.0.1:8080").proxy_id == "127.0.0.1:8080"
     store.delete_instance(created.id)
     assert store.list_instances() == []
+
+def test_store_releases_sqlite_file_handle(tmp_path):
+    db_path = tmp_path / "android.sqlite3"
+    store = AndroidStore(str(db_path))
+    created = store.create_instance(
+        AndroidInstanceCreate(name="phone-3", image="redroid/redroid:12.0.0-latest"),
+        adb_port=5557,
+        container_name="brproxies-android-phone-3",
+        volume_name="brproxies_android_phone_3_data",
+    )
+    store.set_status(created.id, "running")
+    store.set_proxy(created.id, "127.0.0.1:8080")
+    store.delete_instance(created.id)
+
+    db_path.unlink()
+    assert not db_path.exists()
