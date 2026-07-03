@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from android_manager.tool_locator import find_android_tool
+from android_manager.tool_locator import find_android_tool, find_java_home
 
 
 def test_find_android_tool_uses_android_sdk_root(tmp_path, monkeypatch):
@@ -36,3 +36,14 @@ def test_find_android_tool_supports_cmdline_tools_latest(tmp_path, monkeypatch):
     monkeypatch.setattr("android_manager.tool_locator.shutil.which", lambda name: None)
 
     assert Path(find_android_tool("avdmanager") or "").name == "avdmanager.bat"
+
+
+def test_find_java_home_uses_android_studio_jbr(tmp_path, monkeypatch):
+    studio = tmp_path / "Android" / "Android Studio"
+    java = studio / "jbr" / "bin" / "java.exe"
+    java.parent.mkdir(parents=True)
+    java.write_text("", encoding="utf-8")
+    monkeypatch.delenv("JAVA_HOME", raising=False)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+
+    assert find_java_home() == str(studio / "jbr")

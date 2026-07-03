@@ -45,3 +45,20 @@ def find_android_tool(name: str) -> str | None:
             if path.exists():
                 return str(path)
     return None
+
+
+def find_java_home() -> str | None:
+    value = os.getenv("JAVA_HOME")
+    if value and (Path(value) / "bin" / "java.exe").exists():
+        return value
+    roots: list[Path] = []
+    program_files = os.getenv("ProgramFiles")
+    if program_files:
+        roots.append(Path(program_files) / "Android" / "Android Studio" / "jbr")
+    program_files_x86 = os.getenv("ProgramFiles(x86)")
+    if program_files_x86:
+        roots.append(Path(program_files_x86) / "Android" / "Android Studio" / "jbr")
+    for root in roots:
+        if (root / "bin" / "java.exe").exists() or (root / "bin" / "java").exists():
+            return str(root)
+    return None

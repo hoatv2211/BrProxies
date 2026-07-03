@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import subprocess
 import time
+import os
 from pathlib import Path
 from typing import Callable, Protocol
 
-from android_manager.tool_locator import android_sdk_roots, find_android_tool
+from android_manager.tool_locator import android_sdk_roots, find_android_tool, find_java_home
 
 
 class RunFn(Protocol):
@@ -26,6 +27,7 @@ class AvdService:
         runner: RunFn | None = None,
         popen: PopenFn | None = None,
         which: Callable[[str], str | None] | None = None,
+        java_home: str | None = None,
     ) -> None:
         self.data_dir = data_dir
         self.system_image = system_image
@@ -34,6 +36,7 @@ class AvdService:
         self.runner = runner or subprocess.run
         self.popen = popen or subprocess.Popen
         self.which = which or find_android_tool
+        self.java_home = java_home or find_java_home()
 
     def serial(self, console_port: int) -> str:
         return f"emulator-{console_port}"
@@ -43,6 +46,14 @@ class AvdService:
         if not path:
             raise RuntimeError(f"{name} CLI not found on PATH")
         return path
+
+    def _android_env(self) -> dict[str, str] | None:
+        if not self.java_home:
+            return None
+        env = dict(os.environ)
+        env["JAVA_HOME"] = self.java_home
+        env["PATH"] = str(Path(self.java_home) / "bin") + os.pathsep + env.get("PATH", "")
+        return env
 
     def create(self, avd_name: str) -> None:
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
@@ -62,10 +73,11 @@ class AvdService:
             input="no\n",
             text=True,
             check=True,
+            env=self._android_env(),
         )
 
     def exists(self, avd_name: str) -> bool:
-        result = self.runner([self._tool("avdmanager"), "list", "avd"], check=True, capture_output=True, text=True)
+        result = self.runner([self._tool("avdmanager"), "list", "avd"], check=True, capture_output=True, text=True, env=self._android_env())
         output = str(getattr(result, "stdout", ""))
         return any(line.strip() == f"Name: {avd_name}" for line in output.splitlines())
 
