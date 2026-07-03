@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Callable, Protocol
 
-from android_manager.tool_locator import find_android_tool
+from android_manager.tool_locator import android_sdk_roots, find_android_tool
 
 
 class RunFn(Protocol):
@@ -22,6 +22,7 @@ class AvdService:
         data_dir: str,
         system_image: str = "system-images;android-35;google_apis;x86_64",
         device: str = "pixel_6",
+        sdk_root: str | None = None,
         runner: RunFn | None = None,
         popen: PopenFn | None = None,
         which: Callable[[str], str | None] | None = None,
@@ -29,6 +30,7 @@ class AvdService:
         self.data_dir = data_dir
         self.system_image = system_image
         self.device = device
+        self.sdk_root = Path(sdk_root) if sdk_root else None
         self.runner = runner or subprocess.run
         self.popen = popen or subprocess.Popen
         self.which = which or find_android_tool
@@ -53,7 +55,7 @@ class AvdService:
                 "--name",
                 avd_name,
                 "--package",
-                self.system_image,
+                self.resolve_system_image(),
                 "--device",
                 self.device,
             ],
@@ -61,6 +63,21 @@ class AvdService:
             text=True,
             check=True,
         )
+
+    def resolve_system_image(self) -> str:
+        configured = self.system_image
+        parts = configured.split(";")
+        if len(parts) == 4 and self._system_image_exists(parts[1], parts[2], parts[3]):
+            return configured
+        for api in ("android-35", "android-36"):
+            for flavor in ("google_apis_playstore", "google_apis", "default"):
+                if self._system_image_exists(api, flavor, "x86_64"):
+                    return f"system-images;{api};{flavor};x86_64"
+        return configured
+
+    def _system_image_exists(self, api: str, flavor: str, abi: str) -> bool:
+        roots = [self.sdk_root] if self.sdk_root else android_sdk_roots()
+        return any(root and (root / "system-images" / api / flavor / abi).exists() for root in roots)
 
     def start(self, avd_name: str, console_port: int) -> None:
         self.popen([self._tool("emulator"), "-avd", avd_name, "-port", str(console_port), "-no-snapshot-save"])
