@@ -54,3 +54,11 @@ def test_avd_open_screen_is_optional_when_scrcpy_is_missing(tmp_path):
     service = AvdService(data_dir=str(tmp_path), which=lambda name: None)
 
     assert service.open_screen(5556) is False
+
+
+def test_avd_service_selects_installed_playstore_image(tmp_path):
+    sdk = tmp_path / "Sdk"
+    (sdk / "system-images" / "android-35" / "google_apis_playstore" / "x86_64").mkdir(parents=True)
+    service = AvdService(data_dir=str(tmp_path), sdk_root=str(sdk), which=lambda name: name)
+
+    assert service.resolve_system_image() == "system-images;android-35;google_apis_playstore;x86_64"
