@@ -14,7 +14,7 @@ def main() -> None:
     parser.add_argument("--config", default=None)
     args = parser.parse_args()
     cfg = load_config(args.config)
-    uvicorn.run(create_app(), host=cfg.host, port=cfg.port)
+    uvicorn.run(create_app(args.config), host=cfg.host, port=cfg.port)
 
 
 if __name__ == "__main__":
