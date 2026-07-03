@@ -223,8 +223,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
         try:
             item = _store(config_path).get_instance(instance_id)
             if _runtime(cfg) == "windows_avd":
-                _avd(cfg).open_screen(item.adb_port)
-                return {"ok": True, "opened": True}
+                opened = _avd(cfg).open_screen(item.adb_port)
+                if opened:
+                    return {"ok": True, "opened": True}
+                return {"ok": True, "opened": True, "message": "scrcpy is not installed; Android Emulator window is opened by start"}
             ScrcpyService(fake=_is_fake(cfg)).open_screen(item.adb_host, item.adb_port)
             if _is_fake(cfg):
                 return {"ok": True, "opened": False, "message": "fake runtime active; no Android window opened"}
