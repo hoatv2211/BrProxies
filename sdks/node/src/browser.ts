@@ -1,4 +1,4 @@
-// Browser launch + lifecycle. Spawns the ShardX engine with the same
+// Browser launch + lifecycle. Spawns the BrProxies engine with the same
 // spoofing flags the desktop launcher uses, plus pre-launch:
 //
 //   • resolveAutoFields    — fill timezone/language/geolocation from a
@@ -36,7 +36,7 @@ export interface LaunchOptions {
   /** Defaults to "cap_to_host" on macOS, "use_host" on Win/Linux. */
   screenMode?: ScreenStrategy;
   probeTimeoutMs?: number;
-  /** Custom user-data-dir root. Defaults to ./shardx-profiles/<id>/. */
+  /** Custom user-data-dir root. Defaults to ./brproxies-profiles/<id>/. */
   userDataDir?: string;
 }
 
@@ -73,7 +73,7 @@ export class Browser {
   constructor(private readonly runtime: Runtime) {}
 
   async launch(profile: Profile, opts: LaunchOptions = {}): Promise<BrowserSession> {
-    // Auto-install on first use (high-level ShardX.launch already does
+    // Auto-install on first use (high-level BrProxies.launch already does
     // this; the call is here too so low-level Browser.launch users
     // don't have to remember).
     await this.runtime.install();
@@ -100,7 +100,7 @@ export class Browser {
 
     // ---- profile + udd ----------------------------------------------
     const udd = userDataDir(this.runtime, profile.id, opts.userDataDir);
-    console.log(`[shardx] profile '${profile.id}' → ${udd}`);
+    console.log(`[brproxies] profile '${profile.id}' → ${udd}`);
     const fpFile = join(udd, "fingerprint.json");
     writeFileSync(fpFile, JSON.stringify(profile.config));
 

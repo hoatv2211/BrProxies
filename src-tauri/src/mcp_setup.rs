@@ -1,7 +1,7 @@
 // Download the MCP server source from our R2 CDN into a user-chosen
 // folder.  The app does NOT run or manage it — the user installs deps
 // + registers it with their MCP client themselves (see
-// rust/shardx-launcher/mcp/README.md).
+// the BrProxies MCP README).
 //
 // The bundle ships pre-packed at ~12 KB (just index.js + package.json
 // + README.md), so the download is instant and contains no
@@ -39,7 +39,7 @@ pub async fn download_mcp(dir: &Path) -> Result<PathBuf> {
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
-        // Strip the single top-level wrapper dir ("ShardX-MCP/") so files
+        // Strip the single top-level wrapper dir from the archive so files
         // land directly under dest/.
         let rel: PathBuf = path
             .strip_prefix(MCP_TOP_DIR)

@@ -1,8 +1,8 @@
 // Persistent storage layout under the user's config dir:
-//   $CONFIG/shardx-launcher/
+//   $CONFIG/brproxies-launcher/
 //     profiles/                   ← fingerprint profile JSON files
 //     proxies.json                ← saved proxy list
-//     user-data/<profile-id>/     ← per-profile user-data-dir for ShardX
+//     user-data/<profile-id>/     ← per-profile user-data-dir for BrProxies
 //     settings.json               ← global app settings
 
 use anyhow::{Context, Result};
@@ -10,7 +10,14 @@ use std::path::PathBuf;
 
 pub fn config_root() -> Result<PathBuf> {
     let base = dirs::config_dir().context("OS config dir unavailable")?;
-    let root = base.join("shardx-launcher");
+    let root = base.join("brproxies-launcher");
+    let legacy = base.join("shardx-launcher");
+    if !root.exists() && legacy.exists() {
+        std::fs::rename(&legacy, &root).or_else(|_| {
+            std::fs::create_dir_all(&root)?;
+            Ok::<(), std::io::Error>(())
+        })?;
+    }
     std::fs::create_dir_all(&root)?;
     Ok(root)
 }

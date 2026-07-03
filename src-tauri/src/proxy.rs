@@ -35,7 +35,7 @@ pub struct ProxyEntry {
 }
 
 impl ProxyEntry {
-    /// Build `--proxy-server=<scheme>://[user:pass@]host:port` for ShardX.
+/// Build `--proxy-server=<scheme>://[user:pass@]host:port` for BrProxies.
     pub fn to_proxy_server_arg(&self) -> String {
         let scheme = match self.kind {
             ProxyKind::Socks5 => "socks5",

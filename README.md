@@ -6,7 +6,7 @@ BrProxies is a personal desktop launcher for browser profile management,
 fingerprint control, proxy testing, local automation, and crawler proxy pooling.
 It is developed at [hoatv2211/BrProxies](https://github.com/hoatv2211/BrProxies)
 from the original [ProxyShard/ShardBrowser](https://github.com/ProxyShard/ShardBrowser)
-ShardX Launcher codebase.
+BrProxies codebase.
 
 The upstream project describes ShardX as an anti-detect Chromium launcher with
 engine-level fingerprint spoofing, proxy binding, a local HTTP API, MCP support,

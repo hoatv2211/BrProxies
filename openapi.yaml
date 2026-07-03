@@ -1,10 +1,10 @@
 openapi: 3.0.3
 
 info:
-  title: ShardX Launcher — Automation API
+  title: BrProxies — Automation API
   version: "0.1.0"
   description: |
-    Local HTTP API for automating the ShardX anti-detect browser launcher:
+    Local HTTP API for automating the BrProxies anti-detect browser launcher:
     generate fingerprints, create/launch/close profiles, and obtain a Chrome
     DevTools Protocol (CDP) WebSocket endpoint to drive a launched profile
     with Puppeteer / Playwright.
@@ -70,10 +70,10 @@ info:
     not hosted by it. Get it from the launcher (**Settings → MCP server →
     Download MCP server**, or the sidebar "Download MCP" button), which
     saves the source to a folder you choose; or from the repo at
-    `rust/shardx-launcher/mcp/`.
+    `rust/brproxies-launcher/mcp/`.
 
     Under the hood it just calls this API: configure it with
-    `SHARDX_API` (this base URL) and `SHARDX_TOKEN` (the Bearer token from
+    `BRPROXIES_API` (this base URL) and `BRPROXIES_TOKEN` (the Bearer token from
     *Settings → Automation API*). It exposes:
     - **API tools** — thin wrappers over the endpoints below
       (profiles, fingerprints, proxies, folders, cookies, start/stop).
@@ -117,7 +117,7 @@ paths:
                 type: object
                 properties:
                   ok: { type: boolean, example: true }
-                  name: { type: string, example: shardx-launcher }
+                  name: { type: string, example: brproxies-launcher }
                   version: { type: string, example: "0.1.0" }
 
   /fingerprint/new:
@@ -344,7 +344,7 @@ paths:
       tags: [Profiles]
       summary: Launch a profile (with CDP)
       description: |
-        Spawns the ShardX browser for the profile with remote-debugging
+        Spawns the BrProxies browser for the profile with remote-debugging
         enabled, resolves any `auto` timezone/locale/geo from the bound
         proxy, and returns the CDP endpoint once Chrome has written its
         DevToolsActivePort. CDP is enabled **only** on API launches (UI

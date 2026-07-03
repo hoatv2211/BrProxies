@@ -1,5 +1,5 @@
 // Top-level façade — bundles the runtime, fingerprint library, and
-// browser launcher. Mirrors the Python `ShardX` class.
+// browser launcher. Mirrors the Python `BrProxies` class.
 import { chromium, type Browser as PatchrightBrowser } from "patchright";
 
 import { Runtime, type ProgressCb } from "./runtime.js";
@@ -9,24 +9,28 @@ import { randomizeHardware, randomizePlatformVersion } from "./randomize.js";
 import { parseProxy, probeUdp } from "./proxy.js";
 import { geoCheckVia, type GeoInfo } from "./geo.js";
 
-export interface ShardXOptions {
+export interface BrProxiesOptions {
   /** Where the engine, Widevine, and bundled fingerprint library live
    *  (defaults to the per-OS app-data dir). */
   cacheDir?: string;
   progress?: ProgressCb;
   /** Per-profile user-data-dir root (cookies, IndexedDB, cache).
-   *  Defaults to `./shardx-profiles/` next to the running script. */
+   *  Defaults to `./brproxies-profiles/` next to the running script. */
   profilesDir?: string;
 }
 
+export type ShardXOptions = BrProxiesOptions;
+
 export type LaunchInput = string | Profile | Record<string, unknown>;
 
-export interface ShardXLaunchOptions extends LaunchOptions {
+export interface BrProxiesLaunchOptions extends LaunchOptions {
   /** When `fingerprint` is omitted, pick a random profile filtered by this platform substring. */
   platform?: string;
   /** When true, re-pick hardware_concurrency / device_memory / platform_version before launch. */
   randomize?: boolean;
 }
+
+export type ShardXLaunchOptions = BrProxiesLaunchOptions;
 
 export interface ProxyCheckResult {
   udpMs: number | null;
@@ -35,12 +39,12 @@ export interface ProxyCheckResult {
   wouldSetWebrtc: "auto" | "tcp_only";
 }
 
-export class ShardX {
+export class BrProxies {
   readonly runtime: Runtime;
   readonly library: FingerprintLibrary;
   private readonly browser: Browser;
 
-  constructor(opts: ShardXOptions = {}) {
+  constructor(opts: BrProxiesOptions = {}) {
     this.runtime = new Runtime(opts);
     this.library = new FingerprintLibrary(this.runtime);
     this.browser = new Browser(this.runtime);
@@ -71,7 +75,7 @@ export class ShardX {
    *                       (Same logic the desktop launcher applies when re-picking a GPU.)
    * All other options forwarded to `Browser.launch` (proxy, cdp, headless, webrtc, screenMode, …).
    */
-  async launch(fingerprint?: LaunchInput | null, opts: ShardXLaunchOptions = {}): Promise<BrowserSession> {
+  async launch(fingerprint?: LaunchInput | null, opts: BrProxiesLaunchOptions = {}): Promise<BrowserSession> {
     await this.runtime.install();
     let profile: Profile;
     if (fingerprint == null) {
@@ -110,7 +114,7 @@ export class ShardX {
    *   await close();
    * }
    */
-  async session(opts: ShardXLaunchOptions & { fingerprint?: LaunchInput | null } = {}): Promise<{
+  async session(opts: BrProxiesLaunchOptions & { fingerprint?: LaunchInput | null } = {}): Promise<{
     browser: PatchrightBrowser;
     session: BrowserSession;
     close: () => Promise<void>;
@@ -149,6 +153,8 @@ export class ShardX {
     };
   }
 }
+
+export const ShardX = BrProxies;
 
 export { Runtime, defaultCacheDir, PUB_BASE, CHROMIUM_VERSION, hostSpec } from "./runtime.js";
 export type { ProgressCb, HostSpec, Archive } from "./runtime.js";

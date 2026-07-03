@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MCP server for the ShardX Launcher.
+// MCP server for BrProxies.
 //
 // Bridges an MCP client (Claude, Cursor, …) to:
 //   1. the launcher's local automation HTTP API (profiles, proxies,
@@ -8,16 +8,17 @@
 //      (a stealth-patched Playwright) so the automation stays undetected.
 //
 // Config via env:
-//   SHARDX_API    base URL of the launcher API  (default http://127.0.0.1:40325)
-//   SHARDX_TOKEN  Bearer token from Settings → Automation API  (required)
+//   BRPROXIES_API    base URL of the launcher API  (default http://127.0.0.1:40325)
+//   BRPROXIES_TOKEN  Bearer token from Settings → Automation API  (required)
+//   SHARDX_API / SHARDX_TOKEN are accepted as legacy aliases.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { chromium } from "patchright";
 
-const API = (process.env.SHARDX_API || "http://127.0.0.1:40325").replace(/\/+$/, "");
-const TOKEN = process.env.SHARDX_TOKEN || "";
+const API = (process.env.BRPROXIES_API || process.env.SHARDX_API || "http://127.0.0.1:40325").replace(/\/+$/, "");
+const TOKEN = process.env.BRPROXIES_TOKEN || process.env.SHARDX_TOKEN || "";
 
 // ---------- HTTP API helper ----------
 
@@ -99,7 +100,7 @@ const text = (v) => ({
   content: [{ type: "text", text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }],
 });
 
-const server = new McpServer({ name: "shardx", version: "0.1.0" });
+const server = new McpServer({ name: "brproxies", version: "0.1.0" });
 
 // ================= API tools =================
 
@@ -1143,7 +1144,7 @@ server.tool(
 //   * stdio (default) — the MCP client spawns this process and talks over
 //     stdin/stdout.  Standard, works with any client.
 //   * HTTP (when MCP_HTTP_PORT is set) — listens on 127.0.0.1:<port>/mcp so
-//     the ShardX app can host it as a managed child and clients connect by
+//     BrProxies can host it as a managed child and clients connect by
 //     URL.  Used by the launcher's "embed MCP" option.
 
 const httpPort = process.env.MCP_HTTP_PORT ? Number(process.env.MCP_HTTP_PORT) : 0;
@@ -1183,7 +1184,7 @@ if (httpPort) {
       });
     })
     .listen(httpPort, "127.0.0.1", () => {
-      console.error(`[shardx-mcp] HTTP transport on http://127.0.0.1:${httpPort}/mcp`);
+      console.error(`[brproxies-mcp] HTTP transport on http://127.0.0.1:${httpPort}/mcp`);
     });
 } else {
   await server.connect(new StdioServerTransport());

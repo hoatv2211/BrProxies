@@ -161,7 +161,7 @@ def add_custom_source(config: ProxyPoolConfig, data: dict[str, str]) -> dict[str
 
 async def collect_candidates_with_report(config: ProxyPoolConfig) -> CollectReport:
     timeout = httpx.Timeout(config.timeout_seconds)
-    headers = {"User-Agent": "ShardX-ProxyPool/0.1"}
+    headers = {"User-Agent": "BrProxies-ProxyPool/0.1"}
     candidates: list[ProxyCandidate] = []
     errors: list[SourceError] = []
     async with httpx.AsyncClient(timeout=timeout, headers=headers, follow_redirects=True) as client:

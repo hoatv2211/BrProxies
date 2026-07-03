@@ -1,6 +1,6 @@
-# ShardX ProxyPool Service
+# BrProxies ProxyPool Service
 
-Local free public proxy pool service for ShardX Launcher. It collects public proxies, checks which ones work, stores good proxies in Redis, rechecks them on a schedule, and exposes a crawler-friendly HTTP API.
+Local free public proxy pool service for BrProxies. It collects public proxies, checks which ones work, stores good proxies in Redis, rechecks them on a schedule, and exposes a crawler-friendly HTTP API.
 
 ## Requirements
 

@@ -1,4 +1,4 @@
-"""Runtime cache: download ShardX engine + Widevine CDM + fingerprint library
+"""Runtime cache: download BrProxies engine + Widevine CDM + fingerprint library
 from the upstream CDN, extract into a per-user cache dir, place Widevine
 inside the engine bundle, and remember etags so subsequent runs are
 zero-network. Mirrors src-tauri/src/runtime.rs in the launcher."""
@@ -21,14 +21,14 @@ import httpx
 PUB_BASE = "https://pub-e57a7c60f6934eb09a6600bf2fc59cdc.r2.dev"
 CHROMIUM_VERSION = "148.0.7778.216"
 
-# Default cache: ~/Library/Application Support/shardx-sdk (mac),
-# %LOCALAPPDATA%\shardx-sdk (win), ~/.cache/shardx-sdk (linux).
+# Default cache: ~/Library/Application Support/brproxies-sdk (mac),
+# %LOCALAPPDATA%\brproxies-sdk (win), ~/.cache/brproxies-sdk (linux).
 def _default_cache_dir() -> Path:
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "shardx-sdk"
+        return Path.home() / "Library" / "Application Support" / "brproxies-sdk"
     if sys.platform == "win32":
-        return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "shardx-sdk"
-    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "shardx-sdk"
+        return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "brproxies-sdk"
+    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "brproxies-sdk"
 
 RUNTIME_DIR = _default_cache_dir()
 
@@ -52,7 +52,7 @@ def host_spec() -> HostSpec:
     arch = platform.machine().lower()
     if sysname == "darwin" and arch in ("arm64", "aarch64"):
         return HostSpec(
-            browser=Archive("ShardX-Mac-arm64.zip", "ShardX browser (macOS arm64)"),
+            browser=Archive("ShardX-Mac-arm64.zip", "BrProxies browser (macOS arm64)"),
             widevine=Archive("ShardX-Widevine-Mac-arm64.zip", "Widevine CDM"),
             binary_subpath=("ShardX-Mac-arm64", "ShardX.app", "Contents", "MacOS", "ShardX"),
             widevine_subpath=("ShardX-Mac-arm64", "ShardX.app", "Contents", "Frameworks",
@@ -61,20 +61,20 @@ def host_spec() -> HostSpec:
         )
     if sysname == "win32" and arch in ("amd64", "x86_64"):
         return HostSpec(
-            browser=Archive("ShardX-Windows.zip", "ShardX browser (Windows x64)"),
+            browser=Archive("ShardX-Windows.zip", "BrProxies browser (Windows x64)"),
             widevine=Archive("ShardX-Widevine-Win.zip", "Widevine CDM"),
             binary_subpath=("ShardX-Windows", "chrome.exe"),
             widevine_subpath=("ShardX-Windows", "WidevineCdm"),
         )
     if sysname.startswith("linux") and arch in ("x86_64", "amd64"):
         return HostSpec(
-            browser=Archive("ShardX-Linux.zip", "ShardX browser (Linux x64)"),
+            browser=Archive("ShardX-Linux.zip", "BrProxies browser (Linux x64)"),
             widevine=Archive("ShardX-Widevine-Linux.zip", "Widevine CDM"),
             binary_subpath=("ShardX-Linux", "chrome"),
             widevine_subpath=("ShardX-Linux", "WidevineCdm"),
         )
     raise RuntimeError(
-        f"Unsupported host: {sysname}/{arch}. ShardX ships mac-arm64, win-x64, linux-x64."
+        f"Unsupported host: {sysname}/{arch}. BrProxies ships mac-arm64, win-x64, linux-x64."
     )
 
 
@@ -96,7 +96,7 @@ class Runtime:
     ):
         self.root = Path(cache_dir) if cache_dir else RUNTIME_DIR
         self.root.mkdir(parents=True, exist_ok=True)
-        # Per-profile user-data-dir tree.  Defaults to `./shardx-profiles/`
+        # Per-profile user-data-dir tree.  Defaults to `./brproxies-profiles/`
         # next to the running script so the user can find cookies / cache
         # easily; override with `profiles_dir=...`.  Engine assets stay
         # in `cache_dir`.

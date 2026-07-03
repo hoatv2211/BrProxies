@@ -1,7 +1,7 @@
 {
-  "name": "shardbrowser-sdk",
+  "name": "brproxies-sdk",
   "version": "0.1.5",
-  "description": "Self-contained Node SDK for the ShardX anti-detect browser — downloads the engine + Widevine + fingerprint library on first use, launches isolated profiles.",
+  "description": "Self-contained Node SDK for the BrProxies anti-detect browser — downloads the engine + Widevine + fingerprint library on first use, launches isolated profiles.",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -36,13 +36,13 @@
   ],
   "author": "hoatv2211",
   "license": "MIT",
-  "homepage": "https://github.com/hoatv2211/ShardBrowser",
+  "homepage": "https://github.com/hoatv2211/BrProxies",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hoatv2211/ShardBrowser.git",
+    "url": "git+https://github.com/hoatv2211/BrProxies.git",
     "directory": "sdks/node"
   },
-  "bugs": "https://github.com/hoatv2211/ShardBrowser/issues",
+  "bugs": "https://github.com/hoatv2211/BrProxies/issues",
   "publishConfig": {
     "access": "public"
   },

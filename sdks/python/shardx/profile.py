@@ -85,9 +85,9 @@ class FingerprintLibrary:
 def user_data_dir(runtime: Runtime, profile_id: str, base: Optional[Path] = None) -> Path:
     """Per-profile state (cookies, IndexedDB, cache) — preserved across launches.
 
-    Defaults to `./shardx-profiles/<profile-id>/` (next to the running
+    Defaults to `./brproxies-profiles/<profile-id>/` (next to the running
     script). Override per-launch with `user_data_dir=...` or per-SDK
-    with `ShardX(profiles_dir=...)`.
+    with `BrProxies(profiles_dir=...)`.
     """
     root = base if base is not None else runtime.profiles_root
     d = Path(root) / profile_id

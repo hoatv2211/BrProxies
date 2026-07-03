@@ -1,7 +1,6 @@
-# shardbrowser-sdk (Node)
+# brproxies-sdk (Node)
 
-Self-contained Node/TypeScript SDK for the **ShardX anti-detect
-browser** for ShardBrowser.
+Self-contained Node/TypeScript SDK for the **BrProxies anti-detect browser**.
 
 Does **not** depend on the desktop launcher. On first use it downloads
 the patched Chromium 148 engine, Widevine CDM, and the 170-profile
@@ -15,7 +14,7 @@ Driven by [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)
 ## Install
 
 ```bash
-npm install shardbrowser-sdk
+npm install brproxies-sdk
 ```
 
 Supported hosts: **macOS arm64**, **Windows x64**, **Linux x64**. Node ≥ 18.
@@ -43,9 +42,9 @@ await sdk.session({ ..., extraArgs: ["--no-sandbox", "--disable-dev-shm-usage"] 
 ## Quick start
 
 ```ts
-import { ShardX } from "shardbrowser-sdk";
+import { BrProxies } from "brproxies-sdk";
 
-const sdk = new ShardX();
+const sdk = new BrProxies();
 // Engine + Widevine + fingerprint library auto-download from CDN on
 // the first session/launch/listProfiles call (~170 MB once, etag-cached
 // afterward).  No separate install step.
@@ -181,7 +180,7 @@ const { browser, close } = await sdk.session({ fingerprint: profile, proxy: "soc
 ### Use your own fingerprint JSON
 
 ```ts
-import { Profile } from "shardbrowser-sdk";
+import { Profile } from "brproxies-sdk";
 
 const profile = Profile.fromFile("/path/to/my-custom.json");
 const { browser, close } = await sdk.session({ fingerprint: profile });
@@ -204,7 +203,7 @@ The first `session`/`launch`/`listProfiles` triggers the download.  Hook
 it with a progress callback on the constructor:
 
 ```ts
-const sdk = new ShardX({
+const sdk = new BrProxies({
   progress: (label, received, total) => {
     const pct = total ? Math.floor((received / total) * 100) : 0;
     console.log(`${label}: ${pct}%`);
@@ -234,11 +233,11 @@ with `cdpUrl`, `geo`, `proxyUdpMs`, `quicEnabled`, `webrtcMode`,
 ## Cache layout
 
 ```
-~/Library/Application Support/shardx-sdk/    (mac)
-%LOCALAPPDATA%\shardx-sdk\                   (win)
-~/.cache/shardx-sdk/                         (linux)
+~/Library/Application Support/brproxies-sdk/    (mac)
+%LOCALAPPDATA%\brproxies-sdk\                   (win)
+~/.cache/brproxies-sdk/                         (linux)
 ├── manifest.json             ← etag cache
-├── ShardX-Mac-arm64/         ← extracted engine
+├── BrProxies runtime/       ← extracted engine cache
 ├── fingerprints/             ← 170 bundled .json profiles
 └── profiles/<profile-id>/    ← per-launch user-data-dir
 ```
@@ -246,7 +245,7 @@ with `cdpUrl`, `geo`, `proxyUdpMs`, `quicEnabled`, `webrtcMode`,
 Override:
 
 ```ts
-const sdk = new ShardX({ cacheDir: "/data/shardx" });
+const sdk = new BrProxies({ cacheDir: "/data/brproxies" });
 ```
 
 ## Update the runtime
@@ -263,5 +262,5 @@ await sdk.runtime.install({ force: true });
 
 MIT (this SDK). The Chromium-fork engine binary it downloads at
 runtime is a closed-source product — see the
-[main repo](https://github.com/hoatv2211/ShardBrowser) for engine
+[main repo](https://github.com/hoatv2211/BrProxies) for engine
 licensing.

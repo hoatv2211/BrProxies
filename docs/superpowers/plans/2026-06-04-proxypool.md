@@ -97,9 +97,9 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "shardx-proxypool-service"
+name = "brproxies-proxypool-service"
 version = "0.1.0"
-description = "Local free public proxy pool service for ShardX Launcher"
+description = "Local free public proxy pool service for BrProxies"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
@@ -122,7 +122,7 @@ dev = [
 ]
 
 [project.scripts]
-shardx-proxypool = "proxypool_service.__main__:main"
+brproxies-proxypool = "proxypool_service.__main__:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -724,7 +724,7 @@ git commit -m "Add ProxyPool workspace tab"
 
 - [ ] **Step 1: Add Dockerfile**
 
-Use `python:3.12-slim`, install package, expose `40326`, run `shardx-proxypool serve`.
+Use `python:3.12-slim`, install package, expose `40326`, run `brproxies-proxypool serve`.
 
 - [ ] **Step 2: Add compose**
 

@@ -12,7 +12,7 @@ from .sources import source_status
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="shardx-proxypool")
+    parser = argparse.ArgumentParser(prog="brproxies-proxypool")
     sub = parser.add_subparsers(dest="cmd")
 
     serve = sub.add_parser("serve")

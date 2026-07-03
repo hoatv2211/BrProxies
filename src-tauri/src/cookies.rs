@@ -1,4 +1,4 @@
-// Cookie import/export for ShardX profiles (Chromium Cookies sqlite v24).
+// Cookie import/export for BrProxies profiles (Chromium Cookies sqlite v24).
 // v10 blob = "v10" + cipher; plaintext = SHA256(host) + value.
 //   macOS: AES-128-CBC,  key = PBKDF2(mock_password, saltysalt, 1003)
 //   Linux: AES-128-CBC,  key = PBKDF2(peanuts,       saltysalt, 1)

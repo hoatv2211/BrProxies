@@ -1,4 +1,4 @@
-// Tracker for launched ShardX child processes; keyed by profile_id.
+// Tracker for launched BrProxies child processes; keyed by profile_id.
 
 use anyhow::Result;
 use std::collections::HashMap;

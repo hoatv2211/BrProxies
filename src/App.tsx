@@ -32,7 +32,7 @@ const withUtm = (url: string) => url + (url.includes("?") ? "&" : "?") + UTM_QS;
 const DASHBOARD_URL = withUtm("https://dashboard.proxyshard.com/");
 
 // Docs URL behind the proxy UDP/No-UDP pill.
-const UDP_DOCS_URL = "https://github.com/hoatv2211/ShardBrowser#proxies";
+const UDP_DOCS_URL = "https://github.com/hoatv2211/BrProxies#proxies";
 
 // ---- toasts (global queue, auto-expiry; push via toast.ok / toast.err) ----
 
@@ -746,7 +746,7 @@ function Sidebar({
           <button
             className="side-auto-btn"
             onClick={() => {
-              openUrl("https://github.com/hoatv2211/ShardBrowser/blob/main/openapi.yaml").catch(() => {});
+              openUrl("https://github.com/hoatv2211/BrProxies/blob/main/openapi.yaml").catch(() => {});
             }}
             title="Open the Automation API schema"
           >
@@ -992,7 +992,7 @@ function BrowsersView() {
   const [quickEdit, setQuickEdit] = useState<{ kind: "proxy" | "notes"; profile: ProfileMeta } | null>(null);
   // Empty folders persist in localStorage until a profile lands in them.
   const [folderRegistry, setFolderRegistry] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem("shardx-folders") || "[]"); }
+    try { return JSON.parse(localStorage.getItem("brproxies-folders") || localStorage.getItem("shardx-folders") || "[]"); }
     catch { return []; }
   });
   const [folderModal, setFolderModal] = useState<{ profileId: string | null } | null>(null);
@@ -1002,7 +1002,7 @@ function BrowsersView() {
   const rememberFolder = (f: string) =>
     setFolderRegistry((r) => {
       const next = r.includes(f) ? r : [...r, f];
-      localStorage.setItem("shardx-folders", JSON.stringify(next));
+      localStorage.setItem("brproxies-folders", JSON.stringify(next));
       return next;
     });
   const ctx = useContextMenu();
@@ -1394,7 +1394,8 @@ function BrowsersView() {
               onDrop={(e) => {
                 e.preventDefault();
                 setDropTarget(null);
-                const id = e.dataTransfer.getData("application/x-shardx-profile")
+                const id = e.dataTransfer.getData("application/x-brproxies-profile")
+                        || e.dataTransfer.getData("application/x-shardx-profile")
                         || e.dataTransfer.getData("text/plain");
                 if (id) setProfileFolder(id, "");           // "" = unassign folder
               }}
@@ -1425,7 +1426,8 @@ function BrowsersView() {
                 onDrop={(e) => {
                   e.preventDefault();
                   setDropTarget(null);
-                  const id = e.dataTransfer.getData("application/x-shardx-profile")
+                  const id = e.dataTransfer.getData("application/x-brproxies-profile")
+                          || e.dataTransfer.getData("application/x-shardx-profile")
                           || e.dataTransfer.getData("text/plain");
                   if (id) setProfileFolder(id, f);
                 }}
@@ -1564,7 +1566,7 @@ function BrowsersView() {
                 // drag at all without text/plain, and some Chromium variants
                 // hide custom MIME values from `dataTransfer.types` during
                 // dragover for cross-origin reasons).
-                e.dataTransfer.setData("application/x-shardx-profile", p.id);
+                e.dataTransfer.setData("application/x-brproxies-profile", p.id);
                 e.dataTransfer.setData("text/plain", p.id);
                 // Replace the default full-row ghost (it obscures the folder
                 // tabs and stops the drop event firing on them) with a tiny
@@ -5224,7 +5226,7 @@ function SettingsView() {
             href="#"
             onClick={(e) => {
               e.preventDefault();
-              openUrl("https://github.com/hoatv2211/ShardBrowser/blob/main/openapi.yaml").catch(() => {});
+              openUrl("https://github.com/hoatv2211/BrProxies/blob/main/openapi.yaml").catch(() => {});
             }}
           >
             Full API reference →

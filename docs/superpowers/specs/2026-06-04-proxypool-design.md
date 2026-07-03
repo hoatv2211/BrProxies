@@ -4,7 +4,7 @@ Date: 2026-06-04
 
 ## Goal
 
-Add a first-class `ProxyPool` workspace tab to ShardX Launcher. The feature runs a local Python proxy pool service in the background, collects free public proxies from a small enabled source set, validates them, stores working proxies in an external Redis instance, and exposes a local API for crawler code.
+Add a first-class `ProxyPool` workspace tab to BrProxies. The feature runs a local Python proxy pool service in the background, collects free public proxies from a small enabled source set, validates them, stores working proxies in an external Redis instance, and exposes a local API for crawler code.
 
 The feature must not replace or blur the existing paid `ProxyShard` workflow. `ProxyPool` is a separate free public proxy pool with separate UI, config, state, and API.
 
@@ -23,7 +23,7 @@ The `ProxyPool` page shows:
 - Filters for all proxies or HTTPS-capable proxies.
 - Config controls for host, port, Redis URL, disabled sources, collect interval, check interval, request timeout, and checker concurrency.
 
-Config is stored locally with the rest of ShardX settings. Secrets are not required for the proxy pool itself. Redis credentials, if present in the Redis URL, stay local.
+Config is stored locally with the rest of BrProxies settings. Secrets are not required for the proxy pool itself. Redis credentials, if present in the Redis URL, stay local.
 
 ## Architecture
 
@@ -172,7 +172,7 @@ Manual verification covers:
 
 ## Open Implementation Notes
 
-- Use `127.0.0.1:40326` as default sidecar API address to avoid conflicting with existing ShardX Automation API at `127.0.0.1:40325`.
+- Use `127.0.0.1:40326` as default sidecar API address to avoid conflicting with existing BrProxies Automation API at `127.0.0.1:40325`.
 - Keep `ProxyPool` isolated from existing `ProxyShard` paid API code.
 - Do not commit user-specific Redis URLs, API keys, logs, generated databases, or virtual environments.
 - Respect current dirty worktree and avoid touching unrelated files.

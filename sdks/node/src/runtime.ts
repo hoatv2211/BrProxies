@@ -1,4 +1,4 @@
-// Runtime cache: download ShardX engine + Widevine CDM + fingerprint
+// Runtime cache: download BrProxies engine + Widevine CDM + fingerprint
 // library from the upstream CDN, extract into a per-user cache dir,
 // place Widevine inside the engine bundle, remember etags so subsequent
 // runs are zero-network. Mirrors src-tauri/src/runtime.rs in the launcher.
@@ -16,9 +16,9 @@ export const CHROMIUM_VERSION = "148.0.7778.216";
 
 export function defaultCacheDir(): string {
   const plat = osPlatform();
-  if (plat === "darwin") return join(homedir(), "Library", "Application Support", "shardx-sdk");
-  if (plat === "win32")  return join(process.env.LOCALAPPDATA ?? homedir(), "shardx-sdk");
-  return join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "shardx-sdk");
+  if (plat === "darwin") return join(homedir(), "Library", "Application Support", "brproxies-sdk");
+  if (plat === "win32")  return join(process.env.LOCALAPPDATA ?? homedir(), "brproxies-sdk");
+  return join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "brproxies-sdk");
 }
 
 export interface Archive { key: string; label: string; }
@@ -35,7 +35,7 @@ export function hostSpec(): HostSpec {
   const arch = osArch();
   if (plat === "darwin" && arch === "arm64") {
     return {
-      browser:  { key: "ShardX-Mac-arm64.zip",          label: "ShardX browser (macOS arm64)" },
+      browser:  { key: "ShardX-Mac-arm64.zip",          label: "BrProxies browser (macOS arm64)" },
       widevine: { key: "ShardX-Widevine-Mac-arm64.zip", label: "Widevine CDM" },
       binarySubpath:   ["ShardX-Mac-arm64", "ShardX.app", "Contents", "MacOS", "ShardX"],
       widevineSubpath: ["ShardX-Mac-arm64", "ShardX.app", "Contents", "Frameworks",
@@ -45,7 +45,7 @@ export function hostSpec(): HostSpec {
   }
   if (plat === "win32" && arch === "x64") {
     return {
-      browser:  { key: "ShardX-Windows.zip",     label: "ShardX browser (Windows x64)" },
+      browser:  { key: "ShardX-Windows.zip",     label: "BrProxies browser (Windows x64)" },
       widevine: { key: "ShardX-Widevine-Win.zip", label: "Widevine CDM" },
       binarySubpath:   ["ShardX-Windows", "chrome.exe"],
       widevineSubpath: ["ShardX-Windows", "WidevineCdm"],
@@ -53,13 +53,13 @@ export function hostSpec(): HostSpec {
   }
   if (plat === "linux" && arch === "x64") {
     return {
-      browser:  { key: "ShardX-Linux.zip",         label: "ShardX browser (Linux x64)" },
+      browser:  { key: "ShardX-Linux.zip",         label: "BrProxies browser (Linux x64)" },
       widevine: { key: "ShardX-Widevine-Linux.zip", label: "Widevine CDM" },
       binarySubpath:   ["ShardX-Linux", "chrome"],
       widevineSubpath: ["ShardX-Linux", "WidevineCdm"],
     };
   }
-  throw new Error(`Unsupported host: ${plat}/${arch}. ShardX ships mac-arm64, win-x64, linux-x64.`);
+  throw new Error(`Unsupported host: ${plat}/${arch}. BrProxies ships mac-arm64, win-x64, linux-x64.`);
 }
 
 export const FINGERPRINTS_ARCHIVE: Archive = {
@@ -102,7 +102,7 @@ export class Runtime {
     return d;
   }
   /** Per-profile user-data-dir root. Defaults to `<cacheDir>/profiles/`;
-   *  override via `new ShardX({ profilesDir })` or per-launch
+   *  override via `new BrProxies({ profilesDir })` or per-launch
    *  `userDataDir`. Resolved path is logged at launch time. */
   get profilesRoot(): string {
     const d = this._profilesRoot ?? join(this.root, "profiles");

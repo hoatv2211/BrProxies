@@ -9,5 +9,5 @@ COPY proxypool_service ./proxypool_service
 RUN pip install --no-cache-dir .
 
 EXPOSE 40326
-CMD ["shardx-proxypool", "serve"]
+CMD ["brproxies-proxypool", "serve"]
 
