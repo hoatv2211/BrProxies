@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import asdict
 from pathlib import Path
 
@@ -71,6 +72,12 @@ def _allocate_port(store: AndroidStore, cfg: AndroidManagerConfig) -> int:
 def _avd(cfg: AndroidManagerConfig) -> AvdService:
     return AvdService(cfg.data_dir, cfg.avd_system_image, cfg.avd_device)
 
+def _runtime_http_error(err: Exception) -> HTTPException:
+    if isinstance(err, subprocess.CalledProcessError):
+        output = "\n".join(str(part) for part in (err.stderr, err.stdout) if part)
+        return HTTPException(status_code=400, detail=output or str(err))
+    return HTTPException(status_code=400, detail=str(err))
+
 
 def create_app(config_path: str | None = None) -> FastAPI:
     app = FastAPI(title="BrProxies Android Manager", version="0.1.0")
@@ -100,8 +107,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
             volume_name = f"{container_name}_data"
             image = cfg.avd_system_image
             service = _avd(cfg)
-            service.create(container_name)
-            service.start(container_name, port)
+            try:
+                service.create(container_name)
+                service.start(container_name, port)
+            except (RuntimeError, subprocess.CalledProcessError, TimeoutError) as e:
+                raise _runtime_http_error(e)
         else:
             container_name = f"{cfg.container_prefix}{safe}-{port}"
             volume_name = f"{cfg.volume_prefix}{safe}_{port}_data".replace("-", "_")
@@ -128,9 +138,12 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 if item.adb_port % 2 != 0:
                     item = store.set_adb_port(instance_id, _allocate_port(store, cfg))
                 service = _avd(cfg)
-                if not service.exists(item.container_name):
-                    service.create(item.container_name)
-                service.start(item.container_name, item.adb_port)
+                try:
+                    if not service.exists(item.container_name):
+                        service.create(item.container_name)
+                    service.start(item.container_name, item.adb_port)
+                except (RuntimeError, subprocess.CalledProcessError, TimeoutError) as e:
+                    raise _runtime_http_error(e)
             else:
                 DockerService(fake=_is_fake(cfg)).start(item.container_name)
                 AdbService(fake=_is_fake(cfg)).connect(item.adb_host, item.adb_port)

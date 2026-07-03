@@ -21,7 +21,11 @@ class Recorder:
 
 def test_avd_service_builds_create_start_stop_and_screen_commands(tmp_path):
     rec = Recorder()
-    service = AvdService(data_dir=str(tmp_path), runner=rec.run, popen=rec.popen, which=lambda name: name)
+    sdk = tmp_path / "Sdk"
+    image = sdk / "system-images" / "android-35" / "google_apis" / "x86_64"
+    image.mkdir(parents=True)
+    (image / "package.xml").write_text("", encoding="utf-8")
+    service = AvdService(data_dir=str(tmp_path), sdk_root=str(sdk), runner=rec.run, popen=rec.popen, which=lambda name: name)
 
     service.create("brproxies_phone_5556")
     service.start("brproxies_phone_5556", 5556)
@@ -58,10 +62,27 @@ def test_avd_open_screen_is_optional_when_scrcpy_is_missing(tmp_path):
 
 def test_avd_service_selects_installed_playstore_image(tmp_path):
     sdk = tmp_path / "Sdk"
-    (sdk / "system-images" / "android-35" / "google_apis_playstore" / "x86_64").mkdir(parents=True)
+    image = sdk / "system-images" / "android-35" / "google_apis_playstore" / "x86_64"
+    image.mkdir(parents=True)
+    (image / "package.xml").write_text("", encoding="utf-8")
     service = AvdService(data_dir=str(tmp_path), sdk_root=str(sdk), which=lambda name: name)
 
     assert service.resolve_system_image() == "system-images;android-35;google_apis_playstore;x86_64"
+
+
+def test_avd_service_rejects_incomplete_installer_stub_image(tmp_path):
+    sdk = tmp_path / "Sdk"
+    image = sdk / "system-images" / "android-35" / "google_apis_playstore" / "x86_64"
+    image.mkdir(parents=True)
+    (image / ".installer").mkdir()
+    service = AvdService(data_dir=str(tmp_path), sdk_root=str(sdk), which=lambda name: name)
+
+    try:
+        service.resolve_system_image()
+    except RuntimeError as err:
+        assert "No Android x86_64 system image is installed" in str(err)
+    else:
+        raise AssertionError("incomplete installer stub should not be accepted")
 
 
 def test_avd_service_checks_existing_avd_by_name(tmp_path):

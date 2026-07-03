@@ -90,11 +90,17 @@ class AvdService:
             for flavor in ("google_apis_playstore", "google_apis", "default"):
                 if self._system_image_exists(api, flavor, "x86_64"):
                     return f"system-images;{api};{flavor};x86_64"
-        return configured
+        raise RuntimeError("No Android x86_64 system image is installed. Install an Android SDK x86_64 Google APIs system image in Android Studio SDK Manager.")
 
     def _system_image_exists(self, api: str, flavor: str, abi: str) -> bool:
         roots = [self.sdk_root] if self.sdk_root else android_sdk_roots()
-        return any(root and (root / "system-images" / api / flavor / abi).exists() for root in roots)
+        for root in roots:
+            if not root:
+                continue
+            image_dir = root / "system-images" / api / flavor / abi
+            if (image_dir / "package.xml").exists() or (image_dir / "system.img").exists():
+                return True
+        return False
 
     def start(self, avd_name: str, console_port: int) -> None:
         self.popen([self._tool("emulator"), "-avd", avd_name, "-port", str(console_port), "-no-snapshot-save"])
