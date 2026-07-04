@@ -65,6 +65,34 @@ async fn manager_health_ok(s: &settings::Settings) -> bool {
     }
 }
 
+async fn ensure_manager_running(s: &settings::Settings) -> Result<(), String> {
+    let mut guard = child_slot().lock().await;
+    if let Some(child) = guard.as_mut() {
+        if child.try_wait().map_err(|e| e.to_string())?.is_none() {
+            return Ok(());
+        }
+        *guard = None;
+    }
+    if manager_health_ok(s).await {
+        return Ok(());
+    }
+    let child = spawn_sidecar(write_config(s)?).await?;
+    *guard = Some(child);
+    for _ in 0..40 {
+        if manager_health_ok(s).await {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    if let Some(mut child) = guard.take() {
+        let _ = child.kill().await;
+    }
+    Err(format!(
+        "Android Manager did not become ready at {}",
+        base_url(s)
+    ))
+}
+
 fn service_workdir() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -153,19 +181,10 @@ async fn spawn_sidecar(config_path: PathBuf) -> Result<Child, String> {
 #[tauri::command]
 pub async fn android_start() -> Result<AndroidManagerStatus, String> {
     let s = settings::load().map_err(|e| e.to_string())?;
-    let mut guard = child_slot().lock().await;
-    if let Some(child) = guard.as_mut() {
-        if child.try_wait().map_err(|e| e.to_string())?.is_none() {
-            return status_with(&s, guard.as_ref(), false);
-        }
-        *guard = None;
-    }
-    if manager_health_ok(&s).await {
-        return status_with(&s, None, true);
-    }
-    let child = spawn_sidecar(write_config(&s)?).await?;
-    *guard = Some(child);
-    status_with(&s, guard.as_ref(), false)
+    ensure_manager_running(&s).await?;
+    let guard = child_slot().lock().await;
+    let external = guard.is_none() && manager_health_ok(&s).await;
+    status_with(&s, guard.as_ref(), external)
 }
 
 #[tauri::command]
@@ -273,6 +292,7 @@ pub async fn android_request_raw(
     body: Option<Value>,
 ) -> Result<(Vec<u8>, reqwest::StatusCode, String), String> {
     let s = settings::load().map_err(|e| e.to_string())?;
+    ensure_manager_running(&s).await?;
     let clean = if path.starts_with('/') {
         path.to_string()
     } else {

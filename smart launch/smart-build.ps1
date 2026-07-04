@@ -99,6 +99,17 @@ function Run-Step($Title, $Command, $Arguments, $WorkingDirectory = $repoRoot.Pa
   }
 }
 
+function Test-FileWritable($Path) {
+  if (-not (Test-Path -LiteralPath $Path)) { return $true }
+  try {
+    $stream = [System.IO.File]::Open($Path, 'Open', 'ReadWrite', 'None')
+    $stream.Close()
+    return $true
+  } catch {
+    return $false
+  }
+}
+
 Require-Command "cargo" "Install Rust from https://rustup.rs/ then reopen terminal or VS Code."
 Require-Command "rustc" "Install Rust from https://rustup.rs/ then reopen terminal or VS Code."
 Require-Command "npm.cmd" "Install Node.js LTS, then reopen terminal or VS Code."
@@ -147,6 +158,9 @@ $needFrontend = $Full -or -not (Test-Path -LiteralPath "dist\index.html") -or ((
 $exePath = "src-tauri\target\release\brproxies.exe"
 $needDesktop = $Full -or $needFrontend -or -not (Test-Path -LiteralPath $exePath) -or ((Get-Cache "tauri") -ne $tauriHash)
 if ($needDesktop) {
+  if (-not (Test-FileWritable $exePath)) {
+    throw "BrProxies is running and locks $exePath. Close BrProxies, then run smart launch\build.bat again."
+  }
   Run-Step "Building desktop app..." "npm.cmd" @("run", "tauri", "build", "--", "--no-bundle")
   $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
   $tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\capabilities", "smart launch\build.bat", "smart launch\smart-build.ps1")
