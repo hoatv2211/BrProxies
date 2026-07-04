@@ -70,6 +70,16 @@ def test_avd_service_selects_installed_playstore_image(tmp_path):
     assert service.resolve_system_image() == "system-images;android-35;google_apis_playstore;x86_64"
 
 
+def test_avd_service_selects_newer_installed_api_image(tmp_path):
+    sdk = tmp_path / "Sdk"
+    image = sdk / "system-images" / "android-36.1" / "google_apis_playstore" / "x86_64"
+    image.mkdir(parents=True)
+    (image / "package.xml").write_text("", encoding="utf-8")
+    service = AvdService(data_dir=str(tmp_path), sdk_root=str(sdk), which=lambda name: name)
+
+    assert service.resolve_system_image() == "system-images;android-36.1;google_apis_playstore;x86_64"
+
+
 def test_avd_service_rejects_incomplete_installer_stub_image(tmp_path):
     sdk = tmp_path / "Sdk"
     image = sdk / "system-images" / "android-35" / "google_apis_playstore" / "x86_64"

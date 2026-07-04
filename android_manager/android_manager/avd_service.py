@@ -86,11 +86,35 @@ class AvdService:
         parts = configured.split(";")
         if len(parts) == 4 and self._system_image_exists(parts[1], parts[2], parts[3]):
             return configured
-        for api in ("android-35", "android-36"):
-            for flavor in ("google_apis_playstore", "google_apis", "default"):
-                if self._system_image_exists(api, flavor, "x86_64"):
-                    return f"system-images;{api};{flavor};x86_64"
+        detected = self._installed_system_images()
+        if detected:
+            return detected[0]
         raise RuntimeError("No Android x86_64 system image is installed. Install an Android SDK x86_64 Google APIs system image in Android Studio SDK Manager.")
+
+    def _installed_system_images(self) -> list[str]:
+        roots = [self.sdk_root] if self.sdk_root else android_sdk_roots()
+        images: list[str] = []
+        flavor_rank = {"google_apis_playstore": 0, "google_apis": 1, "default": 2}
+        for root in roots:
+            if not root:
+                continue
+            base = root / "system-images"
+            if not base.exists():
+                continue
+            for api_dir in base.iterdir():
+                if not api_dir.is_dir():
+                    continue
+                for flavor_dir in api_dir.iterdir():
+                    abi_dir = flavor_dir / "x86_64"
+                    if (abi_dir / "package.xml").exists() or (abi_dir / "system.img").exists():
+                        images.append(f"system-images;{api_dir.name};{flavor_dir.name};x86_64")
+        return sorted(images, key=lambda value: (self._api_sort_key(value.split(";")[1]), flavor_rank.get(value.split(";")[2], 99)))
+
+    def _api_sort_key(self, api: str) -> tuple[int, str]:
+        try:
+            return (-int(api.removeprefix("android-").split(".")[0]), api)
+        except ValueError:
+            return (0, api)
 
     def _system_image_exists(self, api: str, flavor: str, abi: str) -> bool:
         roots = [self.sdk_root] if self.sdk_root else android_sdk_roots()
