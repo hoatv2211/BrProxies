@@ -1,62 +1,75 @@
 # BrProxies
 
-[English](README.md)
+[English](README.md) | [Page](https://hoatv2211.github.io/BrProxies/)
 
-BrProxies là launcher cá nhân để quản lý browser profile, proxy,
-fingerprint, Automation API cục bộ và ProxyPool cho crawler.
+BrProxies la launcher desktop uu tien Windows de quan ly browser profile
+anti-detect, fingerprint, proxy, Automation API cuc bo, ProxyPool cho crawler,
+va Android instance thu nghiem.
 
+Repo nay chua launcher, local services, SDKs, MCP server, Chrome extension va
+Windows helper scripts. Browser runtime duoc tai rieng khi chay.
 
-## Tính năng
+## Tinh nang
 
-- **Profiles** - tạo, clone, pin, gắn tag và chạy browser profile riêng biệt.
-- **Fingerprints** - chỉnh device, screen, WebGL/WebGPU, locale, timezone,
-  WebRTC, media devices và noise settings.
-- **Proxies** - thêm proxy HTTP/HTTPS/SOCKS5, test TCP/UDP/geo và bind vào
-  profile.
-- **ProxyPool** - cào proxy public miễn phí, test proxy sống, lưu vào Redis,
-  recheck và thêm sang tab **Proxies**.
-- **Automation API** - HTTP API cục bộ trên `127.0.0.1:40325`, dùng Bearer
-  token để điều khiển profile từ code.
-- **MCP server** - gói MCP để AI client điều khiển profile/CDP.
-- **SDKs** - Python và Node SDK trong thư mục `sdks/`.
+- **Browser profiles** - tao, clone, pin, gan tag, sap xep, va chay Chromium
+  profile rieng biet.
+- **Fingerprints** - chinh device, screen, WebGL/WebGPU, locale, timezone,
+  WebRTC, media devices, geolocation, va noise settings.
+- **Proxies** - them HTTP, HTTPS, SOCKS5 proxy, test TCP/UDP/geo, va gan proxy
+  vao browser profile.
+- **ProxyPool** - cao proxy public, test proxy song, luu vao Redis, recheck, va
+  day proxy tot sang tab **Proxies**.
+- **Android Manager** - chay Android Studio AVD that tren Windows, mo man hinh
+  bang scrcpy, import device dang chay qua ADB.
+- **Automation API** - HTTP API cuc bo tren `127.0.0.1:40325`, dung Bearer token
+  de dieu khien browser profile tu code.
+- **MCP server** - cau noi cho AI client dieu khien profile/CDP.
+- **SDKs** - Python va Node SDK standalone trong `sdks/`.
 
-## Hình ảnh
+## Hinh anh
 
 | Browsers | Fingerprints |
-|----------|--------------|
-| ![Không gian quản lý browser](docs/screenshots/Browsers.png) | ![Trình chỉnh fingerprint](docs/screenshots/fingerprints.png) |
+| -------- | ------------ |
+| ![Browsers workspace](docs/screenshots/Browsers.png) | ![Fingerprint editor](docs/screenshots/fingerprints.png) |
 
 | Proxies | ProxyPool |
-|---------|-----------|
-| ![Trình quản lý proxy](docs/screenshots/proxies.png) | ![Không gian ProxyPool](docs/screenshots/proxypool.png) |
+| ------- | --------- |
+| ![Proxy manager](docs/screenshots/proxies.png) | ![ProxyPool workspace](docs/screenshots/proxypool.png) |
 
-## Chạy nhanh trên Windows
+## Chay nhanh tren Windows
 
-Script nằm trong thư mục [`smart launch`](smart%20launch/):
+Script nam trong [`smart launch`](smart%20launch/):
 
 ```bat
-"smart launch\build.bat"        :: build web assets + desktop app
-"smart launch\run.bat"          :: chạy Redis, cleanup ProxyPool, mở launcher
-"smart launch\run-redis.bat"    :: chỉ chạy Redis Windows đi kèm
+"smart launch\build.bat"        :: smart build web assets + desktop app
+"smart launch\build.bat" /full  :: build lai day du
+"smart launch\build.bat" /deps  :: refresh npm + Android Manager deps
+"smart launch\run.bat"          :: chay Redis, cleanup ProxyPool, mo launcher
+"smart launch\run-redis.bat"    :: chi chay Redis Windows di kem
 ```
 
-Build và chạy:
+Build va chay:
 
 ```bat
 "smart launch\build.bat"
 "smart launch\run.bat"
 ```
 
-File exe mặc định:
+File exe release:
 
 ```text
 src-tauri\target\release\brproxies.exe
 ```
 
-`run.bat` sẽ chạy Redis Windows đi kèm trên `127.0.0.1:6380`, sau đó gọi
-`cleanup-proxypool.ps1` để tắt Python sidecar ProxyPool cũ trước khi mở app.
+`build.bat` goi `smart-build.ps1`. Smart mode luu hash trong
+`.brproxies-build-cache`, bo qua npm/Python setup neu package khong doi, chay
+`npm.cmd run tauri build -- --no-bundle`, va tu dong dong `brproxies.exe` dang
+chay truoc khi build release.
 
-## Build thủ công
+`run.bat` chay Redis Windows tren `127.0.0.1:6380`, goi
+`cleanup-proxypool.ps1` de tat Python ProxyPool sidecar cu, roi mo app.
+
+## Build thu cong
 
 ```bash
 npm install
@@ -65,68 +78,95 @@ npm run tauri dev
 npm run tauri build
 ```
 
-Trên Windows PowerShell, dùng `npm.cmd` nếu lệnh `npm` bị lỗi.
+Tren Windows PowerShell, dung `npm.cmd` neu lenh `npm` bi loi.
 
-## Hướng dẫn dự án
+## Android Manager
 
-Trang giới thiệu và hướng dẫn sử dụng dạng HTML nằm ở [`docs/index.html`](docs/index.html).
+Android support dang dung duoc theo huong Windows AVD, nhung con moi hon browser
+workflow. Thu tu runtime hien tai:
+
+1. `windows_avd` - Android Studio AVD that tren Windows. Day la huong local dang
+   ho tro.
+2. `external_adb` - se lam sau de attach/import LDPlayer, BlueStacks, MEmu, hoac
+   emulator nao da hien trong ADB.
+3. `redroid` - de sau khi co Linux host. ReDroid khong chay native tren Windows.
+
+Can cai tren Windows:
+
+- Android Studio.
+- Android SDK Platform Tools, Emulator, Command-line Tools.
+- System image nhe: `system-images;android-35;google_apis;x86_64`.
+- Nen cai `scrcpy` de mo cua so dieu khien muot hon.
+
+Cai image khuyen nghi:
+
+```powershell
+$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
+$env:PATH="$env:JAVA_HOME\bin;$env:PATH"
+& "$env:LOCALAPPDATA\Android\Sdk\cmdline-tools\latest\bin\sdkmanager.bat" --sdk_root="$env:LOCALAPPDATA\Android\Sdk" "system-images;android-35;google_apis;x86_64"
+winget install Genymobile.scrcpy
+```
+
+Check tool:
+
+```powershell
+adb version
+emulator -version
+avdmanager list avd
+scrcpy --version
+```
+
+Flow trong app:
+
+1. Mo **Android**.
+2. Bam **Start manager**. Nut nay chi start Android Manager sidecar.
+3. Bam **Create device** de tao AVD do BrProxies quan ly.
+4. Bam **Start** de boot AVD va mo man hinh bang scrcpy neu co.
+5. Bam **Import devices** de import device dang chay va dang hien trong
+   `adb devices -l`. Import khong lay AVD dang stop.
+
+AVD cold boot co the mat 30-70 giay. Quick Boot snapshot giup lan sau nhanh hon.
+Image `google_apis` nhe hon `google_apis_playstore`, it app rac hon, nhung AVD
+van nang hon browser profile va thuong khong muot bang LDPlayer khi choi game.
 
 ## ProxyPool
 
-ProxyPool chạy bằng Python sidecar cục bộ. Service này lấy proxy từ các nguồn
-public đang bật, test proxy thật, lưu proxy pass vào Redis và xóa proxy chết khi
+ProxyPool chay bang Python sidecar cuc bo. Service lay proxy tu cac nguon public
+dang bat, test proxy that, luu proxy pass vao Redis, va xoa proxy chet khi
 recheck.
 
-Redis tự chạy khi mở app bằng `run.bat`. Nếu chỉ muốn bật Redis để debug:
+Redis tu chay khi mo app bang `run.bat`. Neu chi muon bat Redis de debug:
 
 ```bat
 "smart launch\run-redis.bat"
 ```
 
-Redis URL mặc định:
+Redis URL mac dinh cua helper desktop:
 
 ```text
 redis://:madpool@127.0.0.1:6380/0
 ```
 
-Nút trong UI:
+Nut trong UI:
 
-- **Connect** - start/connect ProxyPool service cục bộ.
-- **Collect now** - cào proxy mới và lưu proxy pass.
-- **Check now / Refresh** - test lại proxy đang có và tải lại bảng.
-- **Copy** - copy proxy sống.
-- **Add** - thêm proxy sống vào tab **Proxies**, sau đó xóa proxy đó khỏi Redis.
-- **Copy selected / Add selected / Delete selected** - chọn nhiều dòng rồi copy, thêm, hoặc xóa 1 lượt.
-- **Country filter / Source filter** - lọc bảng theo quốc gia hoặc nguồn.
-- **Clean** - xóa tất cả IP ProxyPool đang cache trong Redis.
-- **Delete** - xóa proxy xấu khỏi pool.
-- **Add source** - thêm nguồn cào proxy tùy chỉnh.
+- **Connect** - start/connect ProxyPool service cuc bo.
+- **Collect now** - cao proxy moi va luu proxy pass.
+- **Check now / Refresh** - test lai proxy dang co va tai lai bang.
+- **Copy** - copy proxy song.
+- **Add** - them proxy song vao tab **Proxies**, roi xoa proxy do khoi Redis.
+- **Copy selected / Add selected / Delete selected** - thao tac nhieu dong.
+- **Country filter / Source filter** - loc bang theo quoc gia hoac nguon.
+- **Clean** - xoa tat ca IP ProxyPool dang cache trong Redis.
+- **Add source** - them nguon cao proxy tuy chinh.
 
-ProxyPool API:
-
-| Method | Endpoint | Mục đích |
-|--------|----------|----------|
-| `GET` | `/health` | trạng thái service và Redis |
-| `GET` | `/proxy/random?https=false` | lấy ngẫu nhiên 1 proxy sống |
-| `GET` | `/proxy/pop?https=false` | lấy và xóa 1 proxy khỏi pool |
-| `GET` | `/proxies?https=false` | liệt kê proxy sống |
-| `GET` | `/count?https=false` | đếm proxy sống |
-| `DELETE` | `/proxy/{host}:{port}` | xóa proxy xấu |
-| `POST` | `/clean` | xóa tất cả IP ProxyPool đang cache |
-| `GET` | `/sources` | xem nguồn proxy |
-| `POST` | `/sources` | thêm nguồn tùy chỉnh |
-| `POST` | `/jobs/collect` | đưa job collect vào hàng đợi |
-| `POST` | `/jobs/check` | đưa job recheck vào hàng đợi |
-
-Ví dụ:
-
-```bash
-curl "http://127.0.0.1:40326/proxy/random?https=false"
-```
+Proxy mien phi rat that thuong. Bang trong co the do source bi chan, source dang
+loi, hoac tat ca proxy deu fail bai test.
 
 ## Chrome ProxyPool Extension
 
-Thu muc [`extension/`](extension/) co Chrome extension Manifest V3 de lay proxy tu ProxyPool local. Extension goi `http://127.0.0.1:40326`, hien proxy song, va set proxy cho Chrome bang `chrome.proxy`.
+Thu muc [`extension/`](extension/) co Chrome extension Manifest V3 de lay proxy
+tu ProxyPool local. Extension goi `http://127.0.0.1:40326`, hien proxy song,
+test live, va set proxy cho Chrome bang `chrome.proxy`.
 
 Cach load local:
 
@@ -134,33 +174,32 @@ Cach load local:
 2. Mo **ProxyPool**, bam **Connect**, roi collect/check den khi co proxy song.
 3. Mo Chrome `chrome://extensions`, bat **Developer mode**, bam **Load unpacked**.
 4. Chon thu muc `extension` trong repo.
-5. Mo popup extension, bam **Connect**, roi dung **Use**, **Rotate**, hoac **Direct**.
+5. Mo popup extension, bam **Connect**, roi dung **Use**, **Rotate**, hoac
+   **Direct**.
 
-Ban dau chi cho phep host local `127.0.0.1:40326` va `localhost:40326`. Khi chuyen sang VPS nen them auth token va quyen URL hep hon truoc khi publish.
+## Automation API cuc bo
 
-Nguồn proxy miễn phí rất thất thường. Bảng trống có thể do mạng chặn source,
-source đang lỗi, hoặc tất cả proxy đều fail bài test.
-
-## Automation API cục bộ
-
-Launcher có thể mở API cục bộ trên `127.0.0.1:40325`. Bật trong Settings, copy
-Bearer token, rồi gọi từ crawler/tool.
+Launcher co the mo browser Automation API tren `127.0.0.1:40325`. Bat trong
+Settings, copy Bearer token, roi goi tu crawler/tool.
 
 Schema: [openapi.yaml](openapi.yaml)
 
-## Cấu trúc repo
+## Cau truc repo
 
 ```text
 src/                  React/Vite UI
 src-tauri/src/        Tauri Rust backend
+android_manager/      Python FastAPI Android Manager sidecar
 proxypool_service/    Python FastAPI + Redis proxy pool service
 sdks/python/          Python SDK
 sdks/node/            Node SDK
 mcp/                  MCP server package
+extension/            Local Chrome ProxyPool extension
 smart launch/         Windows build/run helpers
+docs/screenshots/     README screenshots
 ```
 
 ## License
 
-Launcher source dùng MIT License. Browser runtime được tải/chạy kèm có thể vẫn
-theo điều khoản riêng từ upstream gốc.
+Launcher source dung MIT License. Browser runtime duoc tai/chay kem co the theo
+dieu khoan rieng tu upstream goc.

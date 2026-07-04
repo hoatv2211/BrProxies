@@ -74,8 +74,11 @@ fn write_config(s: &settings::Settings) -> Result<PathBuf, String> {
         "failure_threshold": 2,
         "initial_collect": true,
     });
-    std::fs::write(&path, serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(path)
 }
 
@@ -89,6 +92,14 @@ async fn spawn_sidecar(config_path: PathBuf) -> Result<Child, String> {
         if !python.trim().is_empty() {
             attempts.push((python, Vec::new()));
         }
+    }
+    let venv_python = if cfg!(target_os = "windows") {
+        workdir.join(".venv").join("Scripts").join("python.exe")
+    } else {
+        workdir.join(".venv").join("bin").join("python")
+    };
+    if venv_python.exists() {
+        attempts.push((venv_python.display().to_string(), Vec::new()));
     }
     attempts.extend([
         ("python".to_string(), Vec::new()),
@@ -113,7 +124,6 @@ async fn spawn_sidecar(config_path: PathBuf) -> Result<Child, String> {
         {
             cmd.creation_flags(0x00000010);
         }
-        #[cfg(not(target_os = "windows"))]
         {
             use std::fs::OpenOptions;
             use std::process::Stdio;
@@ -205,7 +215,12 @@ pub async fn proxypool_post(path: String) -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn proxypool_add_source(source: ProxyPoolSourceCreate) -> Result<Value, String> {
-    proxypool_request_json("POST", "/sources", serde_json::to_value(source).map_err(|e| e.to_string())?).await
+    proxypool_request_json(
+        "POST",
+        "/sources",
+        serde_json::to_value(source).map_err(|e| e.to_string())?,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -220,7 +235,11 @@ pub async fn proxypool_delete(proxy: String) -> Result<Value, String> {
 
 async fn proxypool_request(method: &str, path: &str) -> Result<Value, String> {
     let s = settings::load().map_err(|e| e.to_string())?;
-    let clean_path = if path.starts_with('/') { path.to_string() } else { format!("/{path}") };
+    let clean_path = if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    };
     let url = format!("{}{}", base_url(&s), clean_path);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -242,7 +261,11 @@ async fn proxypool_request(method: &str, path: &str) -> Result<Value, String> {
 
 async fn proxypool_request_json(method: &str, path: &str, body: Value) -> Result<Value, String> {
     let s = settings::load().map_err(|e| e.to_string())?;
-    let clean_path = if path.starts_with('/') { path.to_string() } else { format!("/{path}") };
+    let clean_path = if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    };
     let url = format!("{}{}", base_url(&s), clean_path);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))

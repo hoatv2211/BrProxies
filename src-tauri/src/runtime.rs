@@ -94,6 +94,33 @@ pub fn binary_path() -> Result<PathBuf> {
     return Ok(base.join("ShardX-Linux").join("chrome"));
 }
 
+#[cfg(target_os = "windows")]
+pub fn runtime_has_bad_branding_patch() -> Result<bool> {
+    const BAD_BRAND: &[u8] = b"BrProxies Browser";
+    const UPSTREAM_BRAND: &[u8] = b"ShardX Browser";
+    let dll = runtime_dir()?.join("ShardX-Windows").join("chrome.dll");
+    if !dll.exists() {
+        return Ok(false);
+    }
+    let bytes = fs::read(&dll)?;
+    if find_bytes(&bytes, BAD_BRAND).is_some() {
+        return Ok(true);
+    }
+    Ok(count_bytes(&bytes, UPSTREAM_BRAND) != 1)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn runtime_has_bad_branding_patch() -> Result<bool> {
+    Ok(false)
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|window| window == needle)
+}
+
+fn count_bytes(haystack: &[u8], needle: &[u8]) -> usize {
+    haystack.windows(needle.len()).filter(|window| *window == needle).count()
+}
 fn manifest_path() -> Result<PathBuf> {
     Ok(runtime_dir()?.join("manifest.json"))
 }
@@ -110,7 +137,9 @@ struct Manifest {
 }
 
 fn load_manifest() -> Manifest {
-    let Ok(p) = manifest_path() else { return Manifest::default() };
+    let Ok(p) = manifest_path() else {
+        return Manifest::default();
+    };
     fs::read_to_string(p)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -169,9 +198,8 @@ pub async fn runtime_status() -> Result<RuntimeStatus, String> {
             .map(|d| {
                 fs::read_dir(&d)
                     .map(|it| {
-                        it.flatten().any(|e| {
-                            e.path().extension().and_then(|s| s.to_str()) == Some("json")
-                        })
+                        it.flatten()
+                            .any(|e| e.path().extension().and_then(|s| s.to_str()) == Some("json"))
                     })
                     .unwrap_or(false)
             })
@@ -255,7 +283,9 @@ async fn install_fingerprints(
     let url = format!("{PUB_BASE}/{FINGERPRINTS_ARCHIVE_KEY}");
 
     if !force {
-        if let (Some(local), Some(remote)) = (local_etag, head_etag(&url).await.ok().flatten().as_deref()) {
+        if let (Some(local), Some(remote)) =
+            (local_etag, head_etag(&url).await.ok().flatten().as_deref())
+        {
             if local == remote {
                 return Ok(None);
             }
@@ -286,9 +316,17 @@ async fn install_fingerprints(
         }
         let dst = dir.join(p.file_name().unwrap());
         match (dst.exists(), force) {
-            (true, false)  => { skipped_existing += 1; }
-            (true, true)   => { fs::copy(&p, &dst)?; overwritten += 1; }
-            (false, _)     => { fs::copy(&p, &dst)?; added += 1; }
+            (true, false) => {
+                skipped_existing += 1;
+            }
+            (true, true) => {
+                fs::copy(&p, &dst)?;
+                overwritten += 1;
+            }
+            (false, _) => {
+                fs::copy(&p, &dst)?;
+                added += 1;
+            }
         }
     }
     let _ = fs::remove_dir_all(&staging);
@@ -301,7 +339,11 @@ async fn install_fingerprints(
 /// Stream archive → temp file → extract; emits `runtime:progress` events.
 async fn download_and_extract(window: &Window, spec: &ArchiveSpec, base: &Path) -> Result<String> {
     let url = format!("{PUB_BASE}/{}", spec.key);
-    let mut resp = reqwest::Client::new().get(&url).send().await?.error_for_status()?;
+    let mut resp = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()?;
     let total = resp.content_length().unwrap_or(0);
     let etag = resp
         .headers()
@@ -418,23 +460,41 @@ fn fix_unix_exec_bits(root: &Path) {
     use std::io::Read;
     use std::os::unix::fs::PermissionsExt;
     const MAGIC: &[[u8; 4]] = &[
-        [0x7f, b'E', b'L', b'F'],                              // ELF
-        [0xfe, 0xed, 0xfa, 0xcf], [0xcf, 0xfa, 0xed, 0xfe],   // Mach-O 64 BE/LE
-        [0xfe, 0xed, 0xfa, 0xce], [0xce, 0xfa, 0xed, 0xfe],   // Mach-O 32 BE/LE
-        [0xca, 0xfe, 0xba, 0xbe], [0xbe, 0xba, 0xfe, 0xca],   // Mach-O universal
+        [0x7f, b'E', b'L', b'F'], // ELF
+        [0xfe, 0xed, 0xfa, 0xcf],
+        [0xcf, 0xfa, 0xed, 0xfe], // Mach-O 64 BE/LE
+        [0xfe, 0xed, 0xfa, 0xce],
+        [0xce, 0xfa, 0xed, 0xfe], // Mach-O 32 BE/LE
+        [0xca, 0xfe, 0xba, 0xbe],
+        [0xbe, 0xba, 0xfe, 0xca], // Mach-O universal
     ];
     fn walk(dir: &Path, magic: &[[u8; 4]]) {
-        let Ok(entries) = fs::read_dir(dir) else { return };
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
         for ent in entries.flatten() {
             let p = ent.path();
             let Ok(ft) = ent.file_type() else { continue };
-            if ft.is_symlink() { continue; }
-            if ft.is_dir() { walk(&p, magic); continue; }
-            if !ft.is_file() { continue; }
+            if ft.is_symlink() {
+                continue;
+            }
+            if ft.is_dir() {
+                walk(&p, magic);
+                continue;
+            }
+            if !ft.is_file() {
+                continue;
+            }
             let mut head = [0u8; 4];
-            let Ok(mut f) = fs::File::open(&p) else { continue };
-            if f.read_exact(&mut head).is_err() { continue; }
-            if !magic.iter().any(|m| *m == head) { continue; }
+            let Ok(mut f) = fs::File::open(&p) else {
+                continue;
+            };
+            if f.read_exact(&mut head).is_err() {
+                continue;
+            }
+            if !magic.iter().any(|m| *m == head) {
+                continue;
+            }
             if let Ok(meta) = fs::metadata(&p) {
                 let mut perm = meta.permissions();
                 perm.set_mode(perm.mode() | 0o111);
@@ -448,9 +508,7 @@ fn fix_unix_exec_bits(root: &Path) {
 /// Move Widevine to `<Framework>.framework/Versions/<ver>/Libraries/WidevineCdm/`.
 #[cfg(target_os = "macos")]
 fn place_widevine(base: &Path) -> Result<()> {
-    let src = base
-        .join("ShardX-Widevine-Mac-arm64")
-        .join("WidevineCdm");
+    let src = base.join("ShardX-Widevine-Mac-arm64").join("WidevineCdm");
     if !src.exists() {
         return Ok(());
     }
@@ -528,10 +586,14 @@ fn is_newer(latest: &str, current: &str) -> bool {
         let y = b.get(i).copied().unwrap_or("0");
         match (x.parse::<u64>(), y.parse::<u64>()) {
             (Ok(xn), Ok(yn)) => {
-                if xn != yn { return xn > yn; }
+                if xn != yn {
+                    return xn > yn;
+                }
             }
             _ => {
-                if x != y { return x > y; }
+                if x != y {
+                    return x > y;
+                }
             }
         }
     }
@@ -548,9 +610,15 @@ pub async fn launcher_update_check(app: tauri::AppHandle) -> Result<LauncherVers
         .build()
     {
         Ok(c) => c,
-        Err(e) => return Ok(LauncherVersionInfo {
-            current, latest: None, update_available: false, release_url: None,
-        }).map_err(|_: String| e.to_string()),
+        Err(e) => {
+            return Ok(LauncherVersionInfo {
+                current,
+                latest: None,
+                update_available: false,
+                release_url: None,
+            })
+            .map_err(|_: String| e.to_string())
+        }
     };
 
     let resp = client
@@ -560,26 +628,48 @@ pub async fn launcher_update_check(app: tauri::AppHandle) -> Result<LauncherVers
         .await;
     let Ok(resp) = resp else {
         return Ok(LauncherVersionInfo {
-            current, latest: None, update_available: false, release_url: None,
+            current,
+            latest: None,
+            update_available: false,
+            release_url: None,
         });
     };
     if !resp.status().is_success() {
         // 404/403 etc → report unknown rather than scare the user.
         return Ok(LauncherVersionInfo {
-            current, latest: None, update_available: false, release_url: None,
+            current,
+            latest: None,
+            update_available: false,
+            release_url: None,
         });
     }
     let body: serde_json::Value = match resp.json().await {
         Ok(v) => v,
-        Err(_) => return Ok(LauncherVersionInfo {
-            current, latest: None, update_available: false, release_url: None,
-        }),
+        Err(_) => {
+            return Ok(LauncherVersionInfo {
+                current,
+                latest: None,
+                update_available: false,
+                release_url: None,
+            })
+        }
     };
-    let latest = body.get("tag_name").and_then(|v| v.as_str()).map(String::from);
-    let release_url = body.get("html_url").and_then(|v| v.as_str()).map(String::from);
+    let latest = body
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let release_url = body
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let update_available = match &latest {
         Some(l) => is_newer(l, &current),
         None => false,
     };
-    Ok(LauncherVersionInfo { current, latest, update_available, release_url })
+    Ok(LauncherVersionInfo {
+        current,
+        latest,
+        update_available,
+        release_url,
+    })
 }

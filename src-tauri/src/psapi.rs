@@ -97,7 +97,13 @@ pub async fn call(
             .get("message")
             .and_then(|m| m.as_str())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| if text.is_empty() { status.as_str() } else { &text });
+            .unwrap_or_else(|| {
+                if text.is_empty() {
+                    status.as_str()
+                } else {
+                    &text
+                }
+            });
         return Err(anyhow!("{msg}"));
     }
     Ok(value)

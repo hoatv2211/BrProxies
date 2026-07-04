@@ -292,7 +292,6 @@ pub async fn android_request_raw(
     body: Option<Value>,
 ) -> Result<(Vec<u8>, reqwest::StatusCode, String), String> {
     let s = settings::load().map_err(|e| e.to_string())?;
-    ensure_manager_running(&s).await?;
     let clean = if path.starts_with('/') {
         path.to_string()
     } else {

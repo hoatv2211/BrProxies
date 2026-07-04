@@ -36,7 +36,12 @@ impl Tracker {
     }
 
     /// Take a spawned child + monitor it; entry removed on exit/kill.
-    pub fn track(self: &'static Self, profile_id: String, mut child: Child, temporary: bool) -> u32 {
+    pub fn track(
+        self: &'static Self,
+        profile_id: String,
+        mut child: Child,
+        temporary: bool,
+    ) -> u32 {
         let pid = child.id().unwrap_or(0);
         let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(1);
 
@@ -44,7 +49,12 @@ impl Tracker {
             let mut g = self.inner.lock().unwrap();
             g.insert(
                 profile_id.clone(),
-                ChildEntry { pid, killer: tx, cdp: None, started_at: Instant::now() },
+                ChildEntry {
+                    pid,
+                    killer: tx,
+                    cdp: None,
+                    started_at: Instant::now(),
+                },
             );
         }
 
@@ -100,8 +110,12 @@ impl Tracker {
             // Tear down temporary profile (config + udd) on close.
             if temporary {
                 match crate::profile::delete(&profile_id) {
-                    Ok(()) => eprintln!("[launcher] temporary profile {profile_id} deleted on close"),
-                    Err(e) => eprintln!("[launcher] temporary profile {profile_id} cleanup failed: {e}"),
+                    Ok(()) => {
+                        eprintln!("[launcher] temporary profile {profile_id} deleted on close")
+                    }
+                    Err(e) => {
+                        eprintln!("[launcher] temporary profile {profile_id} cleanup failed: {e}")
+                    }
                 }
             }
         });
