@@ -4,7 +4,7 @@
 
 **Goal:** Add smart cached builds for `smart launch\build.bat`.
 
-**Architecture:** Keep the existing batch file as the user-facing entrypoint and move cache/hash logic into a focused PowerShell helper. Store per-step hashes under `.brproxies-build-cache` so unchanged steps can be skipped.
+**Architecture:** Keep the existing batch file as the user-facing entrypoint and move cache/hash logic into a focused PowerShell helper. Store per-step hashes under `.brproxies-build-cache` so unchanged steps can be skipped, and use Tauri CLI for release exe builds so frontend assets are embedded correctly.
 
 **Tech Stack:** Windows batch, PowerShell 5+, npm, Python venv, Cargo/Tauri.
 
