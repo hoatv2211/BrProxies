@@ -3696,7 +3696,7 @@ function AndroidView() {
             {instances.map((item) => (
               <tr key={item.id}>
                 <td>{item.name}</td>
-                <td><span className="status-pill">{item.status}</span></td>
+                <td><span className={`status-pill status-${item.status.toLowerCase()}`}>{item.status}</span></td>
                 <td className="mono">{item.adb_host}:{item.adb_port}</td>
                 <td className="mono">{item.proxy_id || "-"}</td>
                 <td className="mono">{item.image}</td>

@@ -210,21 +210,27 @@ class AvdService:
             time.sleep(1)
 
     def running_avds(self) -> list[RunningAvd]:
-        try:
-            result = self.runner([self._tool("adb"), "devices", "-l"], check=True, capture_output=True, text=True)
-        except (RuntimeError, subprocess.CalledProcessError, FileNotFoundError):
-            return []
+        ports = self.running_ports()
         running: list[RunningAvd] = []
-        for line in str(getattr(result, "stdout", "")).splitlines():
-            match = re.match(r"^(emulator-(\d+))\s+device\b", line.strip())
-            if not match:
-                continue
-            serial = match.group(1)
-            port = int(match.group(2))
+        for port in sorted(ports):
+            serial = self.serial(port)
             name = self.avd_name_for_serial(serial)
             if name:
                 running.append(RunningAvd(name=name, console_port=port, serial=serial))
         return running
+
+    def running_ports(self) -> set[int]:
+        try:
+            result = self.runner([self._tool("adb"), "devices", "-l"], check=True, capture_output=True, text=True)
+        except (RuntimeError, subprocess.CalledProcessError, FileNotFoundError):
+            return set()
+        ports: set[int] = set()
+        for line in str(getattr(result, "stdout", "")).splitlines():
+            match = re.match(r"^(emulator-(\d+))\s+device\b", line.strip())
+            if not match:
+                continue
+            ports.add(int(match.group(2)))
+        return ports
 
     def avd_name_for_serial(self, serial: str) -> str | None:
         try:

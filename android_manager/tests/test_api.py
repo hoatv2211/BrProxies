@@ -130,6 +130,8 @@ def test_windows_avd_list_adopts_running_emulator(tmp_path, monkeypatch):
     class FakeAvdService:
         def __init__(self, data_dir, system_image="", device=""):
             pass
+        def running_ports(self):
+            return {5558}
         def running_avds(self):
             return [Running()]
 
@@ -149,6 +151,36 @@ def test_windows_avd_list_adopts_running_emulator(tmp_path, monkeypatch):
     assert body[0]["container_name"] == "brproxies_android_phone_1_5558"
     assert body[0]["adb_port"] == 5558
     assert body[0]["status"] == "running"
+
+def test_windows_avd_list_syncs_stored_status_by_adb_port(tmp_path, monkeypatch):
+    class FakeAvdService:
+        def __init__(self, data_dir, system_image="", device=""):
+            pass
+        def create(self, name):
+            pass
+        def start(self, name, port):
+            pass
+        def stop(self, port):
+            pass
+        def running_ports(self):
+            return {5558}
+        def running_avds(self):
+            return []
+
+    monkeypatch.setattr("android_manager.api.AvdService", FakeAvdService)
+    config_path = tmp_path / "android-manager.json"
+    config_path.write_text(
+        '{"runtime":"windows_avd","data_dir":"' + str(tmp_path).replace('\\', '\\\\') + '","adb_port_start":5557,"adb_port_end":5559}',
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(str(config_path)))
+    created = client.post("/instances", json={"name": "phone-sync"}).json()
+    client.post(f"/instances/{created['id']}/stop")
+
+    resp = client.get("/instances")
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["status"] == "running"
 
 def test_windows_avd_start_creates_legacy_instance_avd_when_missing(tmp_path, monkeypatch):
     calls = []

@@ -74,6 +74,11 @@ def _avd(cfg: AndroidManagerConfig) -> AvdService:
 
 def _sync_windows_avds(store: AndroidStore, cfg: AndroidManagerConfig) -> None:
     service = _avd(cfg)
+    running_ports = service.running_ports()
+    for item in store.list_instances():
+        next_status = "running" if item.adb_port in running_ports else "stopped"
+        if item.status != next_status:
+            store.set_status(item.id, next_status)
     for running in service.running_avds():
         if not running.name.startswith("brproxies_android_"):
             continue
