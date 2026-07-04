@@ -36,7 +36,7 @@ def test_avd_service_builds_create_start_stop_and_screen_commands(tmp_path):
 
     assert rec.runs[0][0][:4] == ["avdmanager", "create", "avd", "--force"]
     assert "brproxies_phone_5556" in rec.runs[0][0]
-    assert rec.popens[0][0] == ["emulator", "-avd", "brproxies_phone_5556", "-port", "5556", "-gpu", "host", "-no-boot-anim", "-no-snapshot-load", "-no-snapshot-save", "-no-audio"]
+    assert rec.popens[0][0] == ["emulator", "-avd", "brproxies_phone_5556", "-port", "5556", "-gpu", "host", "-no-window", "-no-boot-anim", "-no-snapshot-load", "-no-snapshot-save", "-no-audio"]
     assert rec.runs[1][0] == ["adb", "-s", "emulator-5556", "wait-for-device"]
     assert rec.runs[2][0] == ["adb", "-s", "emulator-5556", "shell", "getprop", "sys.boot_completed"]
     assert rec.popens[1][0] == ["scrcpy", "-s", "emulator-5556", "--no-audio"]
@@ -54,6 +54,12 @@ def test_avd_service_writes_lightweight_config(tmp_path):
     assert "hw.lcd.density=320" in body
     assert "hw.ramSize=2048" in body
     assert "hw.gpu.mode=host" in body
+    assert "hw.camera.back=none" in body
+    assert "hw.camera.front=none" in body
+    assert "hw.gps=no" in body
+    assert "hw.audioInput=no" in body
+    assert "hw.audioOutput=no" in body
+    assert "showDeviceFrame=no" in body
 
 
 def test_avd_service_rejects_missing_required_tool(tmp_path):
@@ -81,6 +87,26 @@ def test_avd_service_selects_installed_playstore_image(tmp_path):
     service = AvdService(data_dir=str(tmp_path), sdk_root=str(sdk), which=lambda name: name)
 
     assert service.resolve_system_image() == "system-images;android-35;google_apis_playstore;x86_64"
+
+def test_avd_service_prefers_google_apis_over_playstore(tmp_path):
+    sdk = tmp_path / "Sdk"
+    play = sdk / "system-images" / "android-35" / "google_apis_playstore" / "x86_64"
+    apis = sdk / "system-images" / "android-35" / "google_apis" / "x86_64"
+    play.mkdir(parents=True)
+    apis.mkdir(parents=True)
+    (play / "package.xml").write_text("", encoding="utf-8")
+    (apis / "package.xml").write_text("", encoding="utf-8")
+    service = AvdService(data_dir=str(tmp_path), sdk_root=str(sdk), which=lambda name: name)
+
+    assert service.resolve_system_image() == "system-images;android-35;google_apis;x86_64"
+
+def test_avd_start_uses_window_when_scrcpy_missing(tmp_path):
+    rec = Recorder()
+    service = AvdService(data_dir=str(tmp_path), avd_home=str(tmp_path / "avd"), runner=rec.run, popen=rec.popen, which=lambda name: None if name == "scrcpy" else name)
+
+    service.start("phone_a", 5556)
+
+    assert "-no-window" not in rec.popens[0][0]
 
 
 def test_avd_service_selects_newer_installed_api_image(tmp_path):

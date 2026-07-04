@@ -7,6 +7,7 @@ def test_default_config_values():
     assert cfg.host == "127.0.0.1"
     assert cfg.port == 40327
     assert cfg.redroid_image == "redroid/redroid:12.0.0-latest"
+    assert cfg.avd_device == "pixel_2"
     assert cfg.adb_port_start == 5555
     assert cfg.adb_port_end == 5999
     assert cfg.container_prefix == "brproxies-android-"

@@ -14,7 +14,7 @@ class AndroidManagerConfig:
     port: int = 40327
     redroid_image: str = "redroid/redroid:12.0.0-latest"
     avd_system_image: str = "system-images;android-35;google_apis;x86_64"
-    avd_device: str = "pixel_6"
+    avd_device: str = "pixel_2"
     adb_port_start: int = 5555
     adb_port_end: int = 5999
     container_prefix: str = "brproxies-android-"
