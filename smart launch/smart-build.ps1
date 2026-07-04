@@ -110,6 +110,23 @@ function Test-FileWritable($Path) {
   }
 }
 
+function Stop-LockingBrProxies($Path) {
+  if (-not (Test-Path -LiteralPath $Path)) { return }
+  $target = (Resolve-Path -LiteralPath $Path).Path
+  $locked = @(Get-Process -Name "brproxies" -ErrorAction SilentlyContinue | Where-Object {
+    try { $_.Path -eq $target } catch { $false }
+  })
+  if ($locked.Count -eq 0) { return }
+  Write-Host "Closing running BrProxies before build..."
+  foreach ($process in $locked) {
+    Stop-Process -Id $process.Id -Force
+  }
+  for ($i = 0; $i -lt 50; $i++) {
+    if (Test-FileWritable $Path) { return }
+    Start-Sleep -Milliseconds 100
+  }
+}
+
 Require-Command "cargo" "Install Rust from https://rustup.rs/ then reopen terminal or VS Code."
 Require-Command "rustc" "Install Rust from https://rustup.rs/ then reopen terminal or VS Code."
 Require-Command "npm.cmd" "Install Node.js LTS, then reopen terminal or VS Code."
@@ -158,8 +175,9 @@ $needFrontend = $Full -or -not (Test-Path -LiteralPath "dist\index.html") -or ((
 $exePath = "src-tauri\target\release\brproxies.exe"
 $needDesktop = $Full -or $needFrontend -or -not (Test-Path -LiteralPath $exePath) -or ((Get-Cache "tauri") -ne $tauriHash)
 if ($needDesktop) {
+  Stop-LockingBrProxies $exePath
   if (-not (Test-FileWritable $exePath)) {
-    throw "BrProxies is running and locks $exePath. Close BrProxies, then run smart launch\build.bat again."
+    throw "BrProxies is still locking $exePath. Close it manually, then run smart launch\build.bat again."
   }
   Run-Step "Building desktop app..." "npm.cmd" @("run", "tauri", "build", "--", "--no-bundle")
   $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
