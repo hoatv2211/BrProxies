@@ -121,6 +121,35 @@ def test_windows_avd_runtime_lifecycle_uses_avd_service(tmp_path, monkeypatch):
     assert ("stop", 5556) in calls
     assert ("delete", avd_name) in calls
 
+def test_windows_avd_list_adopts_running_emulator(tmp_path, monkeypatch):
+    class Running:
+        name = "brproxies_android_phone_1_5558"
+        console_port = 5558
+        serial = "emulator-5558"
+
+    class FakeAvdService:
+        def __init__(self, data_dir, system_image="", device=""):
+            pass
+        def running_avds(self):
+            return [Running()]
+
+    monkeypatch.setattr("android_manager.api.AvdService", FakeAvdService)
+    config_path = tmp_path / "android-manager.json"
+    config_path.write_text(
+        '{"runtime":"windows_avd","data_dir":"' + str(tmp_path).replace('\\', '\\\\') + '","avd_system_image":"system-images;android-35;google_apis_playstore;x86_64"}',
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(str(config_path)))
+
+    resp = client.get("/instances")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["container_name"] == "brproxies_android_phone_1_5558"
+    assert body[0]["adb_port"] == 5558
+    assert body[0]["status"] == "running"
+
 def test_windows_avd_start_creates_legacy_instance_avd_when_missing(tmp_path, monkeypatch):
     calls = []
 

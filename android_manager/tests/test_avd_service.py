@@ -39,9 +39,10 @@ def test_avd_service_builds_create_start_stop_and_screen_commands(tmp_path):
     assert rec.popens[0][0] == ["emulator", "-avd", "brproxies_phone_5556", "-port", "5556", "-gpu", "host", "-no-window", "-no-boot-anim", "-no-audio"]
     assert rec.runs[1][0] == ["adb", "-s", "emulator-5556", "wait-for-device"]
     assert rec.runs[2][0] == ["adb", "-s", "emulator-5556", "shell", "getprop", "sys.boot_completed"]
+    assert any(run[0][:7] == ["adb", "-s", "emulator-5556", "shell", "pm", "disable-user", "--user"] for run in rec.runs)
     assert rec.popens[1][0] == ["scrcpy", "-s", "emulator-5556", "--no-audio"]
-    assert rec.runs[3][0] == ["adb", "-s", "emulator-5556", "emu", "kill"]
-    assert rec.runs[4][0] == ["avdmanager", "delete", "avd", "--name", "brproxies_phone_5556"]
+    assert any(run[0] == ["adb", "-s", "emulator-5556", "emu", "kill"] for run in rec.runs)
+    assert any(run[0] == ["avdmanager", "delete", "avd", "--name", "brproxies_phone_5556"] for run in rec.runs)
 
 def test_avd_service_writes_lightweight_config(tmp_path):
     service = AvdService(data_dir=str(tmp_path), avd_home=str(tmp_path / "avd"), which=lambda name: name)
@@ -149,3 +150,22 @@ def test_avd_service_checks_existing_avd_by_name(tmp_path):
     assert service.exists("phone_a") is True
     assert service.exists("phone_b") is False
     assert kwargs_seen[0]["env"]["JAVA_HOME"] == "C:\\Android Studio\\jbr"
+
+def test_avd_service_discovers_running_avds(tmp_path):
+    class Runner:
+        def __call__(self, args, **kwargs):
+            class Result:
+                stdout = ""
+            result = Result()
+            if args == ["adb", "devices", "-l"]:
+                result.stdout = "List of devices attached\nemulator-5558 device product:sdk_gphone64_x86_64\n"
+            elif args == ["adb", "-s", "emulator-5558", "emu", "avd", "name"]:
+                result.stdout = "brproxies_android_phone_1_5558\nOK\n"
+            return result
+
+    service = AvdService(data_dir=str(tmp_path), runner=Runner(), which=lambda name: name)
+
+    running = service.running_avds()
+    assert len(running) == 1
+    assert running[0].name == "brproxies_android_phone_1_5558"
+    assert running[0].console_port == 5558
