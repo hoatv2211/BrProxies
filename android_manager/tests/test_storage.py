@@ -66,3 +66,28 @@ def test_adopt_instance_upserts_by_adb_port(tmp_path):
     assert updated.status == "running"
     assert updated.image == "system-images;android-35;google_apis;x86_64"
     assert len(store.list_instances()) == 1
+
+def test_adopt_instance_upserts_by_container_name(tmp_path):
+    store = AndroidStore(str(tmp_path / "android.sqlite3"))
+    created = store.adopt_instance(
+        name="phone-a",
+        image="system-images;android-35;google_apis;x86_64",
+        adb_port=5556,
+        container_name="brproxies_android_phone_a_5556",
+        volume_name="brproxies_android_phone_a_5556_data",
+        status="stopped",
+    )
+
+    updated = store.adopt_instance(
+        name="phone-a",
+        image="system-images;android-35;google_apis;x86_64",
+        adb_port=5558,
+        container_name="brproxies_android_phone_a_5556",
+        volume_name="brproxies_android_phone_a_5556_data",
+        status="running",
+    )
+
+    assert updated.id == created.id
+    assert updated.adb_port == 5556
+    assert updated.status == "running"
+    assert len(store.list_instances()) == 1
