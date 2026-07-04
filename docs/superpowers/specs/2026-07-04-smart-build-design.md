@@ -12,8 +12,8 @@ The smart build skips expensive dependency setup when inputs are unchanged:
 
 - npm install runs only when `node_modules` is missing, package files changed, `/deps` is passed, or `/full` is passed.
 - Android Manager editable install runs only when the venv is missing, `android_manager\pyproject.toml` changed, `/deps` is passed, or `/full` is passed.
-- frontend build runs only when frontend inputs changed, `dist\index.html` is missing, or `/full` is passed.
-- desktop exe build uses `cargo build --release` in `src-tauri` and runs only when Rust/Tauri inputs changed, frontend was rebuilt, the exe is missing, or `/full` is passed.
+- frontend build is delegated to `npm.cmd run tauri build -- --no-bundle` so the release exe embeds assets correctly.
+- desktop exe build runs only when Rust/Tauri inputs changed, frontend inputs changed, the exe is missing, the smart build helper changed, or `/full` is passed.
 
 `/full` preserves the current dependable behavior by forcing every step. `/deps` refreshes dependency setup without forcing source rebuilds.
 
