@@ -22,10 +22,11 @@ class Recorder:
 def test_avd_service_builds_create_start_stop_and_screen_commands(tmp_path):
     rec = Recorder()
     sdk = tmp_path / "Sdk"
+    avd_home = tmp_path / "avd"
     image = sdk / "system-images" / "android-35" / "google_apis" / "x86_64"
     image.mkdir(parents=True)
     (image / "package.xml").write_text("", encoding="utf-8")
-    service = AvdService(data_dir=str(tmp_path), sdk_root=str(sdk), runner=rec.run, popen=rec.popen, which=lambda name: name)
+    service = AvdService(data_dir=str(tmp_path), sdk_root=str(sdk), avd_home=str(avd_home), runner=rec.run, popen=rec.popen, which=lambda name: name)
 
     service.create("brproxies_phone_5556")
     service.start("brproxies_phone_5556", 5556)
@@ -35,12 +36,24 @@ def test_avd_service_builds_create_start_stop_and_screen_commands(tmp_path):
 
     assert rec.runs[0][0][:4] == ["avdmanager", "create", "avd", "--force"]
     assert "brproxies_phone_5556" in rec.runs[0][0]
-    assert rec.popens[0][0] == ["emulator", "-avd", "brproxies_phone_5556", "-port", "5556", "-no-snapshot-save"]
+    assert rec.popens[0][0] == ["emulator", "-avd", "brproxies_phone_5556", "-port", "5556", "-gpu", "host", "-no-boot-anim", "-no-snapshot-load", "-no-snapshot-save", "-no-audio"]
     assert rec.runs[1][0] == ["adb", "-s", "emulator-5556", "wait-for-device"]
     assert rec.runs[2][0] == ["adb", "-s", "emulator-5556", "shell", "getprop", "sys.boot_completed"]
     assert rec.popens[1][0] == ["scrcpy", "-s", "emulator-5556", "--no-audio"]
     assert rec.runs[3][0] == ["adb", "-s", "emulator-5556", "emu", "kill"]
     assert rec.runs[4][0] == ["avdmanager", "delete", "avd", "--name", "brproxies_phone_5556"]
+
+def test_avd_service_writes_lightweight_config(tmp_path):
+    service = AvdService(data_dir=str(tmp_path), avd_home=str(tmp_path / "avd"), which=lambda name: name)
+
+    service.optimize_config("phone_a")
+
+    body = (tmp_path / "avd" / "phone_a.avd" / "config.ini").read_text(encoding="utf-8")
+    assert "hw.lcd.width=720" in body
+    assert "hw.lcd.height=1280" in body
+    assert "hw.lcd.density=320" in body
+    assert "hw.ramSize=2048" in body
+    assert "hw.gpu.mode=host" in body
 
 
 def test_avd_service_rejects_missing_required_tool(tmp_path):
