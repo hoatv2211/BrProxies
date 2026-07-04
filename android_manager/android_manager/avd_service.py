@@ -22,7 +22,7 @@ class AvdService:
         self,
         data_dir: str,
         system_image: str = "system-images;android-35;google_apis;x86_64",
-        device: str = "pixel_6",
+        device: str = "pixel_2",
         sdk_root: str | None = None,
         runner: RunFn | None = None,
         popen: PopenFn | None = None,
@@ -98,6 +98,16 @@ class AvdService:
                 "vm.heapSize": "256",
                 "hw.gpu.enabled": "yes",
                 "hw.gpu.mode": "host",
+                "hw.camera.back": "none",
+                "hw.camera.front": "none",
+                "hw.audioInput": "no",
+                "hw.audioOutput": "no",
+                "hw.gps": "no",
+                "hw.sensors.orientation": "no",
+                "hw.sensors.proximity": "no",
+                "hw.sensors.magnetic_field": "no",
+                "hw.trackBall": "no",
+                "showDeviceFrame": "no",
                 "disk.dataPartition.size": "4096M",
                 "fastboot.forceColdBoot": "yes",
             }
@@ -122,7 +132,7 @@ class AvdService:
     def _installed_system_images(self) -> list[str]:
         roots = [self.sdk_root] if self.sdk_root else android_sdk_roots()
         images: list[str] = []
-        flavor_rank = {"google_apis_playstore": 0, "google_apis": 1, "default": 2}
+        flavor_rank = {"google_apis": 0, "default": 1, "google_apis_playstore": 2}
         for root in roots:
             if not root:
                 continue
@@ -156,7 +166,11 @@ class AvdService:
 
     def start(self, avd_name: str, console_port: int) -> None:
         self.optimize_config(avd_name)
-        self.popen([self._tool("emulator"), "-avd", avd_name, "-port", str(console_port), "-gpu", "host", "-no-boot-anim", "-no-snapshot-load", "-no-snapshot-save", "-no-audio"])
+        args = [self._tool("emulator"), "-avd", avd_name, "-port", str(console_port), "-gpu", "host"]
+        if self.which("scrcpy"):
+            args.append("-no-window")
+        args.extend(["-no-boot-anim", "-no-snapshot-load", "-no-snapshot-save", "-no-audio"])
+        self.popen(args)
         serial = self.serial(console_port)
         self.runner([self._tool("adb"), "-s", serial, "wait-for-device"], check=True)
         deadline = time.time() + 90
