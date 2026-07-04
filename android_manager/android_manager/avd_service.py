@@ -28,6 +28,7 @@ class AvdService:
         popen: PopenFn | None = None,
         which: Callable[[str], str | None] | None = None,
         java_home: str | None = None,
+        avd_home: str | None = None,
     ) -> None:
         self.data_dir = data_dir
         self.system_image = system_image
@@ -37,6 +38,7 @@ class AvdService:
         self.popen = popen or subprocess.Popen
         self.which = which or find_android_tool
         self.java_home = java_home or find_java_home()
+        self.avd_home = Path(avd_home) if avd_home else Path(os.getenv("ANDROID_AVD_HOME", str(Path.home() / ".android" / "avd")))
 
     def serial(self, console_port: int) -> str:
         return f"emulator-{console_port}"
@@ -75,6 +77,32 @@ class AvdService:
             check=True,
             env=self._android_env(),
         )
+        self.optimize_config(avd_name)
+
+    def optimize_config(self, avd_name: str) -> None:
+        avd_dir = self.avd_home / f"{avd_name}.avd"
+        avd_dir.mkdir(parents=True, exist_ok=True)
+        config_path = avd_dir / "config.ini"
+        existing: dict[str, str] = {}
+        if config_path.exists():
+            for line in config_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    existing[key] = value
+        existing.update(
+            {
+                "hw.lcd.width": "720",
+                "hw.lcd.height": "1280",
+                "hw.lcd.density": "320",
+                "hw.ramSize": "2048",
+                "vm.heapSize": "256",
+                "hw.gpu.enabled": "yes",
+                "hw.gpu.mode": "host",
+                "disk.dataPartition.size": "4096M",
+                "fastboot.forceColdBoot": "yes",
+            }
+        )
+        config_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(existing.items())) + "\n", encoding="utf-8")
 
     def exists(self, avd_name: str) -> bool:
         result = self.runner([self._tool("avdmanager"), "list", "avd"], check=True, capture_output=True, text=True, env=self._android_env())
@@ -127,14 +155,18 @@ class AvdService:
         return False
 
     def start(self, avd_name: str, console_port: int) -> None:
-        self.popen([self._tool("emulator"), "-avd", avd_name, "-port", str(console_port), "-no-snapshot-save"])
+        self.optimize_config(avd_name)
+        self.popen([self._tool("emulator"), "-avd", avd_name, "-port", str(console_port), "-gpu", "host", "-no-boot-anim", "-no-snapshot-load", "-no-snapshot-save", "-no-audio"])
         serial = self.serial(console_port)
         self.runner([self._tool("adb"), "-s", serial, "wait-for-device"], check=True)
         deadline = time.time() + 90
         while True:
-            result = self.runner([self._tool("adb"), "-s", serial, "shell", "getprop", "sys.boot_completed"], check=True, capture_output=True, text=True)
-            if str(getattr(result, "stdout", "")).strip() == "1":
-                return
+            try:
+                result = self.runner([self._tool("adb"), "-s", serial, "shell", "getprop", "sys.boot_completed"], check=True, capture_output=True, text=True)
+                if str(getattr(result, "stdout", "")).strip() == "1":
+                    return
+            except subprocess.CalledProcessError:
+                pass
             if time.time() > deadline:
                 raise TimeoutError(f"Android emulator did not boot: {serial}")
             time.sleep(1)
