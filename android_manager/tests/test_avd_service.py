@@ -36,7 +36,7 @@ def test_avd_service_builds_create_start_stop_and_screen_commands(tmp_path):
 
     assert rec.runs[0][0][:4] == ["avdmanager", "create", "avd", "--force"]
     assert "brproxies_phone_5556" in rec.runs[0][0]
-    assert rec.popens[0][0] == ["emulator", "-avd", "brproxies_phone_5556", "-port", "5556", "-gpu", "host", "-no-window", "-no-boot-anim", "-no-snapshot-load", "-no-snapshot-save", "-no-audio"]
+    assert rec.popens[0][0] == ["emulator", "-avd", "brproxies_phone_5556", "-port", "5556", "-gpu", "host", "-no-window", "-no-boot-anim", "-no-audio"]
     assert rec.runs[1][0] == ["adb", "-s", "emulator-5556", "wait-for-device"]
     assert rec.runs[2][0] == ["adb", "-s", "emulator-5556", "shell", "getprop", "sys.boot_completed"]
     assert rec.popens[1][0] == ["scrcpy", "-s", "emulator-5556", "--no-audio"]
@@ -60,6 +60,7 @@ def test_avd_service_writes_lightweight_config(tmp_path):
     assert "hw.audioInput=no" in body
     assert "hw.audioOutput=no" in body
     assert "showDeviceFrame=no" in body
+    assert "fastboot.forceColdBoot" not in body
 
 
 def test_avd_service_rejects_missing_required_tool(tmp_path):
