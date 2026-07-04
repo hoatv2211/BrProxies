@@ -235,10 +235,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
         store = _store(config_path)
         try:
             item = store.get_instance(instance_id)
-            if _runtime(cfg) == "windows_avd":
-                _avd(cfg).set_http_proxy(item.adb_port, body.host, body.port)
-            else:
-                AdbService(fake=_is_fake(cfg)).set_http_proxy(item.adb_host, item.adb_port, body.host, body.port)
+            try:
+                if _runtime(cfg) == "windows_avd":
+                    _avd(cfg).set_http_proxy(item.adb_port, body.host, body.port)
+                else:
+                    AdbService(fake=_is_fake(cfg)).set_http_proxy(item.adb_host, item.adb_port, body.host, body.port)
+            except (RuntimeError, subprocess.CalledProcessError, TimeoutError) as e:
+                raise _runtime_http_error(e)
             return asdict(store.set_proxy(instance_id, body.proxy_id or f"{body.host}:{body.port}"))
         except KeyError as e:
             raise _not_found(e)
@@ -249,10 +252,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
         store = _store(config_path)
         try:
             item = store.get_instance(instance_id)
-            if _runtime(cfg) == "windows_avd":
-                _avd(cfg).clear_http_proxy(item.adb_port)
-            else:
-                AdbService(fake=_is_fake(cfg)).clear_http_proxy(item.adb_host, item.adb_port)
+            try:
+                if _runtime(cfg) == "windows_avd":
+                    _avd(cfg).clear_http_proxy(item.adb_port)
+                else:
+                    AdbService(fake=_is_fake(cfg)).clear_http_proxy(item.adb_host, item.adb_port)
+            except (RuntimeError, subprocess.CalledProcessError, TimeoutError) as e:
+                raise _runtime_http_error(e)
             return asdict(store.set_proxy(instance_id, None))
         except KeyError as e:
             raise _not_found(e)

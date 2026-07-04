@@ -182,6 +182,31 @@ def test_windows_avd_list_syncs_stored_status_by_adb_port(tmp_path, monkeypatch)
     assert resp.status_code == 200
     assert resp.json()[0]["status"] == "running"
 
+def test_windows_avd_proxy_error_returns_400(tmp_path, monkeypatch):
+    class FakeAvdService:
+        def __init__(self, data_dir, system_image="", device=""):
+            pass
+        def create(self, name):
+            pass
+        def start(self, name, port):
+            pass
+        def set_http_proxy(self, port, host, proxy_port):
+            raise RuntimeError("Android device is not ready: emulator-5556 is offline")
+
+    monkeypatch.setattr("android_manager.api.AvdService", FakeAvdService)
+    config_path = tmp_path / "android-manager.json"
+    config_path.write_text(
+        '{"runtime":"windows_avd","data_dir":"' + str(tmp_path).replace('\\', '\\\\') + '","adb_port_start":5555,"adb_port_end":5557}',
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(str(config_path)), raise_server_exceptions=False)
+    created = client.post("/instances", json={"name": "phone-proxy"}).json()
+
+    resp = client.post(f"/instances/{created['id']}/set-proxy", json={"host": "127.0.0.1", "port": 8080})
+
+    assert resp.status_code == 400
+    assert "emulator-5556 is offline" in resp.json()["detail"]
+
 def test_windows_avd_start_creates_legacy_instance_avd_when_missing(tmp_path, monkeypatch):
     calls = []
 

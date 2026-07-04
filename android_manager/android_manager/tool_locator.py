@@ -44,6 +44,17 @@ def find_android_tool(name: str) -> str | None:
             path = root / rel
             if path.exists():
                 return str(path)
+    if name == "scrcpy":
+        home = Path.home()
+        winget_root = home / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages"
+        if winget_root.exists():
+            matches = sorted(winget_root.glob("Genymobile.scrcpy_*/*/scrcpy.exe"))
+            matches.extend(sorted(winget_root.glob("Genymobile.scrcpy_*/*/scrcpy")))
+            matches.extend(sorted(winget_root.glob("Genymobile.scrcpy_*/scrcpy.exe")))
+            matches.extend(sorted(winget_root.glob("Genymobile.scrcpy_*/scrcpy")))
+            for path in matches:
+                if path.exists():
+                    return str(path)
     return None
 
 

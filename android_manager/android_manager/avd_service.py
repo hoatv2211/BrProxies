@@ -189,6 +189,9 @@ class AvdService:
 
     def start(self, avd_name: str, console_port: int) -> None:
         self.optimize_config(avd_name)
+        if self.adb_state(console_port) == "offline":
+            self.runner([self._tool("adb"), "kill-server"], check=False, capture_output=True, text=True)
+            self.runner([self._tool("adb"), "start-server"], check=False, capture_output=True, text=True)
         args = [self._tool("emulator"), "-avd", avd_name, "-port", str(console_port), "-gpu", "host"]
         if self.which("scrcpy"):
             args.append("-no-window")
@@ -232,6 +235,27 @@ class AvdService:
             ports.add(int(match.group(2)))
         return ports
 
+    def adb_state(self, console_port: int) -> str | None:
+        serial = self.serial(console_port)
+        try:
+            result = self.runner([self._tool("adb"), "devices", "-l"], check=True, capture_output=True, text=True)
+        except (RuntimeError, subprocess.CalledProcessError, FileNotFoundError):
+            return None
+        for line in str(getattr(result, "stdout", "")).splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0] == serial:
+                return parts[1]
+        return None
+
+    def require_ready(self, console_port: int) -> None:
+        state = self.adb_state(console_port)
+        serial = self.serial(console_port)
+        if state != "device":
+            raise RuntimeError(f"Android device is not ready: {serial} is {state or 'missing'}")
+        result = self.runner([self._tool("adb"), "-s", serial, "shell", "getprop", "sys.boot_completed"], check=True, capture_output=True, text=True)
+        if str(getattr(result, "stdout", "")).strip() != "1":
+            raise RuntimeError(f"Android device is not booted yet: {serial}")
+
     def avd_name_for_serial(self, serial: str) -> str | None:
         try:
             result = self.runner([self._tool("adb"), "-s", serial, "emu", "avd", "name"], check=True, capture_output=True, text=True)
@@ -271,14 +295,16 @@ class AvdService:
             self.runner([self._tool("adb"), "-s", self.serial(console_port), "exec-out", "screencap", "-p"], stdout=out, check=True)
 
     def set_http_proxy(self, console_port: int, host: str, port: int) -> None:
+        self.require_ready(console_port)
         self.runner([self._tool("adb"), "-s", self.serial(console_port), "shell", "settings", "put", "global", "http_proxy", f"{host}:{port}"], check=True)
 
     def clear_http_proxy(self, console_port: int) -> None:
+        self.require_ready(console_port)
         self.runner([self._tool("adb"), "-s", self.serial(console_port), "shell", "settings", "put", "global", "http_proxy", ":0"], check=True)
 
     def open_screen(self, console_port: int) -> bool:
         scrcpy = self.which("scrcpy")
         if not scrcpy:
             return False
-        self.popen([scrcpy, "-s", self.serial(console_port), "--no-audio"])
+        self.popen([scrcpy, "-s", self.serial(console_port), "--no-audio", "--max-size", "720", "--video-bit-rate", "4M"])
         return True

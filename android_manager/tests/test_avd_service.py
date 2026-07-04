@@ -37,10 +37,10 @@ def test_avd_service_builds_create_start_stop_and_screen_commands(tmp_path):
     assert rec.runs[0][0][:4] == ["avdmanager", "create", "avd", "--force"]
     assert "brproxies_phone_5556" in rec.runs[0][0]
     assert rec.popens[0][0] == ["emulator", "-avd", "brproxies_phone_5556", "-port", "5556", "-gpu", "host", "-no-window", "-no-boot-anim", "-no-audio"]
-    assert rec.runs[1][0] == ["adb", "-s", "emulator-5556", "wait-for-device"]
-    assert rec.runs[2][0] == ["adb", "-s", "emulator-5556", "shell", "getprop", "sys.boot_completed"]
+    assert any(run[0] == ["adb", "-s", "emulator-5556", "wait-for-device"] for run in rec.runs)
+    assert any(run[0] == ["adb", "-s", "emulator-5556", "shell", "getprop", "sys.boot_completed"] for run in rec.runs)
     assert any(run[0][:7] == ["adb", "-s", "emulator-5556", "shell", "pm", "disable-user", "--user"] for run in rec.runs)
-    assert rec.popens[1][0] == ["scrcpy", "-s", "emulator-5556", "--no-audio"]
+    assert rec.popens[1][0] == ["scrcpy", "-s", "emulator-5556", "--no-audio", "--max-size", "720", "--video-bit-rate", "4M"]
     assert any(run[0] == ["adb", "-s", "emulator-5556", "emu", "kill"] for run in rec.runs)
     assert any(run[0] == ["avdmanager", "delete", "avd", "--name", "brproxies_phone_5556"] for run in rec.runs)
 
@@ -169,3 +169,23 @@ def test_avd_service_discovers_running_avds(tmp_path):
     assert len(running) == 1
     assert running[0].name == "brproxies_android_phone_1_5558"
     assert running[0].console_port == 5558
+
+def test_avd_service_reports_offline_state_and_blocks_proxy(tmp_path):
+    class Runner:
+        def __call__(self, args, **kwargs):
+            class Result:
+                stdout = ""
+            result = Result()
+            if args == ["adb", "devices", "-l"]:
+                result.stdout = "List of devices attached\nemulator-5556 offline\n"
+            return result
+
+    service = AvdService(data_dir=str(tmp_path), runner=Runner(), which=lambda name: name)
+
+    assert service.adb_state(5556) == "offline"
+    try:
+        service.set_http_proxy(5556, "127.0.0.1", 8080)
+    except RuntimeError as err:
+        assert "emulator-5556 is offline" in str(err)
+    else:
+        raise AssertionError("offline emulator should not accept proxy changes")
