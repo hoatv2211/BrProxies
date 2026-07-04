@@ -3657,6 +3657,7 @@ function AndroidView() {
   };
 
   const endpoint = status?.base_url || "http://127.0.0.1:40327";
+  const managerOnline = status?.running === true;
 
   return (
     <div className="launcher-panel android-view">
@@ -3666,7 +3667,7 @@ function AndroidView() {
           <h2>Android instances</h2>
         </div>
         <div className="toolbar-actions">
-          <button className="btn-ghost" onClick={importDevices} disabled={busy}><Icon.Download /> Import devices</button>
+          <button className="btn-ghost" onClick={importDevices} disabled={busy || !managerOnline}><Icon.Download /> Import devices</button>
           <button className="btn-ghost" onClick={() => refresh()} disabled={busy}>Refresh</button>
           {status?.running ? (
             <button className="btn-ghost danger" onClick={() => run("Android Manager stopped", () => invoke("android_stop"))} disabled={busy}>Stop manager</button>
@@ -3676,12 +3677,27 @@ function AndroidView() {
         </div>
       </div>
 
-      <div className="metrics-row">
-        <Metric label="Manager" value={status?.running ? "Running" : "Stopped"} accent={status?.running} />
-        <Metric label="Host" value={validation?.ok ? "Ready" : "Needs setup"} accent={validation?.ok} />
-        <Metric label="Runtime" value={validation?.runtime || activeAndroidRuntime || "redroid"} />
-        <Metric label="Instances" value={String(instances.length)} />
-        <Metric label="Endpoint" value={endpoint.replace("http://", "")} />
+      <div className="android-status-strip" aria-label="Android manager status">
+        <div className={`android-status-item ${status?.running ? "ok" : "warn"}`}>
+          <span>Manager</span>
+          <strong>{status?.running ? "Running" : "Stopped"}</strong>
+        </div>
+        <div className={`android-status-item ${validation?.ok ? "ok" : "warn"}`}>
+          <span>Host</span>
+          <strong>{validation?.ok ? "Ready" : "Needs setup"}</strong>
+        </div>
+        <div className="android-status-item">
+          <span>Runtime</span>
+          <strong>{validation?.runtime || activeAndroidRuntime || "redroid"}</strong>
+        </div>
+        <div className="android-status-item">
+          <span>Devices</span>
+          <strong>{instances.length}</strong>
+        </div>
+        <div className="android-status-item endpoint">
+          <span>Endpoint</span>
+          <strong>{endpoint.replace("http://", "")}</strong>
+        </div>
       </div>
 
       {validation && !validation.ok && (
@@ -3694,7 +3710,7 @@ function AndroidView() {
 
       <div className="form-row android-create-row">
         <Field label="Name" value={name} onChange={setName} />
-        <button className="btn-primary" onClick={createInstance} disabled={busy || !name.trim()}><IconPhone /> Create device</button>
+        <button className="btn-primary" onClick={createInstance} disabled={busy || !managerOnline || !name.trim()}><IconPhone /> Create device</button>
       </div>
 
       <div className="android-tools">
@@ -3720,14 +3736,14 @@ function AndroidView() {
                 <td>{new Date(item.created_at).toLocaleString()}</td>
                 <td>
                   <div className="row-actions">
-                    <button className="btn-ghost btn-sm" onClick={() => startInstance(item)} disabled={busy}>Start</button>
-                    <button className="btn-ghost btn-sm" onClick={() => run("Stopped", () => invoke("android_post", { path: `/instances/${item.id}/stop`, body: {} }))} disabled={busy}>Stop</button>
-                    <button className="btn-ghost btn-sm" onClick={() => installApk(item)} disabled={busy || !apkPath.trim()}>APK</button>
-                    <button className="btn-ghost btn-sm" onClick={() => openScreenshot(item)} disabled={busy}>Shot</button>
-                    <button className="btn-ghost btn-sm" onClick={() => run("Screen opened", () => openAndroidScreen(item), false)} disabled={busy}>Screen</button>
-                    <button className="btn-ghost btn-sm" onClick={() => setProxy(item)} disabled={busy || !proxyHost.trim() || !Number(proxyPort)}>Proxy</button>
-                    <button className="btn-ghost btn-sm" onClick={() => run("Proxy cleared", () => invoke("android_post", { path: `/instances/${item.id}/clear-proxy`, body: {} }))} disabled={busy}>Clear</button>
-                    <button className="btn-ghost btn-sm danger" onClick={() => run("Deleted", () => invoke("android_delete", { path: `/instances/${item.id}` }))} disabled={busy}>Delete</button>
+                    <button className="btn-ghost btn-sm" onClick={() => startInstance(item)} disabled={busy || !managerOnline}>Start</button>
+                    <button className="btn-ghost btn-sm" onClick={() => run("Stopped", () => invoke("android_post", { path: `/instances/${item.id}/stop`, body: {} }))} disabled={busy || !managerOnline}>Stop</button>
+                    <button className="btn-ghost btn-sm" onClick={() => installApk(item)} disabled={busy || !managerOnline || !apkPath.trim()}>APK</button>
+                    <button className="btn-ghost btn-sm" onClick={() => openScreenshot(item)} disabled={busy || !managerOnline}>Shot</button>
+                    <button className="btn-ghost btn-sm" onClick={() => run("Screen opened", () => openAndroidScreen(item), false)} disabled={busy || !managerOnline}>Screen</button>
+                    <button className="btn-ghost btn-sm" onClick={() => setProxy(item)} disabled={busy || !managerOnline || !proxyHost.trim() || !Number(proxyPort)}>Proxy</button>
+                    <button className="btn-ghost btn-sm" onClick={() => run("Proxy cleared", () => invoke("android_post", { path: `/instances/${item.id}/clear-proxy`, body: {} }))} disabled={busy || !managerOnline}>Clear</button>
+                    <button className="btn-ghost btn-sm danger" onClick={() => run("Deleted", () => invoke("android_delete", { path: `/instances/${item.id}` }))} disabled={busy || !managerOnline}>Delete</button>
                   </div>
                 </td>
               </tr>
@@ -4265,6 +4281,10 @@ function ProxiesView() {
     () => filteredProxies.slice((proxyPage - 1) * PROXY_PAGE_SIZE, proxyPage * PROXY_PAGE_SIZE),
     [filteredProxies, proxyPage],
   );
+  const failedVisibleProxies = useMemo(
+    () => filteredProxies.filter((p) => snapshots[p.id]?.tcp_ms == null && snapshots[p.id]),
+    [filteredProxies, snapshots],
+  );
 
   const commitRename = async () => {
     if (!renaming) return;
@@ -4400,6 +4420,33 @@ function ProxiesView() {
     toast.ok(`Deleted ${ids.length}`);
   };
 
+  const deleteFailedVisible = async () => {
+    const targets = failedVisibleProxies;
+    if (targets.length === 0) return;
+    if ((await confirmModal({
+      title: "Delete failed proxies",
+      message: `Delete ${targets.length} failed prox${targets.length === 1 ? "y" : "ies"} in the current filtered list?`,
+      danger: true,
+    })) !== true) return;
+    let deleted = 0;
+    for (const p of targets) {
+      try { await invoke("proxy_delete", { id: p.id }); deleted += 1; }
+      catch (e) { toast.err(String(e)); }
+    }
+    setProxySel((prev) => {
+      const next = new Set(prev);
+      for (const p of targets) next.delete(p.id);
+      return next;
+    });
+    setSnapshots((prev) => {
+      const next = { ...prev };
+      for (const p of targets) delete next[p.id];
+      return next;
+    });
+    reload();
+    toast.ok(`Deleted ${deleted} failed prox${deleted === 1 ? "y" : "ies"}`);
+  };
+
   // Export in bulk-import format so round-trip preserves country tag.
   const bulkExport = () => {
     const targets = proxies.filter((p) => proxySel.has(p.id));
@@ -4445,6 +4492,9 @@ function ProxiesView() {
           )}
           <button className="btn-ghost" onClick={testAllVisible} disabled={testingAll || filteredProxies.length === 0} title="Test all proxies in the current filtered list">
             <Icon.Refresh /> {testingAll ? "Testing..." : "Test all"}
+          </button>
+          <button className="btn-ghost danger" onClick={deleteFailedVisible} disabled={testingAll || failedVisibleProxies.length === 0} title="Delete proxies with failed TCP test in the current filtered list">
+            <Icon.Trash /> Delete failed{failedVisibleProxies.length > 0 ? ` (${failedVisibleProxies.length})` : ""}
           </button>
           <button className="btn-ghost" onClick={bulkImportClipboard} title="Import proxies from the clipboard"><Icon.Download /> Import</button>
           <button className="btn-primary" onClick={() => setBulkOpen(true)}>+ New proxy</button>

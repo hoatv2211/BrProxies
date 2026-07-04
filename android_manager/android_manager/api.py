@@ -168,27 +168,21 @@ def create_app(config_path: str | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="AVD import is only available for windows_avd runtime")
         store = _store(config_path)
         service = _avd(cfg)
-        try:
-            avd_names = service.available_avds()
-        except (RuntimeError, subprocess.CalledProcessError, TimeoutError) as e:
-            raise _runtime_http_error(e)
         running_by_name = {item.name: item.console_port for item in service.running_avds()}
         imported = []
-        for avd_name in avd_names:
+        for avd_name, running_port in sorted(running_by_name.items()):
             existing = store.get_by_container_name(avd_name)
             if existing:
                 port = existing.adb_port
-            elif avd_name in running_by_name:
-                port = running_by_name[avd_name]
             else:
-                port = _allocate_port(store, cfg)
+                port = running_port
             item = store.adopt_instance(
                 name=_friendly_avd_name(avd_name),
                 image=cfg.avd_system_image,
                 adb_port=port,
                 container_name=avd_name,
                 volume_name=f"{avd_name}_data",
-                status="running" if avd_name in running_by_name else "stopped",
+                status="running",
             )
             imported.append(asdict(item))
         return imported

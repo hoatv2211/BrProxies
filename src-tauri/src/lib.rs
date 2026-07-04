@@ -1,15 +1,15 @@
 // BrProxies Tauri backend.
 
-mod api;
 mod android;
+mod api;
 mod cookies;
 mod fingerprints;
 mod launch;
 mod mcp_setup;
 mod process;
 mod profile;
-mod proxypool;
 mod proxy;
+mod proxypool;
 mod psapi;
 mod runtime;
 mod settings;
@@ -96,26 +96,20 @@ fn infer_gpu_preset_id(config: &serde_json::Map<String, Value>) -> Option<String
 
 // macOS Sonoma 14.x, Sequoia 15.x, Tahoe 26.x.
 const MACOS_PLATFORM_VERSIONS: &[&str] = &[
-    "14.6.1", "14.7", "14.7.1", "14.7.2",
-    "15.4", "15.4.1", "15.5", "15.6", "15.6.1", "15.7",
+    "14.6.1", "14.7", "14.7.1", "14.7.2", "15.4", "15.4.1", "15.5", "15.6", "15.6.1", "15.7",
     "26.0", "26.0.1", "26.1",
 ];
 
 // Win 10 21H1+ ("10.0.0"), Win 11 21H2..25H2 ("13"–"17"); weighted to 22H2/23H2/24H2.
 const WINDOWS_PLATFORM_VERSIONS: &[&str] = &[
-    "10.0.0",
-    "13.0.0",
-    "14.0.0", "14.0.0", "14.0.0",
-    "15.0.0", "15.0.0", "15.0.0", "15.0.0",
-    "16.0.0", "16.0.0", "16.0.0",
-    "17.0.0",
+    "10.0.0", "13.0.0", "14.0.0", "14.0.0", "14.0.0", "15.0.0", "15.0.0", "15.0.0", "15.0.0",
+    "16.0.0", "16.0.0", "16.0.0", "17.0.0",
 ];
 
 // LTS kernels + current mainline.
 const LINUX_PLATFORM_VERSIONS: &[&str] = &[
-    "5.15.0", "6.1.0", "6.5.0",
-    "6.6.0", "6.8.0", "6.10.0", "6.11.0", "6.12.0",
-    "6.14.0", "6.15.0", "6.16.0",
+    "5.15.0", "6.1.0", "6.5.0", "6.6.0", "6.8.0", "6.10.0", "6.11.0", "6.12.0", "6.14.0", "6.15.0",
+    "6.16.0",
 ];
 
 /// Write a random platform_version into navigator + client_hints; unknown platforms left alone.
@@ -126,10 +120,10 @@ pub(crate) fn randomize_platform_version(payload: &mut serde_json::Map<String, V
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let pool: &[&str] = match platform {
-        "macOS"   => MACOS_PLATFORM_VERSIONS,
+        "macOS" => MACOS_PLATFORM_VERSIONS,
         "Windows" => WINDOWS_PLATFORM_VERSIONS,
-        "Linux"   => LINUX_PLATFORM_VERSIONS,
-        _         => return,
+        "Linux" => LINUX_PLATFORM_VERSIONS,
+        _ => return,
     };
     let pick_idx = (uuid::Uuid::new_v4().as_bytes()[0] as usize) % pool.len();
     let version = pool[pick_idx].to_string();
@@ -137,7 +131,10 @@ pub(crate) fn randomize_platform_version(payload: &mut serde_json::Map<String, V
     if let Some(nav) = payload.get_mut("navigator").and_then(|v| v.as_object_mut()) {
         nav.insert("platform_version".into(), Value::String(version.clone()));
     }
-    if let Some(ch) = payload.get_mut("client_hints").and_then(|v| v.as_object_mut()) {
+    if let Some(ch) = payload
+        .get_mut("client_hints")
+        .and_then(|v| v.as_object_mut())
+    {
         ch.insert("platform_version".into(), Value::String(version));
     }
 }
@@ -151,14 +148,10 @@ fn mac_hw_configs(model: &str) -> Option<&'static [(u32, u32)]> {
         "mac-m2-air13" | "mac-m2-air15" | "mac-m2-mbp13" => &[(8, 8), (8, 16)],
         "mac-m2-pro-mbp14" | "mac-m2-pro-mbp16" => &[(10, 16), (12, 16), (12, 32)],
         "mac-m2-max-mbp14" | "mac-m2-max-mbp16" => &[(12, 32)],
-        "mac-m3-air13" | "mac-m3-air15" | "mac-m3-mbp14" | "mac-m3-imac24" => {
-            &[(8, 8), (8, 16)]
-        }
+        "mac-m3-air13" | "mac-m3-air15" | "mac-m3-mbp14" | "mac-m3-imac24" => &[(8, 8), (8, 16)],
         "mac-m3-pro-mbp14" | "mac-m3-pro-mbp16" => &[(11, 16), (12, 16), (12, 32)],
         "mac-m3-max-mbp14" | "mac-m3-max-mbp16" => &[(14, 32), (16, 32)],
-        "mac-m4-air13" | "mac-m4-air15" | "mac-m4-mbp14" | "mac-m4-imac24" => {
-            &[(10, 16), (10, 32)]
-        }
+        "mac-m4-air13" | "mac-m4-air15" | "mac-m4-mbp14" | "mac-m4-imac24" => &[(10, 16), (10, 32)],
         "mac-m4-pro-mbp14" | "mac-m4-pro-mbp16" => &[(12, 16), (14, 16), (14, 32)],
         "mac-m4-max-mbp14" | "mac-m4-max-mbp16" => &[(14, 32), (16, 32)],
         "mac-m5-mbp14" => &[(10, 16), (10, 32)],
@@ -207,7 +200,10 @@ fn host_ram_gb() -> Option<u32> {
             .output()
             .ok()?;
         let txt = String::from_utf8_lossy(&out.stdout);
-        let bytes: u64 = txt.lines().filter_map(|l| l.trim().parse::<u64>().ok()).next()?;
+        let bytes: u64 = txt
+            .lines()
+            .filter_map(|l| l.trim().parse::<u64>().ok())
+            .next()?;
         return Some((bytes / (1024 * 1024 * 1024)) as u32);
     }
     #[allow(unreachable_code)]
@@ -306,7 +302,12 @@ fn clamp_screen_to_real_display(
     let real_h = (phys.height as f64 / scale).round() as i64;
     eprintln!(
         "[launcher] display: name={:?} physical={}x{} scale={} -> logical={}x{}",
-        monitor.name(), phys.width, phys.height, scale, real_w, real_h
+        monitor.name(),
+        phys.width,
+        phys.height,
+        scale,
+        real_w,
+        real_h
     );
     if real_w <= 0 || real_h <= 0 {
         return;
@@ -333,8 +334,14 @@ fn clamp_screen_to_real_display(
     }
 
     // Preserve FP menubar/dock insets for avail_*.
-    let fp_avail_w = scr.get("avail_width").and_then(|v| v.as_i64()).unwrap_or(fp_w);
-    let fp_avail_h = scr.get("avail_height").and_then(|v| v.as_i64()).unwrap_or(fp_h);
+    let fp_avail_w = scr
+        .get("avail_width")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(fp_w);
+    let fp_avail_h = scr
+        .get("avail_height")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(fp_h);
     let chrome_w = (fp_w - fp_avail_w).max(0);
     let chrome_h = (fp_h - fp_avail_h).max(0);
     let avail_w = (real_w - chrome_w).max(1);
@@ -544,7 +551,9 @@ pub fn merge_library_fingerprint(
     );
     if let Some(o) = entry.payload.as_object() {
         for (k, v) in o {
-            if k == "_meta" { continue; }
+            if k == "_meta" {
+                continue;
+            }
             merged.insert(k.clone(), v.clone());
         }
     }
@@ -647,7 +656,10 @@ fn fingerprint_get(id: String) -> Result<Option<fingerprints::LibraryEntry>, Str
 }
 
 #[tauri::command]
-fn fingerprint_import(json_text: String, id_hint: Option<String>) -> Result<fingerprints::LibraryEntry, String> {
+fn fingerprint_import(
+    json_text: String,
+    id_hint: Option<String>,
+) -> Result<fingerprints::LibraryEntry, String> {
     fingerprints::import(&json_text, id_hint).map_err(|e| e.to_string())
 }
 
@@ -715,8 +727,13 @@ async fn proxy_check_udp(entry: proxy::ProxyEntry) -> Result<u128, String> {
 }
 
 #[tauri::command]
-async fn proxy_geo(entry: proxy::ProxyEntry, provider: Option<String>) -> Result<proxy::GeoInfo, String> {
-    proxy::geo_check(&entry, provider).await.map_err(|e| e.to_string())
+async fn proxy_geo(
+    entry: proxy::ProxyEntry,
+    provider: Option<String>,
+) -> Result<proxy::GeoInfo, String> {
+    proxy::geo_check(&entry, provider)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -765,7 +782,12 @@ fn proxy_bulk_save(entries: Vec<proxy::ProxyEntry>) -> Result<usize, String> {
 // ---- Launcher ----
 
 #[tauri::command]
-async fn launch(profile_id: String) -> Result<u32, String> {
+async fn launch(window: tauri::Window, profile_id: String) -> Result<u32, String> {
+    if runtime::runtime_has_bad_branding_patch().map_err(|e| e.to_string())? {
+        eprintln!("[runtime] damaged Chromium runtime detected; reinstalling clean runtime");
+        runtime::runtime_install(window, true).await?;
+    }
+
     // UI launches: no CDP, headed.
     launch::launch_profile(&profile_id, false, false)
         .await
@@ -876,7 +898,11 @@ async fn ps_me() -> Result<Value, String> {
 }
 
 #[tauri::command]
-async fn ps_orders(status: String, offset: Option<i64>, limit: Option<i64>) -> Result<Value, String> {
+async fn ps_orders(
+    status: String,
+    offset: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Value, String> {
     let mut q = vec![("status".to_string(), status)];
     if let Some(o) = offset {
         q.push(("offset".into(), o.to_string()));
@@ -971,7 +997,11 @@ async fn ps_purchase(body: Value) -> Result<Value, String> {
 
 /// Buy extra GB of residential traffic for an order.
 #[tauri::command]
-async fn ps_add_bandwidth(id: i64, amount: i64, promo_code: Option<String>) -> Result<Value, String> {
+async fn ps_add_bandwidth(
+    id: i64,
+    amount: i64,
+    promo_code: Option<String>,
+) -> Result<Value, String> {
     let mut body = serde_json::json!({ "amount": amount });
     if let Some(p) = promo_code.filter(|s| !s.is_empty()) {
         body["promo_code"] = Value::String(p);
@@ -1035,7 +1065,11 @@ async fn ps_regions(proxy_type: String, country_code: String) -> Result<Value, S
 }
 
 #[tauri::command]
-async fn ps_cities(proxy_type: String, country_code: String, region_code: String) -> Result<Value, String> {
+async fn ps_cities(
+    proxy_type: String,
+    country_code: String,
+    region_code: String,
+) -> Result<Value, String> {
     psapi::call(
         "GET",
         "/user/api/proxies/cities",
@@ -1076,7 +1110,6 @@ async fn ps_set_tag(id: i64, tag: String) -> Result<Value, String> {
     .await
     .map_err(|e| e.to_string())
 }
-
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

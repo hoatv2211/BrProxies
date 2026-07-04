@@ -8,8 +8,11 @@ fingerprint library from our CDN into a local cache, then launches
 isolated browser sessions on demand.
 
 Driven by [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)
-(stealth-patched Playwright) — `sdk.session()` returns a ready-to-use
+(stealth-patched Playwright) - `sdk.session()` returns a ready-to-use
 `Browser` instance, no manual `connectOverCDP` plumbing.
+
+This SDK is for the BrProxies browser runtime only. It does not manage Android
+AVD, ReDroid, ProxyPool sidecars, or desktop UI state.
 
 ## Install
 
@@ -17,7 +20,7 @@ Driven by [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)
 npm install brproxies-sdk
 ```
 
-Supported hosts: **macOS arm64**, **Windows x64**, **Linux x64**. Node ≥ 18.
+Supported hosts: **macOS arm64**, **Windows x64**, **Linux x64**. Node >= 18.
 
 ### Linux system dependencies
 
@@ -114,29 +117,29 @@ console.log(await sdk.checkProxy("socks5://user:pass@host:port"));
 Every call to `sdk.session()` / `sdk.launch()` runs the same pre-spawn
 pipeline the desktop launcher uses:
 
-1. **`resolveAutoFields`** — if the profile has `"auto"` sentinels for
+1. **`resolveAutoFields`** - if the profile has `"auto"` sentinels for
    `timezone`, `navigator.language`, or `geolocation.mode`, the SDK
    makes a live geo lookup through the bound proxy (`ip-api.com` by
    default). Concrete values get written back: timezone (from the API,
    never a static table), `accept_language` chain, `languages`,
    `icu_locale` (always overwritten so `Intl.*` matches
-   `navigator.language`), and lat/lng. Proxy-via failure → direct geo
-   → host `Intl.DateTimeFormat().resolvedOptions().timeZone` as
+   `navigator.language`), and lat/lng. Proxy-via failure -> direct geo
+   -> host `Intl.DateTimeFormat().resolvedOptions().timeZone` as
    last-resort fallback. The resolved geo is surfaced on
    `session.geo`.
-2. **`applyScreenStrategy`** — see below.
-3. **`probeUdp`** — SOCKS5 UDP_ASSOCIATE round-trip. If it fails, QUIC
+2. **`applyScreenStrategy`** - see below.
+3. **`probeUdp`** - SOCKS5 UDP_ASSOCIATE round-trip. If it fails, QUIC
    is force-disabled and WebRTC switches to `tcp_only` automatically.
 
 ### Screen strategy
 
 `screenMode` option to `session()` / `launch()`:
 
-* **`"profile"`** — keep whatever the fingerprint claims.
-* **`"cap_to_host"`** — *macOS default.* If the host monitor is smaller
+* **`"profile"`** - keep whatever the fingerprint claims.
+* **`"cap_to_host"`** - *macOS default.* If the host monitor is smaller
   than the FP screen, scale `screen.*` + `window.*` down proportionally;
   otherwise no-op.
-* **`"use_host"`** — *Windows / Linux default.* Overwrite `screen.*`
+* **`"use_host"`** - *Windows / Linux default.* Overwrite `screen.*`
   with the real monitor (minus a 40 px Windows taskbar) and recompute
   `window.outer*` / `window.inner*`.
 
@@ -149,14 +152,14 @@ await sdk.session({ fingerprint: "win-rtx4060", screenMode: "profile" });
 ### Host-aware hardware randomisation
 
 `randomize: true` re-picks `hardware_concurrency`, `device_memory`, and
-`platform_version` before the launch — using the same logic as the
+`platform_version` before the launch - using the same logic as the
 desktop launcher:
 
 * **macOS** profiles use the curated `MAC_HW_CONFIGS` table by id.
 * **Windows / Linux** profiles bracket the host's logical CPU count
-  within `[host − 4, host + 2]` from the real x86 set
+  within `[host - 4, host + 2]` from the real x86 set
   `[4, 6, 8, 12, 16, 20, 24, 28, 32]`; `device_memory` is floored by
-  core count (≥ 12 → 16, else 8) and capped by `hostRamBucketGb()`
+  core count (>= 12 -> 16, else 8) and capped by `hostRamBucketGb()`
   (8 / 16 / 32 GiB bucketed from `sysctl hw.memsize` / `/proc/meminfo`
   / `Get-CimInstance Win32_ComputerSystem`).
 
@@ -236,10 +239,10 @@ with `cdpUrl`, `geo`, `proxyUdpMs`, `quicEnabled`, `webrtcMode`,
 ~/Library/Application Support/brproxies-sdk/    (mac)
 %LOCALAPPDATA%\brproxies-sdk\                   (win)
 ~/.cache/brproxies-sdk/                         (linux)
-├── manifest.json             ← etag cache
-├── BrProxies runtime/       ← extracted engine cache
-├── fingerprints/             ← 170 bundled .json profiles
-└── profiles/<profile-id>/    ← per-launch user-data-dir
++-- manifest.json             <- etag cache
++-- BrProxies runtime/        <- extracted engine cache
++-- fingerprints/             <- 170 bundled .json profiles
+`-- profiles/<profile-id>/    <- per-launch user-data-dir
 ```
 
 Override:
@@ -261,6 +264,6 @@ await sdk.runtime.install({ force: true });
 ## License
 
 MIT (this SDK). The Chromium-fork engine binary it downloads at
-runtime is a closed-source product — see the
+runtime is a closed-source product - see the
 [main repo](https://github.com/hoatv2211/BrProxies) for engine
 licensing.

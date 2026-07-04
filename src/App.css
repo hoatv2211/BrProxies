@@ -2249,6 +2249,76 @@ button.status-pill.status-link:active { transform: translateY(1px); }
   gap: 8px;
 }
 
+.android-view .panel-head {
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.android-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 6px;
+  border: 1px solid var(--bd-1);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+}
+
+.android-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  max-width: 100%;
+  padding: 4px 9px;
+  border: 1px solid var(--bd-1);
+  border-radius: 6px;
+  background: var(--bg-2);
+  color: var(--tx-2);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.android-status-item span {
+  color: var(--tx-4);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .55px;
+  text-transform: uppercase;
+}
+
+.android-status-item strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tx-1);
+  font-size: 12.5px;
+  font-weight: 650;
+  font-feature-settings: "tnum";
+}
+
+.android-status-item.ok {
+  border-color: #4ade8040;
+  background: #4ade8014;
+}
+
+.android-status-item.ok strong { color: var(--ok); }
+
+.android-status-item.warn {
+  border-color: #f59e0b44;
+  background: #f59e0b14;
+}
+
+.android-status-item.warn strong { color: var(--warn); }
+
+.android-status-item.endpoint {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
 .android-view .android-checks {
   display: flex;
   flex-wrap: wrap;
@@ -2330,4 +2400,23 @@ button.status-pill.status-link:active { transform: translateY(1px); }
 
 @media (max-width: 1100px) {
   .android-view .android-tools { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 900px) {
+  .android-view .panel-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .android-view .toolbar-actions {
+    justify-content: flex-start;
+  }
+
+  .android-status-strip {
+    align-items: stretch;
+  }
+
+  .android-status-item {
+    flex: 1 1 150px;
+  }
 }

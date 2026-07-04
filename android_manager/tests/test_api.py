@@ -152,12 +152,10 @@ def test_windows_avd_list_adopts_running_emulator(tmp_path, monkeypatch):
     assert body[0]["adb_port"] == 5558
     assert body[0]["status"] == "running"
 
-def test_windows_avd_imports_available_avds(tmp_path, monkeypatch):
+def test_windows_avd_imports_running_avds_only(tmp_path, monkeypatch):
     class FakeAvdService:
         def __init__(self, data_dir, system_image="", device=""):
             pass
-        def available_avds(self):
-            return ["brproxies_android_phone_1_5556", "Pixel_8_API_35"]
         def running_avds(self):
             class Running:
                 name = "brproxies_android_phone_1_5556"
@@ -177,9 +175,8 @@ def test_windows_avd_imports_available_avds(tmp_path, monkeypatch):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert [item["container_name"] for item in body] == ["brproxies_android_phone_1_5556", "Pixel_8_API_35"]
+    assert [item["container_name"] for item in body] == ["brproxies_android_phone_1_5556"]
     assert body[0]["status"] == "running"
-    assert body[1]["status"] == "stopped"
 
 def test_windows_avd_list_syncs_stored_status_by_adb_port(tmp_path, monkeypatch):
     class FakeAvdService:

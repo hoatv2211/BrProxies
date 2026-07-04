@@ -17,7 +17,14 @@ python -m proxypool_service serve
 
 Default API: `http://127.0.0.1:40326`
 
-Default Redis: `redis://127.0.0.1:6379/0`
+Standalone service default Redis: `redis://127.0.0.1:6379/0`
+
+When started by BrProxies `smart launch\run.bat`, the desktop helper starts the
+bundled Windows Redis on:
+
+```text
+redis://:madpool@127.0.0.1:6380/0
+```
 
 ## Config
 
@@ -26,6 +33,14 @@ The desktop app writes a JSON config file and starts the service with:
 ```powershell
 python -m proxypool_service serve --config <path>
 ```
+
+For day-to-day desktop use, prefer launching BrProxies through:
+
+```bat
+"smart launch\run.bat"
+```
+
+That script starts Redis, cleans stale ProxyPool sidecars, and opens the app.
 
 Docker and shell usage can override config with environment variables:
 
@@ -56,6 +71,8 @@ GET /proxies?https=true
 GET /count?https=true
 DELETE /proxy/{proxy}
 GET /sources
+POST /sources
+POST /clean
 POST /jobs/collect
 POST /jobs/check
 ```
@@ -74,4 +91,3 @@ Then verify:
 curl http://127.0.0.1:40326/health
 curl http://127.0.0.1:40326/count
 ```
-
