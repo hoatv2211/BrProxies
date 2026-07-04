@@ -3548,8 +3548,12 @@ function AndroidView() {
   const [apkPath, setApkPath] = useState("");
   const [proxyHost, setProxyHost] = useState("127.0.0.1");
   const [proxyPort, setProxyPort] = useState("8080");
+  const busyRef = useRef(false);
+  const refreshInFlightRef = useRef(false);
 
   const refresh = async () => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
     const [cfg, st, val, list] = await Promise.allSettled([
       invoke<Settings>("settings_get"),
       invoke<AndroidManagerStatus>("android_status"),
@@ -3560,9 +3564,17 @@ function AndroidView() {
     if (st.status === "fulfilled") setStatus(st.value);
     if (val.status === "fulfilled") setValidation(val.value);
     if (list.status === "fulfilled") setInstances(list.value);
+    refreshInFlightRef.current = false;
   };
 
-  useEffect(() => { refresh().catch(() => {}); }, []);
+  useEffect(() => { busyRef.current = busy; }, [busy]);
+  useEffect(() => {
+    refresh().catch(() => { refreshInFlightRef.current = false; });
+    const timer = window.setInterval(() => {
+      if (!busyRef.current) refresh().catch(() => { refreshInFlightRef.current = false; });
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const run = async (label: string, fn: () => Promise<unknown>, reload = true) => {
     setBusy(true);
