@@ -1351,6 +1351,17 @@ textarea { resize: vertical; min-height: 60px; line-height: 1.5; }
   border-color: #4ade8055;
   box-shadow: 0 0 0 2px #4ade8010;
 }
+.status-pill.status-running {
+  color: var(--ok);
+  background: #4ade8014;
+  border-color: #4ade8055;
+  box-shadow: 0 0 0 2px #4ade8010;
+}
+.status-pill.status-stopped {
+  color: var(--err);
+  background: #fb71851a;
+  border-color: #fb718555;
+}
 .status-pill.status-failed {
   color: var(--err);
   background: #fb71851a;
