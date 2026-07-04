@@ -109,9 +109,9 @@ class AvdService:
                 "hw.trackBall": "no",
                 "showDeviceFrame": "no",
                 "disk.dataPartition.size": "4096M",
-                "fastboot.forceColdBoot": "yes",
             }
         )
+        existing.pop("fastboot.forceColdBoot", None)
         config_path.write_text("\n".join(f"{key}={value}" for key, value in sorted(existing.items())) + "\n", encoding="utf-8")
 
     def exists(self, avd_name: str) -> bool:
@@ -169,7 +169,7 @@ class AvdService:
         args = [self._tool("emulator"), "-avd", avd_name, "-port", str(console_port), "-gpu", "host"]
         if self.which("scrcpy"):
             args.append("-no-window")
-        args.extend(["-no-boot-anim", "-no-snapshot-load", "-no-snapshot-save", "-no-audio"])
+        args.extend(["-no-boot-anim", "-no-audio"])
         self.popen(args)
         serial = self.serial(console_port)
         self.runner([self._tool("adb"), "-s", serial, "wait-for-device"], check=True)
