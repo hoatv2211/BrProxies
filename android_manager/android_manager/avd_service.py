@@ -142,6 +142,17 @@ class AvdService:
         output = str(getattr(result, "stdout", ""))
         return any(line.strip() == f"Name: {avd_name}" for line in output.splitlines())
 
+    def available_avds(self) -> list[str]:
+        result = self.runner([self._tool("avdmanager"), "list", "avd"], check=True, capture_output=True, text=True, env=self._android_env())
+        names: list[str] = []
+        for line in str(getattr(result, "stdout", "")).splitlines():
+            value = line.strip()
+            if value.startswith("Name:"):
+                name = value.split(":", 1)[1].strip()
+                if name:
+                    names.append(name)
+        return names
+
     def resolve_system_image(self) -> str:
         configured = self.system_image
         parts = configured.split(";")

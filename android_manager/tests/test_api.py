@@ -152,6 +152,35 @@ def test_windows_avd_list_adopts_running_emulator(tmp_path, monkeypatch):
     assert body[0]["adb_port"] == 5558
     assert body[0]["status"] == "running"
 
+def test_windows_avd_imports_available_avds(tmp_path, monkeypatch):
+    class FakeAvdService:
+        def __init__(self, data_dir, system_image="", device=""):
+            pass
+        def available_avds(self):
+            return ["brproxies_android_phone_1_5556", "Pixel_8_API_35"]
+        def running_avds(self):
+            class Running:
+                name = "brproxies_android_phone_1_5556"
+                console_port = 5556
+                serial = "emulator-5556"
+            return [Running()]
+
+    monkeypatch.setattr("android_manager.api.AvdService", FakeAvdService)
+    config_path = tmp_path / "android-manager.json"
+    config_path.write_text(
+        '{"runtime":"windows_avd","data_dir":"' + str(tmp_path).replace('\\', '\\\\') + '","adb_port_start":5555,"adb_port_end":5559}',
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(str(config_path)))
+
+    resp = client.post("/instances/import-avds")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [item["container_name"] for item in body] == ["brproxies_android_phone_1_5556", "Pixel_8_API_35"]
+    assert body[0]["status"] == "running"
+    assert body[1]["status"] == "stopped"
+
 def test_windows_avd_list_syncs_stored_status_by_adb_port(tmp_path, monkeypatch):
     class FakeAvdService:
         def __init__(self, data_dir, system_image="", device=""):

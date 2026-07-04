@@ -2225,8 +2225,13 @@ button.status-pill.status-link:active { transform: translateY(1px); }
 
 .android-view .android-create-row {
   align-items: end;
-  grid-template-columns: minmax(180px, 320px) auto;
+  grid-template-columns: minmax(180px, 320px) max-content;
   margin: 16px 0;
+}
+
+.android-view .android-create-row .btn-primary {
+  min-width: 150px;
+  justify-content: center;
 }
 
 .android-view .android-tools {
@@ -2264,6 +2269,10 @@ button.status-pill.status-link:active { transform: translateY(1px); }
 .android-view .row-actions {
   min-width: 390px;
   justify-content: flex-start;
+}
+
+.android-table-wrap table {
+  min-width: 980px;
 }
 
 .android-template-grid {

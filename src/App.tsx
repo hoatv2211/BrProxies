@@ -3593,6 +3593,10 @@ function AndroidView() {
     await invoke("android_post", { path: "/instances", body: { name } });
   });
 
+  const importDevices = () => run("Android devices imported", async () => {
+    await invoke("android_post", { path: "/instances/import-avds", body: {} });
+  });
+
   const startManagerAndMaybeCreateDefault = () => run("Android Manager started", async () => {
     await invoke("android_start");
     const list = await invoke<AndroidInstance[]>("android_get", { path: "/instances" }).catch(() => []);
@@ -3662,6 +3666,7 @@ function AndroidView() {
           <h2>Android instances</h2>
         </div>
         <div className="toolbar-actions">
+          <button className="btn-ghost" onClick={importDevices} disabled={busy}><Icon.Download /> Import devices</button>
           <button className="btn-ghost" onClick={() => refresh()} disabled={busy}>Refresh</button>
           {status?.running ? (
             <button className="btn-ghost danger" onClick={() => run("Android Manager stopped", () => invoke("android_stop"))} disabled={busy}>Stop manager</button>
@@ -3689,7 +3694,7 @@ function AndroidView() {
 
       <div className="form-row android-create-row">
         <Field label="Name" value={name} onChange={setName} />
-        <button className="btn-primary" onClick={createInstance} disabled={busy || !name.trim()}><IconPhone /> Create</button>
+        <button className="btn-primary" onClick={createInstance} disabled={busy || !name.trim()}><IconPhone /> Create device</button>
       </div>
 
       <div className="android-tools">
@@ -3699,7 +3704,7 @@ function AndroidView() {
         <Field label="Proxy port" value={proxyPort} onChange={setProxyPort} />
       </div>
 
-      <div className="table-wrap">
+      <div className="table-wrap android-table-wrap">
         <table>
           <thead>
             <tr><th>Name</th><th>Status</th><th>ADB</th><th>Proxy</th><th>Image</th><th>Created</th><th>Actions</th></tr>

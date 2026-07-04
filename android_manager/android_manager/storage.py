@@ -74,6 +74,11 @@ class AndroidStore:
             row = conn.execute("select * from android_instances where adb_port = ?", (adb_port,)).fetchone()
         return AndroidInstance(**dict(row)) if row is not None else None
 
+    def get_by_container_name(self, container_name: str) -> AndroidInstance | None:
+        with self._connection() as conn:
+            row = conn.execute("select * from android_instances where container_name = ?", (container_name,)).fetchone()
+        return AndroidInstance(**dict(row)) if row is not None else None
+
     def used_adb_ports(self) -> set[int]:
         return {item.adb_port for item in self.list_instances()}
 
@@ -118,8 +123,9 @@ class AndroidStore:
         adb_port: int,
         container_name: str,
         volume_name: str,
+        status: str = "running",
     ) -> AndroidInstance:
-        existing = self.get_by_adb_port(adb_port)
+        existing = self.get_by_adb_port(adb_port) or self.get_by_container_name(container_name)
         now = _now()
         if existing is not None:
             with self._connection() as conn:
@@ -129,7 +135,7 @@ class AndroidStore:
                     set name = ?, image = ?, container_name = ?, volume_name = ?, status = ?, updated_at = ?
                     where id = ?
                     """,
-                    (name, image, container_name, volume_name, "running", now, existing.id),
+                    (name, image, container_name, volume_name, status, now, existing.id),
                 )
             return self.get_instance(existing.id)
         return self.create_instance(
@@ -137,7 +143,7 @@ class AndroidStore:
             adb_port=adb_port,
             container_name=container_name,
             volume_name=volume_name,
-            status="running",
+            status=status,
         )
 
     def set_status(self, instance_id: str, status: str) -> AndroidInstance:

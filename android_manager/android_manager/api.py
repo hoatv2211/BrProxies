@@ -96,6 +96,10 @@ def _runtime_http_error(err: Exception) -> HTTPException:
         return HTTPException(status_code=400, detail=output or str(err))
     return HTTPException(status_code=400, detail=str(err))
 
+def _friendly_avd_name(avd_name: str) -> str:
+    name = avd_name.removeprefix("brproxies_android_")
+    return name.replace("_", "-") or avd_name
+
 
 def create_app(config_path: str | None = None) -> FastAPI:
     app = FastAPI(title="BrProxies Android Manager", version="0.1.0")
@@ -127,6 +131,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if runtime == "windows_avd":
             container_name = f"brproxies_android_{safe}_{port}".replace("-", "_")
             volume_name = f"{container_name}_data"
+            if store.get_by_container_name(container_name) is not None:
+                raise HTTPException(status_code=409, detail="Android instance already exists. Use Import devices to attach existing AVDs.")
             image = cfg.avd_system_image
             service = _avd(cfg)
             try:
@@ -139,16 +145,53 @@ def create_app(config_path: str | None = None) -> FastAPI:
             volume_name = f"{cfg.volume_prefix}{safe}_{port}_data".replace("-", "_")
             image = body.image or cfg.redroid_image
             DockerService(fake=_is_fake(cfg)).run_redroid(container_name, volume_name, port, image)
-        item = store.create_instance(
-            AndroidInstanceCreate(name=body.name, image=image, proxy_id=body.proxy_id),
-            adb_port=port,
-            container_name=container_name,
-            volume_name=volume_name,
-            status="running",
-        )
+        try:
+            item = store.create_instance(
+                AndroidInstanceCreate(name=body.name, image=image, proxy_id=body.proxy_id),
+                adb_port=port,
+                container_name=container_name,
+                volume_name=volume_name,
+                status="running",
+            )
+        except Exception as e:
+            if "UNIQUE constraint failed" in str(e):
+                raise HTTPException(status_code=409, detail="Android instance already exists. Use Import devices to attach existing AVDs.")
+            raise
         if runtime != "windows_avd":
             AdbService(fake=_is_fake(cfg)).connect(item.adb_host, item.adb_port)
         return asdict(item)
+
+    @app.post("/instances/import-avds")
+    def import_avds() -> list[dict[str, object]]:
+        cfg = _cfg(config_path)
+        if _runtime(cfg) != "windows_avd":
+            raise HTTPException(status_code=400, detail="AVD import is only available for windows_avd runtime")
+        store = _store(config_path)
+        service = _avd(cfg)
+        try:
+            avd_names = service.available_avds()
+        except (RuntimeError, subprocess.CalledProcessError, TimeoutError) as e:
+            raise _runtime_http_error(e)
+        running_by_name = {item.name: item.console_port for item in service.running_avds()}
+        imported = []
+        for avd_name in avd_names:
+            existing = store.get_by_container_name(avd_name)
+            if existing:
+                port = existing.adb_port
+            elif avd_name in running_by_name:
+                port = running_by_name[avd_name]
+            else:
+                port = _allocate_port(store, cfg)
+            item = store.adopt_instance(
+                name=_friendly_avd_name(avd_name),
+                image=cfg.avd_system_image,
+                adb_port=port,
+                container_name=avd_name,
+                volume_name=f"{avd_name}_data",
+                status="running" if avd_name in running_by_name else "stopped",
+            )
+            imported.append(asdict(item))
+        return imported
 
     @app.post("/instances/{instance_id}/start")
     def start_instance(instance_id: str) -> dict[str, object]:

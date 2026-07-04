@@ -149,6 +149,7 @@ def test_avd_service_checks_existing_avd_by_name(tmp_path):
 
     assert service.exists("phone_a") is True
     assert service.exists("phone_b") is False
+    assert service.available_avds() == ["phone_a"]
     assert kwargs_seen[0]["env"]["JAVA_HOME"] == "C:\\Android Studio\\jbr"
 
 def test_avd_service_discovers_running_avds(tmp_path):
