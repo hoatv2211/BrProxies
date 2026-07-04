@@ -14,6 +14,7 @@ dist-ssr
 *.local
 *.tsbuildinfo
 .cache/
+.brproxies-build-cache/
 .parcel-cache/
 coverage/
 
