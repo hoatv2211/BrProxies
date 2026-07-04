@@ -38,9 +38,10 @@ fn base_url(s: &settings::Settings) -> String {
 fn status_with(
     s: &settings::Settings,
     child: Option<&Child>,
+    externally_running: bool,
 ) -> Result<AndroidManagerStatus, String> {
     Ok(AndroidManagerStatus {
-        running: child.is_some(),
+        running: child.is_some() || externally_running,
         pid: child.and_then(|c| c.id()),
         base_url: base_url(s),
         config_path: store::android_manager_config_path()
@@ -48,6 +49,20 @@ fn status_with(
             .display()
             .to_string(),
     })
+}
+
+async fn manager_health_ok(s: &settings::Settings) -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_millis(700))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return false,
+    };
+    match client.get(format!("{}/health", base_url(s))).send().await {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
+    }
 }
 
 fn service_workdir() -> PathBuf {
@@ -141,13 +156,16 @@ pub async fn android_start() -> Result<AndroidManagerStatus, String> {
     let mut guard = child_slot().lock().await;
     if let Some(child) = guard.as_mut() {
         if child.try_wait().map_err(|e| e.to_string())?.is_none() {
-            return status_with(&s, guard.as_ref());
+            return status_with(&s, guard.as_ref(), false);
         }
         *guard = None;
     }
+    if manager_health_ok(&s).await {
+        return status_with(&s, None, true);
+    }
     let child = spawn_sidecar(write_config(&s)?).await?;
     *guard = Some(child);
-    status_with(&s, guard.as_ref())
+    status_with(&s, guard.as_ref(), false)
 }
 
 #[tauri::command]
@@ -157,7 +175,7 @@ pub async fn android_stop() -> Result<AndroidManagerStatus, String> {
     if let Some(mut child) = guard.take() {
         let _ = child.kill().await;
     }
-    status_with(&s, None)
+    status_with(&s, None, false)
 }
 
 #[tauri::command]
@@ -169,7 +187,8 @@ pub async fn android_status() -> Result<AndroidManagerStatus, String> {
             *guard = None;
         }
     }
-    status_with(&s, guard.as_ref())
+    let health = guard.is_none() && manager_health_ok(&s).await;
+    status_with(&s, guard.as_ref(), health)
 }
 
 #[tauri::command]

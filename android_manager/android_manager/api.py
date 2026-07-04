@@ -72,6 +72,19 @@ def _allocate_port(store: AndroidStore, cfg: AndroidManagerConfig) -> int:
 def _avd(cfg: AndroidManagerConfig) -> AvdService:
     return AvdService(cfg.data_dir, cfg.avd_system_image, cfg.avd_device)
 
+def _sync_windows_avds(store: AndroidStore, cfg: AndroidManagerConfig) -> None:
+    service = _avd(cfg)
+    for running in service.running_avds():
+        if not running.name.startswith("brproxies_android_"):
+            continue
+        store.adopt_instance(
+            name=running.name,
+            image=cfg.avd_system_image,
+            adb_port=running.console_port,
+            container_name=running.name,
+            volume_name=f"{running.name}_data",
+        )
+
 def _runtime_http_error(err: Exception) -> HTTPException:
     if isinstance(err, subprocess.CalledProcessError):
         output = "\n".join(str(part) for part in (err.stderr, err.stdout) if part)
@@ -93,7 +106,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     @app.get("/instances")
     def list_instances() -> list[dict[str, object]]:
-        return [asdict(item) for item in _store(config_path).list_instances()]
+        cfg = _cfg(config_path)
+        store = _store(config_path)
+        if _runtime(cfg) == "windows_avd":
+            _sync_windows_avds(store, cfg)
+        return [asdict(item) for item in store.list_instances()]
 
     @app.post("/instances")
     def create_instance(body: InstanceCreateRequest) -> dict[str, object]:

@@ -43,3 +43,26 @@ def test_store_releases_sqlite_file_handle(tmp_path):
 
     db_path.unlink()
     assert not db_path.exists()
+
+def test_adopt_instance_upserts_by_adb_port(tmp_path):
+    store = AndroidStore(str(tmp_path / "android.sqlite3"))
+
+    created = store.adopt_instance(
+        name="brproxies_android_phone_1_5558",
+        image="system-images;android-35;google_apis_playstore;x86_64",
+        adb_port=5558,
+        container_name="brproxies_android_phone_1_5558",
+        volume_name="brproxies_android_phone_1_5558_data",
+    )
+    updated = store.adopt_instance(
+        name="brproxies_android_phone_1_5558",
+        image="system-images;android-35;google_apis;x86_64",
+        adb_port=5558,
+        container_name="brproxies_android_phone_1_5558",
+        volume_name="brproxies_android_phone_1_5558_data",
+    )
+
+    assert updated.id == created.id
+    assert updated.status == "running"
+    assert updated.image == "system-images;android-35;google_apis;x86_64"
+    assert len(store.list_instances()) == 1

@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 import time
 import os
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -15,6 +17,27 @@ class RunFn(Protocol):
 
 class PopenFn(Protocol):
     def __call__(self, args: list[str], **kwargs: object) -> object: ...
+
+@dataclass(frozen=True)
+class RunningAvd:
+    name: str
+    console_port: int
+    serial: str
+
+BLOAT_PACKAGES = [
+    "com.google.android.apps.docs",
+    "com.google.android.apps.maps",
+    "com.google.android.apps.messaging",
+    "com.google.android.apps.photos",
+    "com.google.android.apps.tachyon",
+    "com.google.android.apps.wellbeing",
+    "com.google.android.calendar",
+    "com.google.android.contacts",
+    "com.google.android.gm",
+    "com.google.android.keep",
+    "com.google.android.videos",
+    "com.google.android.youtube",
+]
 
 
 class AvdService:
@@ -178,12 +201,51 @@ class AvdService:
             try:
                 result = self.runner([self._tool("adb"), "-s", serial, "shell", "getprop", "sys.boot_completed"], check=True, capture_output=True, text=True)
                 if str(getattr(result, "stdout", "")).strip() == "1":
+                    self.debloat(console_port)
                     return
             except subprocess.CalledProcessError:
                 pass
             if time.time() > deadline:
                 raise TimeoutError(f"Android emulator did not boot: {serial}")
             time.sleep(1)
+
+    def running_avds(self) -> list[RunningAvd]:
+        try:
+            result = self.runner([self._tool("adb"), "devices", "-l"], check=True, capture_output=True, text=True)
+        except (RuntimeError, subprocess.CalledProcessError, FileNotFoundError):
+            return []
+        running: list[RunningAvd] = []
+        for line in str(getattr(result, "stdout", "")).splitlines():
+            match = re.match(r"^(emulator-(\d+))\s+device\b", line.strip())
+            if not match:
+                continue
+            serial = match.group(1)
+            port = int(match.group(2))
+            name = self.avd_name_for_serial(serial)
+            if name:
+                running.append(RunningAvd(name=name, console_port=port, serial=serial))
+        return running
+
+    def avd_name_for_serial(self, serial: str) -> str | None:
+        try:
+            result = self.runner([self._tool("adb"), "-s", serial, "emu", "avd", "name"], check=True, capture_output=True, text=True)
+        except (RuntimeError, subprocess.CalledProcessError, FileNotFoundError):
+            return None
+        for line in str(getattr(result, "stdout", "")).splitlines():
+            value = line.strip()
+            if value and value != "OK":
+                return value
+        return None
+
+    def debloat(self, console_port: int) -> None:
+        serial = self.serial(console_port)
+        for package in BLOAT_PACKAGES:
+            self.runner(
+                [self._tool("adb"), "-s", serial, "shell", "pm", "disable-user", "--user", "0", package],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
 
     def stop(self, console_port: int) -> None:
         self.runner([self._tool("adb"), "-s", self.serial(console_port), "emu", "kill"], check=False)
