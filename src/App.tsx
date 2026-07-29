@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { AccountKeeper } from "./account-keeper/AccountKeeper";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -250,7 +251,7 @@ type ApiInfo = {
   base_url: string;
   token: string;
 };
-type Section = "browsers" | "android" | "proxies" | "proxypool" | "proxyshard" | "fingerprints" | "androidTemplates" | "settings";
+type Section = "browsers" | "accountKeeper" | "android" | "proxies" | "proxypool" | "proxyshard" | "fingerprints" | "androidTemplates" | "settings";
 type AndroidManagerStatus = { running: boolean; pid: number | null; base_url: string; config_path: string };
 type AndroidHostCheck = { name: string; ok: boolean; detail: string };
 type AndroidValidation = { ok: boolean; runtime?: string; checks: AndroidHostCheck[] };
@@ -766,6 +767,7 @@ export default function App() {
           />
           <main className="main">
             {section === "browsers" && <BrowsersView />}
+            {section === "accountKeeper" && <AccountKeeper confirm={confirmModal} />}
             {section === "android" && <AndroidView />}
             {section === "proxies" && <ProxiesView />}
             {section === "proxypool" && <ProxyPoolView />}
@@ -795,6 +797,9 @@ function Sidebar({
       label: "Workspace",
       items: [
         { id: "browsers", label: "Browsers", svg: <IconShard /> },
+        ...(HOST_OS === "Windows"
+          ? [{ id: "accountKeeper" as Section, label: "Account Keeper", svg: <IconHex /> }]
+          : []),
         { id: "android", label: "Android", svg: <IconPhone /> },
         { id: "proxies", label: "Proxies", svg: <IconWire /> },
         { id: "proxypool", label: "ProxyPool", svg: <IconPool /> },

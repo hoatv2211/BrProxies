@@ -144,7 +144,7 @@ $androidPython = Join-Path $repoRoot "$androidVenv\Scripts\python.exe"
 $npmHash = Get-InputHash @("package.json", "package-lock.json")
 $androidDepsHash = Get-InputHash @("android_manager\pyproject.toml")
 $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
-$tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\capabilities", "smart launch\build.bat", "smart launch\smart-build.ps1")
+$tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "scripts\prepare-account-keeper-worker.mjs", "smart launch\build.bat", "smart launch\smart-build.ps1")
 
 $needNpm = $Full -or $Deps -or -not (Test-Path -LiteralPath "node_modules") -or ((Get-Cache "npm") -ne $npmHash)
 if ($needNpm) {
@@ -181,7 +181,7 @@ if ($needDesktop) {
   }
   Run-Step "Building desktop app..." "npm.cmd" @("run", "tauri", "build", "--", "--no-bundle")
   $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
-  $tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\capabilities", "smart launch\build.bat", "smart launch\smart-build.ps1")
+  $tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "scripts\prepare-account-keeper-worker.mjs", "smart launch\build.bat", "smart launch\smart-build.ps1")
   Set-Cache "frontend" $frontendHash
   Set-Cache "tauri" $tauriHash
 } else {

@@ -153,6 +153,7 @@ fn cipher_encrypt(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
 
 #[cfg(target_os = "windows")]
 mod win {
+    use crate::dpapi;
     use aes_gcm::{
         aead::{Aead, KeyInit},
         Aes256Gcm, Key, Nonce,
@@ -160,10 +161,6 @@ mod win {
     use anyhow::{anyhow, Context, Result};
     use base64::{engine::general_purpose::STANDARD, Engine};
     use std::path::Path;
-    use windows_sys::Win32::Foundation::LocalFree;
-    use windows_sys::Win32::Security::Cryptography::{
-        CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
-    };
 
     const DPAPI_TAG: &[u8] = b"DPAPI";
 
@@ -193,48 +190,6 @@ mod win {
         out.extend_from_slice(&nonce);
         out.extend_from_slice(&ct);
         out
-    }
-
-    // ---- DPAPI wrap/unwrap ----
-    unsafe fn dpapi(input: &[u8], protect: bool) -> Result<Vec<u8>> {
-        let in_blob = CRYPT_INTEGER_BLOB {
-            cbData: input.len() as u32,
-            pbData: input.as_ptr() as *mut u8,
-        };
-        let mut out_blob = CRYPT_INTEGER_BLOB {
-            cbData: 0,
-            pbData: std::ptr::null_mut(),
-        };
-        let ok = if protect {
-            CryptProtectData(
-                &in_blob,
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                0,
-                &mut out_blob,
-            )
-        } else {
-            CryptUnprotectData(
-                &in_blob,
-                std::ptr::null_mut(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                0,
-                &mut out_blob,
-            )
-        };
-        if ok == 0 {
-            return Err(anyhow!(
-                "DPAPI {} failed",
-                if protect { "protect" } else { "unprotect" }
-            ));
-        }
-        let out = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
-        LocalFree(out_blob.pbData as _);
-        Ok(out)
     }
 
     /// Read os_crypt key, or mint+persist one for never-launched profiles.
@@ -267,11 +222,11 @@ mod win {
         if blob.len() <= DPAPI_TAG.len() || &blob[..DPAPI_TAG.len()] != DPAPI_TAG {
             return Err(anyhow!("encrypted_key missing DPAPI tag"));
         }
-        Ok(Some(unsafe { dpapi(&blob[DPAPI_TAG.len()..], false)? }))
+        Ok(Some(dpapi::unprotect(&blob[DPAPI_TAG.len()..])?))
     }
 
     fn write_key(ls_path: &Path, key: &[u8]) -> Result<()> {
-        let wrapped = unsafe { dpapi(key, true)? };
+        let wrapped = dpapi::protect(key)?;
         let mut tagged = DPAPI_TAG.to_vec();
         tagged.extend_from_slice(&wrapped);
         let b64 = STANDARD.encode(&tagged);

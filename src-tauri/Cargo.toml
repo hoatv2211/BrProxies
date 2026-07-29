@@ -47,6 +47,7 @@ pbkdf2 = "0.12"
 hmac = "0.12"
 sha1 = "0.10"
 sha2 = "0.10"
+getrandom = "0.2"
 # Self-bootstrapping runtime: zip extraction of the chrome bundle
 # downloaded from Cloudflare R2 on first launch (src/runtime.rs).
 zip = { version = "2", default-features = false, features = ["deflate"] }
@@ -57,8 +58,8 @@ libc = "0.2"
 # Windows cookie crypto: AES-256-GCM + DPAPI key from Local State.
 [target.'cfg(windows)'.dependencies]
 aes-gcm = "0.10"
-getrandom = "0.2"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",            # HLOCAL + LocalFree live here in 0.59
     "Win32_Security_Cryptography", # CryptProtectData / CryptUnprotectData
+    "Win32_Storage_FileSystem",    # MoveFileExW atomic replacement
 ] }
