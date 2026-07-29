@@ -1,8 +1,13 @@
 // BrProxies Tauri backend.
 
+mod account_keeper;
+mod account_keeper_format;
+mod account_keeper_store;
+mod account_keeper_worker;
 mod android;
 mod api;
 mod cookies;
+mod dpapi;
 mod fingerprints;
 mod launch;
 mod mcp_setup;
@@ -1127,6 +1132,19 @@ pub fn run() {
             profile_import,
             clipboard_write,
             clipboard_read,
+            account_keeper::account_keeper_validate_input,
+            account_keeper::account_keeper_validate_template,
+            account_keeper::account_keeper_start_batch,
+            account_keeper::account_keeper_list_jobs,
+            account_keeper::account_keeper_get_job,
+            account_keeper::account_keeper_pause_after_current,
+            account_keeper::account_keeper_cancel_batch,
+            account_keeper::account_keeper_continue_manual,
+            account_keeper::account_keeper_mark_failed,
+            account_keeper::account_keeper_resume_job,
+            account_keeper::account_keeper_abandon_job,
+            account_keeper::account_keeper_export_result,
+            account_keeper::account_keeper_open_profile,
             profile_set_pin,
             profile_set_folder,
             folder_rename,

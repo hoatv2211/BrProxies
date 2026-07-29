@@ -24,6 +24,10 @@ local services, SDKs, MCP server, Chrome extension, and Windows helper scripts.
 
 - **Browser profiles** - create, clone, pin, tag, organize, and launch isolated
   Chromium profiles.
+- **Account Keeper (Windows 10/11 MVP)** - rotate passwords for authorized
+  accounts one at a time with persistent profiles, a DPAPI-protected vault, and
+  manual recovery controls. [English guide](docs/account-keeper.md) |
+  [Tiếng Việt](docs/account-keeper.vn.md).
 - **Fingerprints** - edit device identity, screen, WebGL/WebGPU, locale,
   timezone, WebRTC, media devices, geolocation, and noise settings.
 - **Proxies** - add HTTP, HTTPS, and SOCKS5 proxies, run TCP/UDP/geo checks,

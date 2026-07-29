@@ -6,9 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "vitest run",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test:extension": "node extension/tests/validate-extension.mjs"
+    "test:extension": "node extension/tests/validate-extension.mjs",
+    "build:account-keeper-worker": "node scripts/prepare-account-keeper-worker.mjs",
+    "qa:account-keeper-tauri": "node automation/qa/account-keeper-tauri-qa.mjs",
+    "build:windows": "tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -20,10 +24,15 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "jsdom": "^25.0.1",
     "typescript": "~5.8.3",
-    "vite": "^5.4.10"
+    "vite": "^5.4.10",
+    "vitest": "^2.1.9"
   }
 }
