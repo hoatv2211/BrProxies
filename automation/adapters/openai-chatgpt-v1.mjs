@@ -128,6 +128,7 @@ export const openaiChatgptAdapter = {
         page.getByRole("button", { name: /^(continue|log in|sign in)$/i }),
         submitControl(page),
       ], control);
+      await waitUntilHidden(page, passwordInput, 15_000, control);
     }
   },
 
@@ -287,6 +288,26 @@ async function waitForAny(page, locators, timeout, control) {
     if (await anyVisible(locators)) {
       checkControl(control);
       return;
+    }
+    checkControl(control);
+    await page.waitForTimeout(100);
+    checkControl(control);
+  }
+}
+
+async function waitUntilHidden(page, locator, timeout, control) {
+  const deadline = Date.now() + timeout;
+  let hiddenPolls = 0;
+  while (Date.now() < deadline) {
+    checkControl(control);
+    if (await visible(locator)) {
+      hiddenPolls = 0;
+    } else {
+      hiddenPolls += 1;
+      if (hiddenPolls >= 2) {
+        checkControl(control);
+        return;
+      }
     }
     checkControl(control);
     await page.waitForTimeout(100);
