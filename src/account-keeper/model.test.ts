@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { canResume, canStart, reduceProgress } from "./model";
+import { activeInputSource, canResume, canStart, reduceProgress } from "./model";
 import type { AccountView, DraftState, JobView, ProgressEvent } from "./types";
 
 const validDraft: DraftState = {
+  inputMode: "inline",
+  inputText: "owner@example.test|current-password|JBSWY3DPEHPK3PXP",
   inputPath: "C:\\fixtures\\batch.txt",
+  inputRevision: 1,
+  inputValidationRevision: 1,
   outputPath: "C:\\fixtures\\result.json",
   templateText: "Local-{random:16}",
   keepProfileRunning: false,
@@ -21,6 +25,25 @@ const validDraft: DraftState = {
     hasSymbol: true,
   },
 };
+
+const validFileDraft: DraftState = {
+  ...validDraft,
+  inputMode: "file",
+  inputPath: "C:\\fixtures\\file-batch.txt",
+  inputRevision: 2,
+  inputValidationRevision: 2,
+  inputValidation: {
+    validCount: 1,
+    maskedAccounts: ["f***e@example.test"],
+  },
+};
+
+describe("activeInputSource", () => {
+  it("builds only the active tagged source", () => {
+    expect(activeInputSource(validDraft)).toEqual({ kind: "inline", text: validDraft.inputText });
+    expect(activeInputSource(validFileDraft)).toEqual({ kind: "file", path: validFileDraft.inputPath });
+  });
+});
 
 const queuedAccount: AccountView = {
   account_key: "account-1",
@@ -55,7 +78,7 @@ describe("canStart", () => {
   });
 
   it("rejects invalid or incomplete drafts", () => {
-    expect(canStart({ ...validDraft, inputPath: "" }, [])).toBe(false);
+    expect(canStart({ ...validDraft, inputText: "" }, [])).toBe(false);
     expect(canStart({ ...validDraft, outputPath: "   " }, [])).toBe(false);
     expect(canStart({ ...validDraft, inputValidation: null }, [])).toBe(false);
     expect(canStart({ ...validDraft, templateValidation: null }, [])).toBe(false);
@@ -74,6 +97,21 @@ describe("canStart", () => {
         hasSymbol: false,
       },
     }, [])).toBe(false);
+  });
+
+  it("requires content for the active source only", () => {
+    expect(canStart({ ...validDraft, inputText: "" }, [])).toBe(false);
+    expect(canStart({ ...validDraft, inputPath: "" }, [])).toBe(true);
+    expect(canStart({ ...validFileDraft, inputPath: "" }, [])).toBe(false);
+    expect(canStart({ ...validFileDraft, inputText: "" }, [])).toBe(true);
+    expect(canStart({ ...validDraft, inputText: "   " }, [])).toBe(false);
+    expect(canStart({ ...validFileDraft, inputPath: "   " }, [])).toBe(false);
+  });
+
+  it("rejects validation from an older input revision", () => {
+    expect(canStart({ ...validDraft, inputRevision: 2 }, [])).toBe(false);
+    expect(canStart({ ...validFileDraft, inputMode: "inline", inputRevision: 3 }, [])).toBe(false);
+    expect(canStart(validFileDraft, [])).toBe(true);
   });
 
   it("rejects active or blocking jobs", () => {

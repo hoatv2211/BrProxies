@@ -1,4 +1,11 @@
-import type { AccountStage, DraftState, JobStatus, JobView, ProgressEvent } from "./types";
+import type {
+  AccountStage,
+  DraftState,
+  InputSource,
+  JobStatus,
+  JobView,
+  ProgressEvent,
+} from "./types";
 
 const terminalJobStatuses = new Set<JobStatus>([
   "completed",
@@ -16,11 +23,29 @@ const resumableAccountStages = new Set<AccountStage>([
   "verifying_new_password",
 ]);
 
+export function activeInputSource(draft: DraftState): InputSource {
+  switch (draft.inputMode) {
+    case "inline":
+      return { kind: "inline", text: draft.inputText };
+    case "file":
+      return { kind: "file", path: draft.inputPath };
+    default: {
+      const exhaustiveMode: never = draft.inputMode;
+      return exhaustiveMode;
+    }
+  }
+}
+
 export function canStart(draft: DraftState, jobs: readonly JobView[]): boolean {
-  if (!draft.inputPath.trim() || !draft.outputPath.trim()) return false;
+  const source = activeInputSource(draft);
+  const hasActiveInput = source.kind === "inline"
+    ? source.text.trim().length > 0
+    : source.path.trim().length > 0;
+  if (!hasActiveInput || !draft.outputPath.trim()) return false;
   if (!draft.plaintextAcknowledged) return false;
   if (!draft.templateValidation?.valid) return false;
   if (!draft.inputValidation || draft.inputValidation.validCount < 1) return false;
+  if (draft.inputValidationRevision !== draft.inputRevision) return false;
   return !jobs.some((job) => job.batchBlocked || !terminalJobStatuses.has(job.status));
 }
 

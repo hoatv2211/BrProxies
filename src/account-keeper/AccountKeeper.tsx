@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { canResume, canStart, reduceProgress } from "./model";
+import { activeInputSource, canResume, canStart, reduceProgress } from "./model";
 import type {
   AccountStage,
   AccountView,
   DraftState,
+  InputSource,
   InputValidationDto,
   JobStatus,
   JobView,
@@ -39,7 +40,11 @@ const jobStatuses = new Set<JobStatus>([
 const terminalJobStatuses = new Set<JobStatus>(["completed", "cancelled", "abandoned", "failed"]);
 
 const initialDraft: DraftState = {
+  inputMode: "inline",
+  inputText: "",
   inputPath: "",
+  inputRevision: 0,
+  inputValidationRevision: null,
   outputPath: "",
   templateText: "",
   keepProfileRunning: false,
@@ -183,15 +188,32 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     const root = document.documentElement;
     const configure = async () => {
       try {
-        const config = JSON.parse(root.dataset.accountKeeperQaConfig ?? "null") as {
-          inputPath?: unknown;
+        const serializedConfig = root.dataset.accountKeeperQaConfig ?? "null";
+        delete root.dataset.accountKeeperQaConfig;
+        const config = JSON.parse(serializedConfig) as {
+          source?: unknown;
           outputPath?: unknown;
           templateText?: unknown;
           adapterId?: unknown;
         } | null;
+        const sourceRecord = asRecord(config?.source);
+        const sourceKeys = sourceRecord ? Object.keys(sourceRecord) : [];
+        const source: InputSource | null = sourceRecord?.kind === "inline"
+          && sourceKeys.length === 2
+          && sourceKeys.includes("kind")
+          && sourceKeys.includes("text")
+          && typeof sourceRecord.text === "string"
+          ? { kind: "inline", text: sourceRecord.text }
+          : sourceRecord?.kind === "file"
+            && sourceKeys.length === 2
+            && sourceKeys.includes("kind")
+            && sourceKeys.includes("path")
+            && typeof sourceRecord.path === "string"
+            ? { kind: "file", path: sourceRecord.path }
+            : null;
         if (
           !config
-          || typeof config.inputPath !== "string"
+          || !source
           || typeof config.outputPath !== "string"
           || typeof config.templateText !== "string"
         ) {
@@ -199,7 +221,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
         }
         const [inputValidation, templateValidation] = await Promise.all([
           invoke<unknown>("account_keeper_validate_input", {
-            request: { inputPath: config.inputPath },
+            request: { source },
           }),
           invoke<unknown>("account_keeper_validate_template", {
             request: { template: config.templateText },
@@ -208,17 +230,25 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
         qaAdapterId.current = config.adapterId === "fixture-v1"
           ? "fixture-v1"
           : "openai-chatgpt-v1";
-        setDraft((current) => ({
-          ...current,
-          inputPath: config.inputPath as string,
-          outputPath: config.outputPath as string,
-          templateText: config.templateText as string,
-          inputValidation: normalizeInputValidation(inputValidation),
-          templateValidation: normalizeTemplateValidation(templateValidation),
-        }));
+        setDraft((current) => {
+          const inputRevision = current.inputRevision + 1;
+          return {
+            ...current,
+            inputMode: source.kind,
+            inputText: source.kind === "inline" ? source.text : current.inputText,
+            inputPath: source.kind === "file" ? source.path : current.inputPath,
+            inputRevision,
+            inputValidationRevision: inputRevision,
+            outputPath: config.outputPath as string,
+            templateText: config.templateText as string,
+            inputValidation: normalizeInputValidation(inputValidation),
+            templateValidation: normalizeTemplateValidation(templateValidation),
+            plaintextAcknowledged: false,
+          };
+        });
         root.dataset.accountKeeperQaStatus = "ready";
-      } catch (qaError) {
-        root.dataset.accountKeeperQaStatus = `error:${String(qaError)}`;
+      } catch {
+        root.dataset.accountKeeperQaStatus = "error:invalid_config";
       }
     };
     const onConfigure = () => void configure();
@@ -348,8 +378,10 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
       const result = await invoke<unknown>(command, args);
       if (!replaceJob(result) && jobId) await refreshJob(jobId);
       setNotice(success);
+      return true;
     } catch (actionError) {
       setError(String(actionError));
+      return false;
     } finally {
       setBusyAction(null);
     }
@@ -363,17 +395,56 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
       filters: [{ name: "Text", extensions: ["txt"] }],
     });
     if (typeof path !== "string") return;
+    const requestRevision = draft.inputRevision + 1;
     setBusyAction("validate-input");
     setError(null);
-    setDraft((current) => ({ ...current, inputPath: path, inputValidation: null }));
+    setDraft((current) => ({
+      ...current,
+      inputMode: "file",
+      inputPath: path,
+      inputRevision: requestRevision,
+      inputValidation: null,
+      inputValidationRevision: null,
+    }));
     try {
       const validation = normalizeInputValidation(
         await invoke<unknown>("account_keeper_validate_input", {
-          request: { inputPath: path },
+          request: { source: { kind: "file", path } },
         }),
       );
-      setDraft((current) => current.inputPath === path
-        ? { ...current, inputValidation: validation }
+      setDraft((current) => current.inputMode === "file"
+        && current.inputPath === path
+        && current.inputRevision === requestRevision
+        ? {
+          ...current,
+          inputValidation: validation,
+          inputValidationRevision: requestRevision,
+        }
+        : current);
+    } catch (validationError) {
+      setError(String(validationError));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const validateInput = async () => {
+    const source = activeInputSource(draft);
+    const inputRevision = draft.inputRevision;
+    setBusyAction("validate-input");
+    setError(null);
+    try {
+      const validation = normalizeInputValidation(
+        await invoke<unknown>("account_keeper_validate_input", {
+          request: { source },
+        }),
+      );
+      setDraft((current) => current.inputRevision === inputRevision
+        ? {
+          ...current,
+          inputValidation: validation,
+          inputValidationRevision: inputRevision,
+        }
         : current);
     } catch (validationError) {
       setError(String(validationError));
@@ -416,19 +487,21 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     if (!canStart(draft, jobs)) return;
     const approved = await confirm({
       title: "Start Account Keeper batch",
-      message: "The selected input and output files contain plaintext secrets. Start this batch now?",
+      message: draft.inputMode === "inline"
+        ? "The pasted input and output file contain plaintext secrets. Start this batch now?"
+        : "The selected input and output files contain plaintext secrets. Start this batch now?",
       buttons: [
         { label: "Cancel", value: false },
         { label: "Start Batch", value: true, primary: true },
       ],
     });
     if (approved !== true) return;
-    await runAction(
+    const started = await runAction(
       "start",
       "account_keeper_start_batch",
       {
         request: {
-          inputPath: draft.inputPath,
+          source: activeInputSource(draft),
           outputPath: draft.outputPath,
           template: draft.templateText,
           adapterId: qaAdapterId.current,
@@ -438,6 +511,19 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
       },
       "Batch started.",
     );
+    if (started) {
+      setDraft((current) => {
+        const inlineActive = current.inputMode === "inline";
+        return {
+          ...current,
+          inputText: "",
+          inputRevision: inlineActive ? current.inputRevision + 1 : current.inputRevision,
+          inputValidation: inlineActive ? null : current.inputValidation,
+          inputValidationRevision: inlineActive ? null : current.inputValidationRevision,
+          plaintextAcknowledged: false,
+        };
+      });
+    }
   };
 
   const pauseAfterCurrent = async () => {
@@ -570,7 +656,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           <p className="account-keeper__eyebrow">Windows account operations</p>
           <h1 id="account-keeper-title">Account Keeper</h1>
           <p className="account-keeper__subtitle">
-            Validate local files, run one profile at a time, and recover blocked work without exposing secrets in React.
+            Validate local input, run one profile at a time, and keep secrets out of job views and logs.
           </p>
         </div>
         <div className="account-keeper__header-status" aria-live="polite">
@@ -613,21 +699,95 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           </div>
 
           <div className="account-keeper__field">
-            <label htmlFor="account-keeper-input">Input file</label>
-            <div className="account-keeper__picker">
-              <input id="account-keeper-input" value={draft.inputPath} placeholder="Choose a local text file" readOnly />
-              <button
-                type="button"
-                className="btn-ghost"
-                aria-label="Choose input file"
-                onClick={() => void chooseInput()}
-                disabled={busyAction !== null}
-              >
-                Browse
-              </button>
+            <span className="account-keeper__field-label">Input source</span>
+            <div className="account-keeper__source-modes" role="group" aria-label="Input source">
+              {(["inline", "file"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={draft.inputMode === mode}
+                  onClick={() => setDraft((current) => current.inputMode === mode
+                    ? current
+                    : {
+                      ...current,
+                      inputMode: mode,
+                      inputRevision: current.inputRevision + 1,
+                      inputValidation: null,
+                      inputValidationRevision: null,
+                      plaintextAcknowledged: false,
+                    })}
+                  disabled={busyAction !== null}
+                >
+                  {mode === "inline" ? "Paste text" : "Choose file"}
+                </button>
+              ))}
             </div>
+
+            {draft.inputMode === "inline" ? (
+              <>
+                <label htmlFor="account-keeper-input-text">Account input</label>
+                <textarea
+                  id="account-keeper-input-text"
+                  value={draft.inputText}
+                  placeholder="owner@example.test|current-password|JBSWY3DPEHPK3PXP"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-describedby={draft.inputValidation
+                    ? "account-keeper-input-help account-keeper-input-validation"
+                    : "account-keeper-input-help"}
+                  disabled={busyAction !== null}
+                  onChange={(event) => setDraft((current) => ({
+                    ...current,
+                    inputText: event.target.value,
+                    inputRevision: current.inputRevision + 1,
+                    inputValidation: null,
+                    inputValidationRevision: null,
+                  }))}
+                />
+                <small id="account-keeper-input-help">
+                  One account per line: account|current_password|totp_secret
+                </small>
+                <div className="account-keeper__input-actions">
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => void validateInput()}
+                    disabled={!draft.inputText.trim() || busyAction !== null}
+                  >
+                    Validate Input
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label htmlFor="account-keeper-input-file">Input file</label>
+                <div className="account-keeper__picker">
+                  <input
+                    id="account-keeper-input-file"
+                    value={draft.inputPath}
+                    placeholder="Choose a local text file"
+                    aria-describedby={draft.inputValidation ? "account-keeper-input-validation" : undefined}
+                    readOnly
+                  />
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    aria-label="Choose input file"
+                    onClick={() => void chooseInput()}
+                    disabled={busyAction !== null}
+                  >
+                    Browse
+                  </button>
+                </div>
+              </>
+            )}
             {draft.inputValidation && (
-              <div className={`account-keeper__validation ${draft.inputValidation.validCount > 0 ? "is-valid" : "is-invalid"}`}>
+              <div
+                id="account-keeper-input-validation"
+                role="status"
+                aria-live="polite"
+                className={`account-keeper__validation ${draft.inputValidation.validCount > 0 ? "is-valid" : "is-invalid"}`}
+              >
                 <strong>{draft.inputValidation.validCount > 0 ? "Input valid" : "Input needs attention"}</strong>
                 <span>{draft.inputValidation.validCount} accounts</span>
                 <span>{draft.inputValidation.maskedAccounts.slice(0, 3).join(", ")}</span>
@@ -642,6 +802,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
                 id="account-keeper-template"
                 value={draft.templateText}
                 placeholder="Enter a batch template"
+                aria-describedby={draft.templateValidation ? "account-keeper-template-validation" : undefined}
                 onChange={(event) => setDraft((current) => ({
                   ...current,
                   templateText: event.target.value,
@@ -658,7 +819,12 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
               </button>
             </div>
             {draft.templateValidation && (
-              <div className={`account-keeper__validation ${draft.templateValidation.valid ? "is-valid" : "is-invalid"}`}>
+              <div
+                id="account-keeper-template-validation"
+                role="status"
+                aria-live="polite"
+                className={`account-keeper__validation ${draft.templateValidation.valid ? "is-valid" : "is-invalid"}`}
+              >
                 <strong>{draft.templateValidation.valid ? "Template valid" : "Template needs attention"}</strong>
                 <span>Length {draft.templateValidation.finalLength}</span>
                 <span>
@@ -713,7 +879,11 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
                 plaintextAcknowledged: event.target.checked,
               }))}
             />
-            <span>I understand the selected input and output files contain plaintext secrets</span>
+            <span>
+              {draft.inputMode === "inline"
+                ? "I understand pasted input and the output file contain plaintext secrets"
+                : "I understand the selected input and output files contain plaintext secrets"}
+            </span>
           </label>
 
           <div className="account-keeper__primary-actions">

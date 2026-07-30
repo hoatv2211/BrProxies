@@ -22,6 +22,11 @@ export type JobStatus =
   | "cancelled"
   | "abandoned";
 
+export type InputSource =
+  | { kind: "inline"; text: string }
+  | { kind: "file"; path: string };
+export type InputMode = InputSource["kind"];
+
 export interface InputValidationDto {
   validCount: number;
   maskedAccounts: string[];
@@ -64,7 +69,11 @@ export interface ProgressEvent {
 }
 
 export interface DraftState {
+  inputMode: InputMode;
+  inputText: string;
   inputPath: string;
+  inputRevision: number;
+  inputValidationRevision: number | null;
   outputPath: string;
   templateText: string;
   keepProfileRunning: boolean;
