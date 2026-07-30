@@ -1132,6 +1132,7 @@ pub fn run() {
             profile_import,
             clipboard_write,
             clipboard_read,
+            account_keeper::account_keeper_defaults,
             account_keeper::account_keeper_validate_input,
             account_keeper::account_keeper_validate_template,
             account_keeper::account_keeper_start_batch,
