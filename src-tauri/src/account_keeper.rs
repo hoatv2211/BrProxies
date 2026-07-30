@@ -2635,6 +2635,8 @@ mod tests {
     fn input_source_rejects_missing_unknown_and_mixed_payloads() {
         for payload in [
             serde_json::json!({}),
+            serde_json::json!({ "kind": "inline" }),
+            serde_json::json!({ "kind": "file" }),
             serde_json::json!({ "kind": "unknown", "text": "synthetic" }),
             serde_json::json!({ "kind": "inline", "text": "synthetic", "path": "C:\\mixed.txt" }),
             serde_json::json!({ "kind": "file", "path": "C:\\batch.txt", "text": "synthetic" }),
