@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AccountKeeper } from "./account-keeper/AccountKeeper";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { AccountKeeper } from "./account-keeper/AccountKeeper";
 import "./App.css";
 
 // Host OS of the launcher window (never spoofed) — drives default OS tab + titlebar.
@@ -209,6 +209,21 @@ type ProfileMeta = {
   /// the engine exits — for the currently-running session add `running[id]`
   /// (Date.now() - sessionStartTs) on top.
   total_runtime_ms: number;
+};
+type ProfileActionCommand = {
+  action_id: string;
+  command_id: string;
+  label: string;
+  description: string;
+  requires_running: boolean;
+  requires_stopped: boolean;
+  mode: string;
+};
+type ActionRunResult = {
+  success: boolean;
+  message: string;
+  stdout: string;
+  stderr: string;
 };
 type ProxyEntry = {
   id: string;
@@ -1339,7 +1354,42 @@ function BrowsersView() {
   };
 
   // Per-profile action menu shared by right-click and ⋮ button.
-  const profileMenu = (p: ProfileMeta) => [
+  const runProfileAction = async (p: ProfileMeta, action: ProfileActionCommand) => {
+    try {
+      const result = await invoke<ActionRunResult>("actions_run", {
+        profileId: p.id,
+        actionId: action.action_id,
+        commandId: action.command_id,
+      });
+      const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+      if (result.success) {
+        toast.ok(output ? `${result.message}: ${output}` : result.message);
+      } else {
+        toast.err(output ? `${result.message}: ${output}` : result.message);
+      }
+    } catch (e) { toast.err(String(e)); }
+  };
+
+  const openActionsConfig = async () => {
+    try {
+      const path = await invoke<string>("actions_config_path");
+      await openPath(path);
+    } catch (e) { toast.err(String(e)); }
+  };
+
+  const openProfileMenu = async (e: React.MouseEvent, p: ProfileMeta) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const actions = await invoke<ProfileActionCommand[]>("actions_list", { profileId: p.id });
+      ctx.open(e, profileMenu(p, actions));
+    } catch (err) {
+      toast.err(String(err));
+      ctx.open(e, profileMenu(p, []));
+    }
+  };
+
+  const profileMenu = (p: ProfileMeta, actions: ProfileActionCommand[] = []) => [
     { label: running[p.id] ? "Stop" : "Launch", onClick: () => startStop(p) },
     { label: "Edit", onClick: () => expand(p.id) },
     { label: "Clone", onClick: () => cloneProfile(p.id) },
@@ -1352,6 +1402,12 @@ function BrowsersView() {
     { sep: true, label: "", onClick: () => {} },
     { label: "Export cookies", onClick: () => exportCookies(p) },
     { label: "Import cookies", onClick: () => importCookies(p) },
+    { sep: true, label: "", onClick: () => {} },
+    ...actions.map((action) => ({
+      label: `Action: ${action.label}`,
+      onClick: () => runProfileAction(p, action),
+    })),
+    { label: "Edit actions config", onClick: openActionsConfig },
     { sep: true, label: "", onClick: () => {} },
     { label: "Delete", onClick: () => remove(p.id), danger: true },
   ];
@@ -1700,7 +1756,7 @@ function BrowsersView() {
             <div
               key={p.id}
               className={`row-wrap ${isRunning ? "row-running" : ""} ${isExpanded ? "row-expanded" : ""} ${p.pinned ? "row-pinned" : ""}`}
-              onContextMenu={(e) => ctx.open(e, profileMenu(p))}
+              onContextMenu={(e) => openProfileMenu(e, p)}
               draggable={!isExpanded}
               onDragStart={(e) => {
                 e.dataTransfer.effectAllowed = "move";
@@ -1804,7 +1860,7 @@ function BrowsersView() {
                   <button className="icon-btn danger" onClick={() => remove(p.id)} title="Delete"><Icon.Trash /></button>
                   <button
                     className="icon-btn"
-                    onClick={(e) => { e.stopPropagation(); ctx.open(e, profileMenu(p)); }}
+                    onClick={(e) => openProfileMenu(e, p)}
                     title="More actions"
                   ><Icon.More /></button>
                 </div>
@@ -3594,8 +3650,24 @@ function AndroidView() {
     }
   };
 
+  const activeAndroidRuntime = settings?.android_manager_fake_runtime ? "fake" : settings?.android_manager_runtime;
+
+  const openAndroidScreen = async (item: AndroidInstance) => {
+    const result = await invoke<{ ok?: boolean; opened?: boolean; message?: string }>("android_post", {
+      path: `/instances/${item.id}/open-screen`,
+      body: {},
+    });
+    if (result.opened === false) throw new Error(result.message || "Fake runtime active; no Android window opened");
+  };
+
   const createInstance = () => run("Android instance created", async () => {
-    await invoke("android_post", { path: "/instances", body: { name } });
+    const item = await invoke<AndroidInstance>("android_post", { path: "/instances", body: { name } });
+    if (activeAndroidRuntime === "fake") {
+      toast.err("Fake runtime only marks Android as running; no real screen is opened on Windows.");
+    } else {
+      await openAndroidScreen(item);
+      toast.ok("Screen opened");
+    }
   });
 
   const importDevices = () => run("Android devices imported", async () => {
@@ -3632,16 +3704,6 @@ function AndroidView() {
     const path = await invoke<string>("android_screenshot", { path: `/instances/${item.id}/screenshot` });
     await openPath(path);
   }, false);
-
-  const activeAndroidRuntime = settings?.android_manager_fake_runtime ? "fake" : settings?.android_manager_runtime;
-
-  const openAndroidScreen = async (item: AndroidInstance) => {
-    const result = await invoke<{ ok?: boolean; opened?: boolean; message?: string }>("android_post", {
-      path: `/instances/${item.id}/open-screen`,
-      body: {},
-    });
-    if (result.opened === false) throw new Error(result.message || "Fake runtime active; no Android window opened");
-  };
 
   const startInstance = async (item: AndroidInstance) => {
     setBusy(true);
