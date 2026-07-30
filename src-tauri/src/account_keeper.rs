@@ -296,6 +296,13 @@ pub struct TemplateValidationDto {
     pub has_symbol: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountKeeperDefaultsDto {
+    pub template: String,
+    pub output_path: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerEvent {
     Stage(AccountStage),
@@ -890,6 +897,20 @@ pub fn validate_template_value(template: &str) -> Result<TemplateValidationDto> 
     })
 }
 
+fn default_config_for(document_dir: &Path) -> Result<AccountKeeperDefaultsDto> {
+    let template = "BrP@{random:16}!".to_string();
+    validate_template_value(&template)?;
+    let output_path = document_dir.join("account-keeper-result.json");
+    let output_path = output_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Account Keeper output path is not valid Unicode"))?
+        .to_owned();
+    Ok(AccountKeeperDefaultsDto {
+        template,
+        output_path,
+    })
+}
+
 pub fn validate_cdp_http_url(value: &str) -> Result<String> {
     let url = url::Url::parse(value)?;
     let valid = url.scheme() == "http"
@@ -1128,6 +1149,13 @@ fn ensure_worker_fields(
         bail!("unexpected Account Keeper worker field");
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn account_keeper_defaults() -> std::result::Result<AccountKeeperDefaultsDto, String> {
+    let document_dir = dirs::document_dir()
+        .ok_or_else(|| "Account Keeper Documents directory is not available".to_string())?;
+    default_config_for(&document_dir).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -2646,6 +2674,49 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[cfg(windows)]
+    fn non_unicode_document_dir() -> PathBuf {
+        use std::os::windows::ffi::OsStringExt;
+
+        PathBuf::from(std::ffi::OsString::from_wide(&[0xD800]))
+    }
+
+    #[cfg(unix)]
+    fn non_unicode_document_dir() -> PathBuf {
+        use std::os::unix::ffi::OsStringExt;
+
+        PathBuf::from(std::ffi::OsString::from_vec(vec![0xFF]))
+    }
+
+    #[test]
+    fn defaults_use_valid_template_and_documents_output_path() {
+        let document_dir = test_dir("defaults").join("Documents");
+        let expected_output_path = document_dir.join("account-keeper-result.json");
+
+        let defaults = default_config_for(&document_dir).unwrap();
+
+        assert_eq!(defaults.template, "BrP@{random:16}!");
+        assert_eq!(PathBuf::from(&defaults.output_path), expected_output_path);
+        assert!(validate_template_value(&defaults.template).is_ok());
+        assert_eq!(
+            serde_json::to_value(&defaults).unwrap(),
+            serde_json::json!({
+                "template": "BrP@{random:16}!",
+                "outputPath": expected_output_path.to_str().unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn defaults_reject_non_unicode_output_path() {
+        let error = default_config_for(&non_unicode_document_dir()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Account Keeper output path is not valid Unicode"
+        );
     }
 
     #[test]
