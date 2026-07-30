@@ -589,6 +589,61 @@ test("OpenAI adapter submits localized login forms by semantic type", async () =
   assert.equal(submitClicks, 1);
 });
 
+test("OpenAI adapter waits for the password form to leave after submit", async () => {
+  let passwordVisibleTicks = 3;
+  let submitClicks = 0;
+  let waitTicks = 0;
+  const locator = ({ visible, onClick, onFill } = {}) => ({
+    first() {
+      return this;
+    },
+    async isVisible() {
+      return Boolean(visible?.());
+    },
+    async click() {
+      onClick?.();
+    },
+    async fill(value) {
+      onFill?.(value);
+    },
+  });
+  const page = {
+    locator(selector) {
+      if (selector.includes('autocomplete="current-password"')) {
+        return locator({
+          visible: () => passwordVisibleTicks > 0,
+          onFill: (value) => assert.equal(value, "synthetic"),
+        });
+      }
+      if (selector === 'button[type="submit"], input[type="submit"]') {
+        return locator({
+          visible: () => passwordVisibleTicks > 0,
+          onClick: () => {
+            submitClicks += 1;
+          },
+        });
+      }
+      return locator({ visible: () => false });
+    },
+    getByRole() {
+      return locator({ visible: () => false });
+    },
+    async waitForTimeout() {
+      waitTicks += 1;
+      passwordVisibleTicks -= 1;
+    },
+  };
+
+  await openaiChatgptAdapter.submitCredentials(page, {
+    account: "synthetic@example.test",
+    password: "synthetic",
+  });
+
+  assert.equal(submitClicks, 1);
+  assert.equal(passwordVisibleTicks <= 0, true);
+  assert.equal(waitTicks, 4);
+});
+
 test("OpenAI adapter opens localized password reset by semantic href", async () => {
   let stage = "email";
   let resetClicks = 0;
