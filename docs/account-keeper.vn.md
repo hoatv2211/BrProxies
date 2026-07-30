@@ -25,8 +25,11 @@ dùng:
 - TOTP secret luôn ở local. Rust tạo code sáu chữ số có thời hạn ngắn và chỉ
   gửi code đó cho worker khi form TOTP mong đợi đang hiển thị.
 
-File input và file output được yêu cầu đều là plaintext. Chỉ lưu chúng ở vị trí
-local đáng tin cậy với quyền file Windows phù hợp.
+Text dán, file input đã chọn và file output được yêu cầu đều chứa secret
+plaintext. Text đã dán có thể vẫn lộ qua system clipboard, clipboard history
+hoặc process memory. Xóa nội dung nhạy cảm khỏi clipboard sau khi dán, và chỉ
+lưu file input/output plaintext ở vị trí local đáng tin cậy với quyền file
+Windows phù hợp.
 
 ## Nền Tảng Và Runtime
 
@@ -41,9 +44,10 @@ local đáng tin cậy với quyền file Windows phù hợp.
   cho debug dùng thư mục `automation/` và yêu cầu system `node` trong `PATH`.
   Release build không dùng fallback này.
 
-## Chuẩn Bị File Input
+## Chuẩn Bị Dữ Liệu Input
 
-Dùng file plaintext UTF-8 theo dạng:
+Dùng text dán hoặc file plaintext UTF-8. Cả hai mode input đều dùng format sau,
+với mỗi record trên một dòng:
 
 ```text
 account|current_password|optional_totp_secret
@@ -72,7 +76,7 @@ Quy tắc parser:
 - Current password là mọi nội dung giữa delimiter đầu và cuối. Byte, khoảng
   trắng và các ký tự `|` bổ sung được giữ nguyên chính xác.
 - Account được normalize bằng trim rồi lowercase. Account trùng nhau sau khi
-  normalize làm toàn bộ file bị từ chối trước khi batch bắt đầu.
+  normalize làm toàn bộ input bị từ chối trước khi batch bắt đầu.
 - TOTP rỗng được chấp nhận. Giá trị không rỗng phải là Base32 hợp lệ. Base32
   không phân biệt hoa thường; space và hyphen bị bỏ qua; padding `=` hợp lệ ở
   cuối được chấp nhận.
@@ -123,18 +127,32 @@ Ví dụ không hợp lệ gồm thiếu placeholder, có hai placeholder, `{ran
 ## Bắt Đầu Batch
 
 1. Mở **Account Keeper** trong BrProxies.
-2. Chọn file input plaintext.
-3. Chọn đường dẫn output JSON plaintext.
-4. Nhập password template cho batch.
-5. Chạy validation và kiểm tra số account cùng lỗi theo dòng.
-6. Xác nhận rằng input và output đều chứa secret plaintext.
-7. Tùy chọn bật **Keep profile running after completion**. Mặc định toggle này
+2. Giữ mode **Paste text** mặc định và dán mỗi record trên một dòng, hoặc bấm
+   **Choose file**, sau đó bấm **Browse** dưới **Input file** và chọn file input
+   plaintext UTF-8.
+3. Với text dán, bấm **Validate Input** để validate rõ ràng. File được validate
+   ngay sau khi chọn.
+4. Bấm **Browse** dưới **Output file** và chọn đường dẫn output JSON plaintext.
+5. Nhập password template cho batch, rồi bấm **Validate Template**.
+6. Kiểm tra identity account đã mask, tổng số account đã parse và lỗi theo dòng.
+7. Xác nhận rằng input đang dùng chứa secret plaintext và output cũng vậy.
+8. Tùy chọn bật **Keep profile running after completion**. Mặc định toggle này
    tắt.
-8. Bấm **Start Batch** và xác nhận thao tác đổi mật khẩu.
+9. Bấm **Start Batch** và xác nhận thao tác đổi mật khẩu.
 
-UI chỉ chuyển đường dẫn file cho Rust. UI nhận account đã mask, profile ID,
-stage, số lần thử, timestamp và lỗi đã redact. UI không nhận password, TOTP
-secret, TOTP code hoặc vault record đã decrypt.
+Mỗi lần validate hoặc start đều gửi `request.source` qua IPC local từ React sang
+Tauri. Paste mode gửi `{ kind: "inline", text }`; file mode gửi
+`{ kind: "file", path }`. Rust parse text đã dán trong RAM và đọc trực tiếp file
+đã chọn; không tạo file input plaintext tạm. Khi báo trạng thái, UI nhận identity
+account đã mask, profile ID, stage,
+số lần thử, timestamp và lỗi đã redact. Sau khi **Start Batch** thành công, UI
+xóa draft đã dán. Việc này không erase hoặc zeroize các bản sao có thể còn
+trong process memory.
+
+- Text dán không bao giờ được lưu vào settings, checkpoint, job, event, log,
+  diagnostics hoặc output metadata.
+- Việc chuyển mode giữ draft chưa gửi nhưng xóa validation cũ. **Start Batch**
+  thành công xóa draft text đã dán.
 
 ## Cách Batch Hoạt Động
 
