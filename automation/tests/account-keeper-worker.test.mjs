@@ -75,6 +75,9 @@ test("creates dedicated page and switches to allowed-origin popup", async () => 
   assert.equal(await session.current(), dedicated);
   popup.navigate("https://auth.openai.com/password/reset");
   assert.equal(await session.current(), popup);
+
+  dedicated.navigate("https://chatgpt.com/auth/login");
+  assert.equal(await session.current(), popup);
 });
 
 class FakePage extends EventEmitter {
