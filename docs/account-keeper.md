@@ -24,8 +24,11 @@ Account Keeper changes credentials. Read these boundaries before using it:
 - TOTP secrets remain local. Rust generates a short-lived six-digit code and
   sends only that code to the worker when the expected TOTP form is visible.
 
-The input file and requested output file are plaintext. Store them only in a
-trusted local location with appropriate Windows file permissions.
+Pasted input, selected input files, and requested output files contain
+plaintext secrets. Pasted text may remain exposed through the system clipboard,
+clipboard history, or process memory. Clear sensitive clipboard contents after
+pasting, and store plaintext input and output files only in a trusted local
+location with appropriate Windows file permissions.
 
 ## Platform And Runtime
 
@@ -40,9 +43,10 @@ trusted local location with appropriate Windows file permissions.
   the debug-only fallback uses `automation/` and requires system `node` on
   `PATH`. Release builds do not use this fallback.
 
-## Prepare The Input File
+## Prepare Input Records
 
-Use a UTF-8 plaintext file with this shape:
+Provide records as pasted text or a UTF-8 plaintext file. Both input modes use
+this format, with one record per line:
 
 ```text
 account|current_password|optional_totp_secret
@@ -72,7 +76,7 @@ Parser rules:
 - The current password is everything between the first and last delimiters.
   Its bytes, spaces, and additional `|` characters are preserved exactly.
 - Accounts are normalized with trim plus lowercase. Duplicate normalized
-  accounts reject the file before the batch starts.
+  accounts reject the input before the batch starts.
 - An empty TOTP field is allowed. A non-empty value must be valid Base32.
   Base32 is case-insensitive; spaces and hyphens are ignored; valid trailing
   `=` padding is accepted.
@@ -127,18 +131,33 @@ length is outside 12-128 characters.
 ## Start A Batch
 
 1. Open **Account Keeper** in BrProxies.
-2. Choose the plaintext input file.
-3. Choose the plaintext output JSON path.
-4. Enter the batch password template.
-5. Run validation and review the account count and any line-specific errors.
-6. Acknowledge that both input and output contain plaintext secrets.
-7. Optionally enable **Keep profile running after completion**. It is disabled
+2. Keep the default **Paste text** mode selected and paste one record per line,
+   or click **Choose file**, then **Browse** under **Input file**, and select a
+   UTF-8 plaintext input file.
+3. For pasted text, click **Validate Input** explicitly. A selected file is
+   validated immediately after selection.
+4. Click **Browse** under **Output file** and choose the plaintext output JSON path.
+5. Enter the batch password template, then click **Validate Template**.
+6. Review the masked account identities, parsed account count, and any
+   line-specific errors.
+7. Acknowledge that the active input and output contain plaintext secrets.
+8. Optionally enable **Keep profile running after completion**. It is disabled
    by default.
-8. Click **Start Batch** and confirm the password-changing operation.
+9. Click **Start Batch** and confirm the password-changing operation.
 
-The UI passes file paths to Rust. It receives masked account identifiers,
-profile IDs, stages, attempts, timestamps, and redacted errors. It does not
-receive passwords, TOTP secrets, TOTP codes, or decrypted vault records.
+Validation and start each send `request.source` through local React-to-Tauri
+IPC. Paste mode sends `{ kind: "inline", text }`; file mode sends
+`{ kind: "file", path }`. Rust parses pasted text in memory and reads the
+selected file directly; no temporary plaintext input file is created. For
+status reporting, the UI receives
+masked account identities, profile IDs, stages, attempts, timestamps, and
+redacted errors. After a successful start, the UI clears the pasted draft. This
+does not erase or zeroize copies that may remain in process memory.
+
+- Pasted input is never stored in settings, checkpoints, jobs, events, logs,
+  diagnostics, or output metadata.
+- Switching modes preserves unsent drafts but clears stale validation. A
+  successful start clears the pasted draft.
 
 ## Batch Behavior
 
