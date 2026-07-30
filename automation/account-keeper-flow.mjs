@@ -140,8 +140,11 @@ async function authenticate({
   let totpPending = false;
   for (let step = 0; step < 16; step += 1) {
     let result = await classify({ pageSource, adapter, control });
-    if (result.state === "totp_required" && totpPending) {
-      result = await waitForTotpTransition({ pageSource, adapter, control });
+    if (totpPending) {
+      if (result.state === "totp_required") {
+        result = await waitForTotpTransition({ pageSource, adapter, control });
+      }
+      totpPending = false;
     }
     switch (result.state) {
       case "login_ready":
@@ -174,10 +177,15 @@ async function authenticate({
           });
           break;
         }
-        await send({ type: "stage", stage: "submitting_totp" });
-        await send({ type: "totp_required" });
         {
-          const command = await waitForExpected(control, "totp_code", request.request_id);
+          await send({ type: "stage", stage: "submitting_totp" });
+          const pendingCommand = waitForExpected(
+            control,
+            "totp_code",
+            request.request_id,
+          );
+          await send({ type: "totp_required" });
+          const command = await pendingCommand;
           await runPageAction({
             pageSource,
             adapter,
@@ -216,9 +224,74 @@ async function changePassword({
   credentialState,
 }) {
   let passwordSubmitted = false;
+  let identityChallengeSubmitted = false;
+  let totpAttempts = 0;
+  let totpPending = false;
   for (let step = 0; step < 16; step += 1) {
-    const result = await classify({ pageSource, adapter, control });
+    let result = await classifyPasswordChange({ pageSource, adapter, control });
+    if (totpPending) {
+      if (result.state === "totp_required") {
+        result = await waitForTotpTransition({
+          pageSource,
+          adapter,
+          control,
+          classifyPage: classifyPasswordChange,
+        });
+      }
+      totpPending = false;
+    }
     switch (result.state) {
+      case "identity_challenge":
+        if (identityChallengeSubmitted) {
+          throw flowError("password_change_failed");
+        }
+        await runPageAction({
+          pageSource,
+          adapter,
+          control,
+          action: (currentPage) =>
+            adapter.submitIdentityChallenge(
+              currentPage,
+              request.current_password,
+              { control },
+            ),
+        });
+        identityChallengeSubmitted = true;
+        break;
+      case "totp_required":
+      case "totp_rejected":
+        if (result.state === "totp_rejected") {
+          totpPending = false;
+        }
+        if (totpAttempts >= 2) {
+          await waitForManual({
+            result: await securityChallengeResult(pageSource, adapter, control),
+            request,
+            send,
+            control,
+          });
+          break;
+        }
+        {
+          await send({ type: "stage", stage: "submitting_totp" });
+          const pendingCommand = waitForExpected(
+            control,
+            "totp_code",
+            request.request_id,
+          );
+          await send({ type: "totp_required" });
+          const command = await pendingCommand;
+          await runPageAction({
+            pageSource,
+            adapter,
+            control,
+            action: (currentPage) =>
+              adapter.submitTotp(currentPage, command.code, { control }),
+          });
+        }
+        totpAttempts += 1;
+        totpPending = true;
+        break;
       case "password_change_ready":
         if (passwordSubmitted) {
           throw flowError("password_change_failed");
@@ -336,10 +409,26 @@ async function classify({ pageSource, adapter, control }) {
   );
 }
 
-async function waitForTotpTransition({ pageSource, adapter, control }) {
+async function classifyPasswordChange({ pageSource, adapter, control }) {
+  return normalizeState(
+    await runPageRead({
+      pageSource,
+      adapter,
+      control,
+      read: (currentPage) => adapter.classifyPasswordChange(currentPage),
+    }),
+  );
+}
+
+async function waitForTotpTransition({
+  pageSource,
+  adapter,
+  control,
+  classifyPage = classify,
+}) {
   for (let poll = 0; poll < 150; poll += 1) {
     await cancellableDelay(control, 100);
-    const result = await classify({ pageSource, adapter, control });
+    const result = await classifyPage({ pageSource, adapter, control });
     if (result.state !== "totp_required") {
       return result;
     }

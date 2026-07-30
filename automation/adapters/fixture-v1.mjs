@@ -73,6 +73,18 @@ export const fixtureAdapter = {
     return "flow_changed";
   },
 
+  async classifyPasswordChange(page) {
+    const state = await this.classify(page);
+    if (
+      !isSyntheticPage(page)
+      && state === "password_change_ready"
+      && !(await visible(page.getByLabel("New password", { exact: true })))
+    ) {
+      return "identity_challenge";
+    }
+    return state;
+  },
+
   async submitCredentials(page, credentials, { control } = {}) {
     if (isSyntheticPage(page)) {
       page.actions.push({ type: "submit_credentials", ...credentials });
@@ -97,6 +109,20 @@ export const fixtureAdapter = {
     control?.throwIfCancelled?.();
     await page.getByRole("button", { name: "Verify", exact: true }).click();
     control?.throwIfCancelled?.();
+  },
+
+  async submitIdentityChallenge(page, currentPassword, { control } = {}) {
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "submit_identity_challenge", currentPassword });
+      return;
+    }
+    control?.throwIfCancelled?.();
+    const input = page.getByLabel("Current password", { exact: true });
+    await input.fill(currentPassword);
+    control?.throwIfCancelled?.();
+    await page.getByRole("button", { name: /^(Continue|Verify)$/ }).click();
+    control?.throwIfCancelled?.();
+    await waitUntilHidden(page, input, 15_000, control);
   },
 
   async openPasswordChange(page, { control } = {}) {
@@ -153,6 +179,20 @@ function isSyntheticPage(page) {
 
 async function visible(locator) {
   return locator.first().isVisible().catch(() => false);
+}
+
+async function waitUntilHidden(page, locator, timeout, control) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    control?.throwIfCancelled?.();
+    if (!(await visible(locator))) {
+      control?.throwIfCancelled?.();
+      return;
+    }
+    control?.throwIfCancelled?.();
+    await page.waitForTimeout(100);
+    control?.throwIfCancelled?.();
+  }
 }
 
 function codedError(code) {

@@ -104,6 +104,24 @@ export const openaiChatgptAdapter = {
     return "flow_changed";
   },
 
+  async classifyPasswordChange(page) {
+    const state = await this.classify(page);
+    if (
+      state?.state === "manual_required"
+      && (state.reason === "captcha" || state.reason === "email_verification")
+    ) {
+      return state;
+    }
+    if (
+      (state === "login_ready"
+        || (state?.state === "manual_required" && state.reason === "security_challenge"))
+      && await visible(currentPassword(page))
+    ) {
+      return "identity_challenge";
+    }
+    return state;
+  },
+
   async submitCredentials(page, { account, password }, { control } = {}) {
     const email = emailInput(page);
     if (await visible(email)) {
@@ -142,6 +160,19 @@ export const openaiChatgptAdapter = {
       page.getByRole("button", { name: /^(continue|verify|submit)$/i }),
       submitControl(page),
     ], control);
+  },
+
+  async submitIdentityChallenge(page, password, { control } = {}) {
+    const input = currentPassword(page);
+    if (!(await visible(input))) {
+      throw adapterError("flow_changed");
+    }
+    await browserSideEffect(control, () => input.fill(password));
+    await clickFirstVisible([
+      page.getByRole("button", { name: /^(continue|confirm|verify|submit)$/i }),
+      submitControl(page),
+    ], control);
+    await waitUntilHidden(page, input, 15_000, control);
   },
 
   async openPasswordChange(page, { account, control }) {
