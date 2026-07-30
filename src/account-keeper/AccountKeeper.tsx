@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { activeInputSource, canResume, canStart, reduceProgress } from "./model";
 import type {
+  AccountKeeperDefaultsDto,
   AccountStage,
   AccountView,
   DraftState,
@@ -75,6 +76,29 @@ function asBoolean(value: unknown, fallback = false): boolean {
 
 function asStrings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function errorMessage(value: unknown): string {
+  if (typeof value === "string") return value;
+  const message = asString(asRecord(value)?.message).trim();
+  if (message) return message;
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized && serialized !== "{}") return serialized;
+  } catch {
+    return "Unknown error";
+  }
+  return "Unknown error";
+}
+
+function normalizeDefaults(value: unknown): AccountKeeperDefaultsDto {
+  const record = asRecord(value);
+  const template = asString(record?.template).trim();
+  const outputPath = asString(record?.outputPath ?? record?.output_path).trim();
+  if (!template || !outputPath) {
+    throw new Error("Invalid Account Keeper defaults");
+  }
+  return { template, outputPath };
 }
 
 function normalizeAccount(value: unknown): AccountView | null {
@@ -257,6 +281,45 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     return () => {
       root.removeEventListener("account-keeper:qa-configure", onConfigure);
       delete root.dataset.accountKeeperQaStatus;
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const loadDefaults = async () => {
+      try {
+        const defaults = normalizeDefaults(
+          await invoke<unknown>("account_keeper_defaults"),
+        );
+        if (disposed) return;
+        const validation = normalizeTemplateValidation(
+          await invoke<unknown>("account_keeper_validate_template", {
+            request: { template: defaults.template },
+          }),
+        );
+        if (disposed) return;
+        setDraft((current) => {
+          const applyTemplate = current.templateText.trim() === "";
+          return {
+            ...current,
+            templateText: applyTemplate ? defaults.template : current.templateText,
+            templateValidation: applyTemplate ? validation : current.templateValidation,
+            outputPath: current.outputPath.trim() === ""
+              ? defaults.outputPath
+              : current.outputPath,
+          };
+        });
+      } catch (defaultsError) {
+        if (!disposed) {
+          setError(
+            `Account Keeper defaults could not load: ${errorMessage(defaultsError)}`,
+          );
+        }
+      }
+    };
+    void loadDefaults();
+    return () => {
+      disposed = true;
     };
   }, []);
 
@@ -842,7 +905,15 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           <div className="account-keeper__field">
             <label htmlFor="account-keeper-output">Output file</label>
             <div className="account-keeper__picker">
-              <input id="account-keeper-output" value={draft.outputPath} placeholder="Choose a local JSON file" readOnly />
+              <input
+                id="account-keeper-output"
+                value={draft.outputPath}
+                placeholder="Choose a local JSON file"
+                onChange={(event) => setDraft((current) => ({
+                  ...current,
+                  outputPath: event.target.value,
+                }))}
+              />
               <button
                 type="button"
                 className="btn-ghost"

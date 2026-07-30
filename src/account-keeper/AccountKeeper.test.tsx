@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountKeeper } from "./AccountKeeper";
@@ -21,14 +21,30 @@ const inlineRecord = [
   "admin@example.test|second-password|",
 ].join("\n");
 
+const defaultTemplate = "BrP@{random:16}!";
+const defaultOutputPath = "C:\\Users\\synthetic\\Documents\\account-keeper-result.json";
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
 describe("AccountKeeper", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.open.mockReset();
+    mocks.save.mockReset();
     window.history.pushState({}, "", "/");
     delete document.documentElement.dataset.accountKeeperQaConfig;
     delete document.documentElement.dataset.accountKeeperQaStatus;
     mocks.listen.mockResolvedValue(mocks.unlisten);
     mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "account_keeper_defaults") {
+        return { template: defaultTemplate, outputPath: defaultOutputPath };
+      }
       if (command === "account_keeper_list_jobs") return [];
       if (command === "account_keeper_validate_input") {
         return { validCount: 2, maskedAccounts: ["o***r@example.test", "a***n@example.test"] };
@@ -113,6 +129,166 @@ describe("AccountKeeper", () => {
 
     view.unmount();
     await waitFor(() => expect(mocks.unlisten).toHaveBeenCalled());
+  });
+
+  it("does not validate defaults after unmount while loading", async () => {
+    const defaultsRequest = deferred<unknown>();
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "account_keeper_defaults") return defaultsRequest.promise;
+      if (command === "account_keeper_list_jobs") return [];
+      return null;
+    });
+    const view = render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("account_keeper_defaults"));
+    view.unmount();
+    await act(async () => {
+      defaultsRequest.resolve({ template: defaultTemplate, outputPath: defaultOutputPath });
+      await defaultsRequest.promise;
+    });
+
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "account_keeper_validate_template"))
+      .toBe(false);
+  });
+
+  it("loads and validates editable defaults on mount", async () => {
+    mocks.save.mockResolvedValue("C:\\fixtures\\browsed-result.json");
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    await waitFor(() => expect(screen.getByLabelText("Template"))
+      .toHaveValue(defaultTemplate));
+    const output = screen.getByLabelText("Output file");
+    expect(output).toHaveValue(defaultOutputPath);
+    expect(mocks.invoke).toHaveBeenCalledWith("account_keeper_defaults");
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_validate_template",
+      { request: { template: defaultTemplate } },
+    );
+    expect(await screen.findByText("Template valid")).toBeInTheDocument();
+    expect(screen.getByLabelText("Account input")).toHaveValue("");
+    expect(screen.getByLabelText(
+      "I understand pasted input and the output file contain plaintext secrets",
+    )).not.toBeChecked();
+
+    fireEvent.change(screen.getByLabelText("Template"), {
+      target: { value: "Local-{random:16}" },
+    });
+    expect(screen.queryByText("Template valid")).not.toBeInTheDocument();
+
+    fireEvent.change(output, { target: { value: "C:\\fixtures\\typed-result.json" } });
+    expect(output).toHaveValue("C:\\fixtures\\typed-result.json");
+    fireEvent.click(screen.getByRole("button", { name: "Choose output file" }));
+    await waitFor(() => expect(output).toHaveValue("C:\\fixtures\\browsed-result.json"));
+  });
+
+  it.each([
+    ["missing template", { outputPath: defaultOutputPath }],
+    ["blank template", { template: "   ", outputPath: defaultOutputPath }],
+    ["missing output path", { template: defaultTemplate }],
+    ["blank output path", { template: defaultTemplate, outputPath: "   " }],
+  ])("rejects %s in Account Keeper defaults", async (_case, defaults) => {
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "account_keeper_defaults") return defaults;
+      if (command === "account_keeper_list_jobs") return [];
+      return null;
+    });
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Account Keeper defaults could not load: Invalid Account Keeper defaults",
+    );
+    expect(screen.getByLabelText("Template")).toHaveValue("");
+    expect(screen.getByLabelText("Output file")).toHaveValue("");
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "account_keeper_validate_template"))
+      .toBe(false);
+  });
+
+  it("shows a readable prefixed error when defaults loading rejects with an object", async () => {
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "account_keeper_defaults") {
+        throw { message: "defaults unavailable", code: "defaults_offline" };
+      }
+      if (command === "account_keeper_list_jobs") return [];
+      return null;
+    });
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Account Keeper defaults could not load: defaults unavailable",
+    );
+    expect(alert).not.toHaveTextContent("[object Object]");
+  });
+
+  it("applies only blank fields when defaults resolve after operator edits", async () => {
+    const defaultsRequest = deferred<unknown>();
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "account_keeper_defaults") return defaultsRequest.promise;
+      if (command === "account_keeper_list_jobs") return [];
+      if (command === "account_keeper_validate_template") {
+        return {
+          valid: true,
+          finalLength: 22,
+          hasUppercase: true,
+          hasLowercase: true,
+          hasDigit: true,
+          hasSymbol: true,
+        };
+      }
+      return null;
+    });
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("account_keeper_defaults"));
+    fireEvent.change(screen.getByLabelText("Template"), {
+      target: { value: "Operator-{random:16}" },
+    });
+    fireEvent.change(screen.getByLabelText("Account input"), { target: { value: inlineRecord } });
+    fireEvent.click(screen.getByLabelText(
+      "I understand pasted input and the output file contain plaintext secrets",
+    ));
+    defaultsRequest.resolve({ template: defaultTemplate, outputPath: defaultOutputPath });
+
+    await waitFor(() => expect(screen.getByLabelText("Output file")).toHaveValue(defaultOutputPath));
+    expect(screen.getByLabelText("Template")).toHaveValue("Operator-{random:16}");
+    expect(screen.queryByText("Template valid")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Account input")).toHaveValue(inlineRecord);
+    expect(screen.getByLabelText(
+      "I understand pasted input and the output file contain plaintext secrets",
+    )).toBeChecked();
+  });
+
+  it("preserves an output edit while default template validation is pending", async () => {
+    const validationRequest = deferred<unknown>();
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "account_keeper_defaults") {
+        return { template: defaultTemplate, outputPath: defaultOutputPath };
+      }
+      if (command === "account_keeper_list_jobs") return [];
+      if (command === "account_keeper_validate_template") return validationRequest.promise;
+      return null;
+    });
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_validate_template",
+      { request: { template: defaultTemplate } },
+    ));
+    fireEvent.change(screen.getByLabelText("Output file"), {
+      target: { value: "C:\\fixtures\\operator-result.json" },
+    });
+    validationRequest.resolve({
+      valid: true,
+      finalLength: 22,
+      hasUppercase: true,
+      hasLowercase: true,
+      hasDigit: true,
+      hasSymbol: true,
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("Template")).toHaveValue(defaultTemplate));
+    expect(await screen.findByText("Template valid")).toBeInTheDocument();
+    expect(screen.getByLabelText("Output file")).toHaveValue("C:\\fixtures\\operator-result.json");
   });
 
   it("validates pasted records, starts with inline source, and clears the textarea", async () => {
