@@ -71,6 +71,13 @@ export async function createControlledPageSession(context, allowedOrigins) {
       return;
     }
     if (origins.has(origin)) {
+      const activePopup =
+        currentPage &&
+        currentPage !== dedicatedPage &&
+        !currentPage.isClosed?.();
+      if (page === dedicatedPage && activePopup) {
+        return;
+      }
       currentPage = page;
     } else if (currentPage === page && dedicatedPage && page !== dedicatedPage) {
       currentPage = dedicatedPage;
