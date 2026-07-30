@@ -32,6 +32,11 @@ export interface InputValidationDto {
   maskedAccounts: string[];
 }
 
+export interface AccountKeeperDefaultsDto {
+  template: string;
+  outputPath: string;
+}
+
 export interface TemplateValidationDto {
   valid: boolean;
   finalLength: number;
