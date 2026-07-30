@@ -10,7 +10,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 )
 if ($errors.Count -gt 0) { throw $errors[0].Message }
 
-foreach ($name in @("Test-FileWritable", "Wait-FileWritable")) {
+foreach ($name in @("Test-FileWritable", "Wait-FileWritable", "Test-BrProxiesProcessTarget")) {
   $definition = $ast.Find({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -74,8 +74,14 @@ try {
 
   $releasedHolder = Start-ExclusiveHolder $tempPath 750
   Wait-UntilLocked $tempPath
-  if (-not (Wait-FileWritable -Path $tempPath -TimeoutSeconds 3 -PollMilliseconds 50)) {
+  $probeState = [pscustomobject]@{ Count = 0 }
+  if (-not (Wait-FileWritable -Path $tempPath -TimeoutSeconds 3 -PollMilliseconds 50 -BeforeProbe {
+    $probeState.Count += 1
+  })) {
     throw "Wait-FileWritable did not survive a transient lock"
+  }
+  if ($probeState.Count -lt 2) {
+    throw "Wait-FileWritable did not repeat its lock callback"
   }
   Wait-Job $releasedHolder | Out-Null
   Remove-Job $releasedHolder
@@ -87,6 +93,19 @@ try {
   }
   Wait-Job $timedOutHolder | Out-Null
   Remove-Job $timedOutHolder
+
+  $exactProcess = [pscustomobject]@{ Path = $tempPath }
+  $unknownProcess = [pscustomobject]@{ Path = $null }
+  $otherProcess = [pscustomobject]@{ Path = Join-Path ([System.IO.Path]::GetTempPath()) "other-brproxies.exe" }
+  if (-not (Test-BrProxiesProcessTarget -Process $exactProcess -TargetPath $tempPath)) {
+    throw "Exact BrProxies process path was not selected"
+  }
+  if (-not (Test-BrProxiesProcessTarget -Process $unknownProcess -TargetPath $tempPath)) {
+    throw "BrProxies process with an unreadable path was not selected"
+  }
+  if (Test-BrProxiesProcessTarget -Process $otherProcess -TargetPath $tempPath) {
+    throw "Different BrProxies process path was selected"
+  }
 } finally {
   Get-Job | Where-Object { $_.State -ne "Completed" } | Stop-Job -ErrorAction SilentlyContinue
   Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue

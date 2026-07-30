@@ -119,33 +119,74 @@ function Wait-FileWritable {
   param(
     [string]$Path,
     [double]$TimeoutSeconds = 30,
-    [int]$PollMilliseconds = 100
+    [int]$PollMilliseconds = 100,
+    [scriptblock]$BeforeProbe
   )
 
   $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(0, $TimeoutSeconds))
   do {
+    if (Test-FileWritable $Path) { return $true }
+    if ($BeforeProbe) { & $BeforeProbe }
     if (Test-FileWritable $Path) { return $true }
     if ([DateTime]::UtcNow -ge $deadline) { return $false }
     Start-Sleep -Milliseconds ([Math]::Max(1, $PollMilliseconds))
   } while ($true)
 }
 
-function Stop-LockingBrProxies($Path) {
+function Test-BrProxiesProcessTarget {
+  param(
+    [object]$Process,
+    [string]$TargetPath
+  )
+
+  try {
+    $processPath = $Process.Path
+  } catch {
+    return $true
+  }
+  if ([string]::IsNullOrWhiteSpace($processPath)) { return $true }
+  try {
+    return [System.IO.Path]::GetFullPath($processPath) -ieq
+      [System.IO.Path]::GetFullPath($TargetPath)
+  } catch {
+    return $false
+  }
+}
+
+function Stop-LockingBrProxies {
+  param(
+    [string]$Path,
+    [double]$TimeoutSeconds = 90,
+    [int]$PollMilliseconds = 100
+  )
+
   if (-not (Test-Path -LiteralPath $Path)) { return $true }
   $target = (Resolve-Path -LiteralPath $Path).Path
-  $locked = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-    try { $_.Path -eq $target } catch { $false }
-  })
-  if ($locked.Count -gt 0) {
-    Write-Host "Closing running BrProxies before build..."
+  if (Test-FileWritable $Path) { return $true }
+
+  $processName = [System.IO.Path]::GetFileNameWithoutExtension($target)
+  $stoppedIds = [System.Collections.Generic.HashSet[int]]::new()
+  $stopLockingProcesses = {
+    $candidates = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
+    foreach ($process in $candidates) {
+      if (-not (Test-BrProxiesProcessTarget -Process $process -TargetPath $target)) {
+        continue
+      }
+      if ($stoppedIds.Add([int]$process.Id)) {
+        Write-Host "Closing running BrProxies process $($process.Id) before build..."
+      }
+      try { Stop-Process -Id $process.Id -Force -ErrorAction Stop } catch {}
+    }
   }
-  foreach ($process in $locked) {
-    try { Stop-Process -Id $process.Id -Force -ErrorAction Stop } catch {}
+
+  Write-Host "Waiting for Windows to release BrProxies executable..."
+  $waitArguments = @{
+    Path = $Path
+    TimeoutSeconds = $TimeoutSeconds
+    PollMilliseconds = $PollMilliseconds
+    BeforeProbe = $stopLockingProcesses
   }
-  if (-not (Test-FileWritable $Path)) {
-    Write-Host "Waiting for Windows to release BrProxies executable..."
-  }
-  return Wait-FileWritable -Path $Path -TimeoutSeconds 30 -PollMilliseconds 100
+  return Wait-FileWritable @waitArguments
 }
 
 function Sync-AccountKeeperResources {
@@ -251,7 +292,7 @@ $exePath = "src-tauri\target\release\brproxies.exe"
 $needDesktop = $Full -or $needFrontend -or -not (Test-Path -LiteralPath $exePath) -or ((Get-Cache "tauri") -ne $tauriHash)
 if ($needDesktop) {
   if (-not (Stop-LockingBrProxies $exePath)) {
-    throw "Another process is still locking $exePath after 30 seconds. Close the process holding the file, then run smart launch\build.bat again."
+    throw "Another process is still locking $exePath after 90 seconds. Close the process holding the file, then run smart launch\build.bat again."
   }
   Run-Step "Building desktop app..." "npm.cmd" @("run", "tauri", "build", "--", "--no-bundle")
   $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
