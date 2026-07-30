@@ -245,6 +245,13 @@ pub struct ProgressEvent {
     pub job: JobView,
 }
 
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InputSource {
+    Inline { text: String },
+    File { path: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewRequest {
@@ -2598,6 +2605,42 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn input_source_deserializes_inline_and_file_variants() {
+        let inline: InputSource = serde_json::from_value(serde_json::json!({
+            "kind": "inline",
+            "text": "owner@example.test|current-password|JBSWY3DPEHPK3PXP"
+        }))
+        .unwrap();
+        assert!(matches!(
+            inline,
+            InputSource::Inline { text }
+                if text == "owner@example.test|current-password|JBSWY3DPEHPK3PXP"
+        ));
+
+        let file: InputSource = serde_json::from_value(serde_json::json!({
+            "kind": "file",
+            "path": "C:\\fixtures\\batch.txt"
+        }))
+        .unwrap();
+        assert!(matches!(
+            file,
+            InputSource::File { path } if path == "C:\\fixtures\\batch.txt"
+        ));
+    }
+
+    #[test]
+    fn input_source_rejects_missing_unknown_and_mixed_payloads() {
+        for payload in [
+            serde_json::json!({}),
+            serde_json::json!({ "kind": "unknown", "text": "synthetic" }),
+            serde_json::json!({ "kind": "inline", "text": "synthetic", "path": "C:\\mixed.txt" }),
+            serde_json::json!({ "kind": "file", "path": "C:\\batch.txt", "text": "synthetic" }),
+        ] {
+            assert!(serde_json::from_value::<InputSource>(payload).is_err());
+        }
     }
 
     #[test]
