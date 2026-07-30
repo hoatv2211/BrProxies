@@ -111,6 +111,7 @@ export const openaiChatgptAdapter = {
       await clickFirstVisible([
         page.getByRole("button", { name: /^(continue|next)$/i }),
         page.getByRole("button", { name: /^(log in|sign in)$/i }),
+        submitControl(page),
       ], control);
       await waitForAny(
         page,
@@ -125,6 +126,7 @@ export const openaiChatgptAdapter = {
       await browserSideEffect(control, () => passwordInput.fill(password));
       await clickFirstVisible([
         page.getByRole("button", { name: /^(continue|log in|sign in)$/i }),
+        submitControl(page),
       ], control);
     }
   },
@@ -137,6 +139,7 @@ export const openaiChatgptAdapter = {
     await browserSideEffect(control, () => input.fill(code));
     await clickFirstVisible([
       page.getByRole("button", { name: /^(continue|verify|submit)$/i }),
+      submitControl(page),
     ], control);
   },
 
@@ -150,11 +153,13 @@ export const openaiChatgptAdapter = {
     await browserSideEffect(control, () => email.fill(account));
     await clickFirstVisible([
       page.getByRole("button", { name: /^(continue|next)$/i }),
+      submitControl(page),
     ], control);
     await waitForAny(page, [currentPassword(page)], 15_000, control);
     await clickFirstVisible([
       page.getByRole("link", { name: /^forgot password\??$/i }),
       page.getByRole("button", { name: /^forgot password\??$/i }),
+      forgotPasswordControl(page),
     ], control);
   },
 
@@ -176,6 +181,7 @@ export const openaiChatgptAdapter = {
     }
     await clickFirstVisible([
       page.getByRole("button", { name: /^(continue|reset password|update password|save)$/i }),
+      submitControl(page),
     ], control, onBeforeSubmit);
   },
 
@@ -234,6 +240,16 @@ function newPassword(page) {
 function oneTimeCode(page) {
   return page
     .locator('input[autocomplete="one-time-code"], input[inputmode="numeric"][maxlength="6"]')
+    .first();
+}
+
+function submitControl(page) {
+  return page.locator('button[type="submit"], input[type="submit"]').first();
+}
+
+function forgotPasswordControl(page) {
+  return page
+    .locator('a[href*="reset-password"], a[href*="forgot-password"]')
     .first();
 }
 
