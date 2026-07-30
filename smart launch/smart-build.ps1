@@ -148,6 +148,60 @@ function Stop-LockingBrProxies($Path) {
   return Wait-FileWritable -Path $Path -TimeoutSeconds 30 -PollMilliseconds 100
 }
 
+function Sync-AccountKeeperResources {
+  param(
+    [string]$Source,
+    [string]$Destination
+  )
+
+  $required = @(
+    "manifest.json",
+    "node/node.exe",
+    "worker/account-keeper-worker.mjs",
+    "worker/node_modules/patchright/package.json",
+    "worker/node_modules/patchright-core/package.json"
+  )
+  foreach ($relative in $required) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Source $relative))) {
+      throw "Account Keeper build resource is missing: $relative"
+    }
+  }
+
+  $sourceManifest = Join-Path $Source "manifest.json"
+  $destinationManifest = Join-Path $Destination "manifest.json"
+  $destinationReady = Test-Path -LiteralPath $destinationManifest
+  if ($destinationReady) {
+    $destinationReady = (Get-FileHash -LiteralPath $sourceManifest).Hash -eq
+      (Get-FileHash -LiteralPath $destinationManifest).Hash
+  }
+  if ($destinationReady) {
+    foreach ($relative in $required) {
+      if (-not (Test-Path -LiteralPath (Join-Path $Destination $relative))) {
+        $destinationReady = $false
+        break
+      }
+    }
+  }
+  if ($destinationReady) {
+    Write-Host "Skipping Account Keeper worker resources; manifest unchanged."
+    return
+  }
+
+  Write-Host "Staging Account Keeper worker resources..."
+  New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  Get-ChildItem -LiteralPath $Source -Force | Copy-Item -Destination $Destination -Recurse -Force
+
+  foreach ($relative in $required) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Destination $relative))) {
+      throw "Account Keeper release resource is missing after staging: $relative"
+    }
+  }
+  if ((Get-FileHash -LiteralPath $sourceManifest).Hash -ne
+      (Get-FileHash -LiteralPath $destinationManifest).Hash) {
+    throw "Account Keeper release resource manifest does not match"
+  }
+}
+
 Require-Command "cargo" "Install Rust from https://rustup.rs/ then reopen terminal or VS Code."
 Require-Command "rustc" "Install Rust from https://rustup.rs/ then reopen terminal or VS Code."
 Require-Command "npm.cmd" "Install Node.js LTS, then reopen terminal or VS Code."
@@ -208,6 +262,8 @@ if ($needDesktop) {
   Write-Host "Skipping web assets; frontend inputs unchanged."
   Write-Host "Skipping desktop app; Tauri/Rust inputs unchanged."
 }
+
+Sync-AccountKeeperResources -Source "src-tauri/resources/account-keeper" -Destination "src-tauri/target/release/account-keeper"
 
 Write-Host ""
 Write-Host "Build complete."
