@@ -4,6 +4,7 @@ mod account_keeper;
 mod account_keeper_format;
 mod account_keeper_store;
 mod account_keeper_worker;
+mod actions;
 mod android;
 mod api;
 mod cookies;
@@ -46,6 +47,27 @@ async fn mcp_download(dir: String) -> Result<String, String> {
         .await
         .map(|p| p.display().to_string())
         .map_err(|e| e.to_string())
+}
+
+// ---- Profile actions/plugins ----
+
+#[tauri::command]
+fn actions_list(profile_id: String) -> Result<Vec<actions::ProfileActionCommand>, String> {
+    actions::list_for_profile(&profile_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn actions_run(
+    profile_id: String,
+    action_id: String,
+    command_id: String,
+) -> Result<actions::ActionRunResult, String> {
+    actions::run(&profile_id, &action_id, &command_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn actions_config_path() -> Result<String, String> {
+    actions::config_path_string().map_err(|e| e.to_string())
 }
 
 // ---- Profiles ----
@@ -1146,6 +1168,9 @@ pub fn run() {
             account_keeper::account_keeper_abandon_job,
             account_keeper::account_keeper_export_result,
             account_keeper::account_keeper_open_profile,
+            actions_list,
+            actions_run,
+            actions_config_path,
             profile_set_pin,
             profile_set_folder,
             folder_rename,
