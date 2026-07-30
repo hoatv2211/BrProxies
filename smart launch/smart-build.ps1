@@ -102,29 +102,50 @@ function Run-Step($Title, $Command, $Arguments, $WorkingDirectory = $repoRoot.Pa
 function Test-FileWritable($Path) {
   if (-not (Test-Path -LiteralPath $Path)) { return $true }
   try {
-    $stream = [System.IO.File]::Open($Path, 'Open', 'ReadWrite', 'None')
-    $stream.Close()
+    $stream = [System.IO.File]::Open(
+      $Path,
+      [System.IO.FileMode]::Open,
+      [System.IO.FileAccess]::Write,
+      ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+    )
+    $stream.Dispose()
     return $true
   } catch {
     return $false
   }
 }
 
+function Wait-FileWritable {
+  param(
+    [string]$Path,
+    [double]$TimeoutSeconds = 30,
+    [int]$PollMilliseconds = 100
+  )
+
+  $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(0, $TimeoutSeconds))
+  do {
+    if (Test-FileWritable $Path) { return $true }
+    if ([DateTime]::UtcNow -ge $deadline) { return $false }
+    Start-Sleep -Milliseconds ([Math]::Max(1, $PollMilliseconds))
+  } while ($true)
+}
+
 function Stop-LockingBrProxies($Path) {
-  if (-not (Test-Path -LiteralPath $Path)) { return }
+  if (-not (Test-Path -LiteralPath $Path)) { return $true }
   $target = (Resolve-Path -LiteralPath $Path).Path
-  $locked = @(Get-Process -Name "brproxies" -ErrorAction SilentlyContinue | Where-Object {
+  $locked = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
     try { $_.Path -eq $target } catch { $false }
   })
-  if ($locked.Count -eq 0) { return }
-  Write-Host "Closing running BrProxies before build..."
+  if ($locked.Count -gt 0) {
+    Write-Host "Closing running BrProxies before build..."
+  }
   foreach ($process in $locked) {
-    Stop-Process -Id $process.Id -Force
+    try { Stop-Process -Id $process.Id -Force -ErrorAction Stop } catch {}
   }
-  for ($i = 0; $i -lt 50; $i++) {
-    if (Test-FileWritable $Path) { return }
-    Start-Sleep -Milliseconds 100
+  if (-not (Test-FileWritable $Path)) {
+    Write-Host "Waiting for Windows to release BrProxies executable..."
   }
+  return Wait-FileWritable -Path $Path -TimeoutSeconds 30 -PollMilliseconds 100
 }
 
 Require-Command "cargo" "Install Rust from https://rustup.rs/ then reopen terminal or VS Code."
@@ -175,9 +196,8 @@ $needFrontend = $Full -or -not (Test-Path -LiteralPath "dist\index.html") -or ((
 $exePath = "src-tauri\target\release\brproxies.exe"
 $needDesktop = $Full -or $needFrontend -or -not (Test-Path -LiteralPath $exePath) -or ((Get-Cache "tauri") -ne $tauriHash)
 if ($needDesktop) {
-  Stop-LockingBrProxies $exePath
-  if (-not (Test-FileWritable $exePath)) {
-    throw "BrProxies is still locking $exePath. Close it manually, then run smart launch\build.bat again."
+  if (-not (Stop-LockingBrProxies $exePath)) {
+    throw "Another process is still locking $exePath after 30 seconds. Close the process holding the file, then run smart launch\build.bat again."
   }
   Run-Step "Building desktop app..." "npm.cmd" @("run", "tauri", "build", "--", "--no-bundle")
   $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
