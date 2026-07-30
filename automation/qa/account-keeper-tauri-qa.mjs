@@ -20,6 +20,7 @@ const syntheticAccount = "owner@example.test";
 const initialPassword = "Synthetic-Current-123!";
 const totpSecret = "JBSWY3DPEHPK3PXP";
 const template = "QA-{random:16}!";
+const failureScreenshotPath = path.join(tmpdir(), "BrProxies-AccountKeeper-QA-failure.png");
 
 const fixture = await startAccountKeeperFixture({
   accounts: [{
@@ -34,18 +35,23 @@ let tauri = null;
 let browser = null;
 let page = null;
 const allLogs = [];
+const generatedPasswords = [];
 const realProfileNamesBefore = await listRealProfileNames();
 
 try {
   await prepareQaRoot();
-  const firstInput = path.join(filesRoot, "batch-1.txt");
+  const firstInputText = inputRecord(initialPassword);
   const firstOutput = path.join(filesRoot, "result-1.json");
-  await writeInput(firstInput, initialPassword);
 
   ({ tauri, browser } = await startAndConnect());
   page = await openAccountKeeper(browser);
-  await configureBatch(page, firstInput, firstOutput);
+  await configureBatch(page, { kind: "inline", text: firstInputText }, firstOutput);
   await startBatch(page);
+  await waitFor(
+    () => page.getByLabel("Account input", { exact: true }).inputValue().then((value) => value === ""),
+    30_000,
+    "Pasted input stayed in React state after start",
+  );
   await page.locator(".account-keeper__manual").waitFor({ state: "visible", timeout: 120_000 });
   await fixture.completeManualChallenge(syntheticAccount);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
@@ -53,20 +59,22 @@ try {
   assertSuccessfulResult(firstResult);
 
   const firstAccount = firstResult.accounts[0];
+  generatedPasswords.push(firstAccount.password);
   const secondInput = path.join(filesRoot, "batch-2.txt");
   const secondOutput = path.join(filesRoot, "result-2.json");
   await writeInput(secondInput, firstAccount.password);
-  await configureBatch(page, secondInput, secondOutput);
+  await configureBatch(page, { kind: "file", path: secondInput }, secondOutput);
   await startBatch(page);
   const secondResult = await waitForOutput(secondOutput);
   assertSuccessfulResult(secondResult);
+  generatedPasswords.push(secondResult.accounts[0].password);
   assert.equal(secondResult.accounts[0].profile_id, firstAccount.profile_id);
 
   await fixture.armManualChallenge(syntheticAccount);
   const thirdInput = path.join(filesRoot, "batch-3.txt");
   const thirdOutput = path.join(filesRoot, "result-3.json");
   await writeInput(thirdInput, secondResult.accounts[0].password);
-  await configureBatch(page, thirdInput, thirdOutput);
+  await configureBatch(page, { kind: "file", path: thirdInput }, thirdOutput);
   await startBatch(page);
   await page.locator(".account-keeper__manual").waitFor({ state: "visible", timeout: 120_000 });
   await assertManualState(page, firstAccount.profile_id);
@@ -88,6 +96,9 @@ try {
   const profileFiles = await readdir(path.join(configRoot, "profiles"));
   assert.equal(profileFiles.filter((name) => name.endsWith(".json")).length, 1);
   assert.deepEqual(await listRealProfileNames(), realProfileNamesBefore);
+  await stopTauri(tauri);
+  tauri = null;
+  browser = null;
   assertLogsAreRedacted(allLogs);
 
   process.stdout.write(`${JSON.stringify({
@@ -99,26 +110,41 @@ try {
   })}\n`);
 } catch (error) {
   const diagnostics = await collectFailureDiagnostics(page);
+  assertRedactedPayload(diagnostics, "QA diagnostics");
+  if (tauri) {
+    await stopTauri(tauri);
+    tauri = null;
+  }
+  assertLogsAreRedacted(allLogs);
   process.stderr.write(`Account Keeper QA diagnostics: ${JSON.stringify(diagnostics)}\n`);
   throw error;
 } finally {
   if (tauri) await stopTauri(tauri).catch(() => {});
   await fixture.close().catch(() => {});
   await cleanupQaRoot().catch(() => {});
+  await rm(failureScreenshotPath, { force: true }).catch(() => {});
 }
 
 async function collectFailureDiagnostics(activePage) {
   if (!activePage) return { page: "unavailable" };
-  const screenshotPath = path.join(tmpdir(), "BrProxies-AccountKeeper-QA-failure.png");
-  await activePage.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+  const accountInput = activePage.getByLabel("Account input", { exact: true });
+  const screenshotMasks = await accountInput.count() ? [accountInput] : [];
+  await activePage.screenshot({
+    path: failureScreenshotPath,
+    fullPage: true,
+    mask: screenshotMasks,
+    maskColor: "#000000",
+  }).catch(() => {});
   const state = await activePage.evaluate(() => {
     const root = document.querySelector(".account-keeper");
     return {
+      href: window.location.href,
+      search: window.location.search,
       qaStatus: document.documentElement.dataset.accountKeeperQaStatus ?? null,
       text: root?.textContent?.replace(/\s+/g, " ").trim().slice(0, 2000) ?? null,
     };
   }).catch(() => ({ qaStatus: null, text: null }));
-  return { ...state, screenshotPath };
+  return { ...state, screenshotPath: failureScreenshotPath };
 }
 
 async function prepareQaRoot() {
@@ -170,18 +196,27 @@ async function startAndConnect() {
   child.once("error", (error) => logs.push(String(error)));
   await waitForCdp(child, logs);
   const connected = await chromium.connectOverCDP(cdpUrl);
-  allLogs.push(...logs);
   return { tauri: { child, logs }, browser: connected };
 }
 
 async function stopTauri(instance) {
   if (!instance?.child?.pid) return;
+  const closed = instance.child.exitCode === null
+    ? new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Tauri process did not close")), 30_000);
+      instance.child.once("close", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    })
+    : Promise.resolve();
   spawnSync("taskkill.exe", ["/PID", String(instance.child.pid), "/T", "/F"], {
     stdio: "ignore",
     windowsHide: true,
   });
-  allLogs.push(...instance.logs);
+  await closed;
   await waitFor(async () => !(await endpointAvailable(cdpUrl)), 30_000, "Tauri CDP did not stop");
+  allLogs.push(...instance.logs);
 }
 
 async function waitForCdp(child, logs) {
@@ -205,32 +240,57 @@ async function openAccountKeeper(connectedBrowser) {
   const pages = contexts[0].pages();
   assert.equal(pages.length, 1);
   const page = pages[0];
-  await page.goto(appUrl);
-  await page.waitForLoadState("domcontentloaded");
-  await page.getByRole("button", { name: "Account Keeper", exact: true }).click();
-  await page.getByRole("heading", { name: "Account Keeper", exact: true }).waitFor({ state: "visible" });
+  await waitFor(async () => {
+    await page.goto(appUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    const nav = page.getByRole("button", { name: "Account Keeper", exact: true });
+    await nav.waitFor({ state: "visible", timeout: 5_000 });
+    await nav.click();
+    const heading = page.getByRole("heading", { name: "Account Keeper", exact: true });
+    await heading.waitFor({ state: "visible", timeout: 5_000 });
+    await page.waitForFunction(
+      () => window.location.search.includes("account-keeper-qa=1")
+        && document.documentElement.dataset.accountKeeperQaStatus === "idle",
+      undefined,
+      { timeout: 5_000 },
+    );
+    await page.waitForTimeout(300);
+    return heading.isVisible().then(async (visible) => visible && page.evaluate(() => (
+      window.location.search.includes("account-keeper-qa=1")
+        && document.documentElement.dataset.accountKeeperQaStatus === "idle"
+    )));
+  }, 60_000, "Account Keeper QA bridge did not stabilize");
   return page;
 }
 
-async function configureBatch(page, inputPath, outputPath) {
+async function configureBatch(page, source, outputPath) {
   await page.waitForFunction(
     () => document.documentElement.dataset.accountKeeperQaStatus === "idle",
   );
-  await page.evaluate(({ inputPath: input, outputPath: output, templateText }) => {
+  await page.evaluate(({ inputSource, outputPath: output, templateText }) => {
     document.documentElement.dataset.accountKeeperQaConfig = JSON.stringify({
-      inputPath: input,
+      source: inputSource,
       outputPath: output,
       templateText,
       adapterId: "fixture-v1",
     });
     delete document.documentElement.dataset.accountKeeperQaStatus;
     document.documentElement.dispatchEvent(new Event("account-keeper:qa-configure"));
-  }, { inputPath, outputPath, templateText: template });
-  await page.waitForFunction(() => document.documentElement.dataset.accountKeeperQaStatus === "ready");
+  }, { inputSource: source, outputPath, templateText: template });
+  await page.waitForFunction(() => {
+    const status = document.documentElement.dataset.accountKeeperQaStatus;
+    return status === "ready" || status?.startsWith("error:");
+  });
+  const qaStatus = await page.evaluate(
+    () => document.documentElement.dataset.accountKeeperQaStatus ?? "error:missing_status",
+  );
+  if (qaStatus !== "ready") throw new Error(`Account Keeper QA bridge failed: ${qaStatus}`);
   await page.evaluate(() => {
     document.documentElement.dataset.accountKeeperQaStatus = "idle";
   });
-  await page.getByLabel("I understand the selected input and output files contain plaintext secrets", { exact: true }).check();
+  const acknowledgement = source.kind === "inline"
+    ? "I understand pasted input and the output file contain plaintext secrets"
+    : "I understand the selected input and output files contain plaintext secrets";
+  await page.getByLabel(acknowledgement, { exact: true }).check();
   await page.getByRole("button", { name: "Start Batch", exact: true }).waitFor({ state: "visible" });
 }
 
@@ -244,7 +304,11 @@ async function startBatch(page) {
 }
 
 async function writeInput(filePath, password) {
-  await writeFile(filePath, `${syntheticAccount}|${password}|${totpSecret}\n`, "utf8");
+  await writeFile(filePath, inputRecord(password), "utf8");
+}
+
+function inputRecord(password) {
+  return `${syntheticAccount}|${password}|${totpSecret}\n`;
 }
 
 async function waitForOutput(filePath) {
@@ -289,9 +353,20 @@ async function listRealProfileNames() {
 
 function assertLogsAreRedacted(logChunks) {
   const logs = logChunks.join("");
-  for (const forbidden of [syntheticAccount, initialPassword, totpSecret]) {
-    assert.equal(logs.includes(forbidden), false, `QA log exposed ${forbidden}`);
+  for (const forbidden of protectedFixtureValues()) {
+    assert.equal(logs.includes(forbidden), false, "QA log exposed a protected fixture value");
   }
+}
+
+function assertRedactedPayload(value, label) {
+  const serialized = JSON.stringify(value);
+  for (const forbidden of protectedFixtureValues()) {
+    assert.equal(serialized.includes(forbidden), false, `${label} exposed a protected fixture value`);
+  }
+}
+
+function protectedFixtureValues() {
+  return [syntheticAccount, initialPassword, totpSecret, ...generatedPasswords];
 }
 
 async function waitFor(check, timeoutMs, message) {
