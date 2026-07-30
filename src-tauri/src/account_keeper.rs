@@ -24,6 +24,8 @@ use tokio::sync::{mpsc, Mutex};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+const ACCOUNT_KEEPER_INPUT_LIMIT: usize = 16 * 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountStage {
@@ -252,10 +254,10 @@ pub enum InputSource {
     File { path: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PreviewRequest {
-    pub input_path: String,
+    pub source: InputSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,10 +266,10 @@ pub struct TemplateRequest {
     pub template: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartRequest {
-    pub input_path: String,
+    pub source: InputSource,
     pub output_path: String,
     pub template: String,
     pub adapter_id: String,
@@ -816,13 +818,42 @@ pub fn opaque_profile_name(account_key: &str) -> String {
     format!("acct-{prefix}")
 }
 
-pub fn validate_input_path(path: &Path) -> Result<InputValidationDto> {
-    let metadata = std::fs::metadata(path)?;
-    if metadata.len() > 16 * 1024 * 1024 {
-        bail!("Account Keeper input is too large");
+fn validate_input_source_shape(source: &InputSource) -> Result<()> {
+    match source {
+        InputSource::Inline { text } => {
+            if text.trim().is_empty() {
+                bail!("Account Keeper input is required");
+            }
+            if text.len() > ACCOUNT_KEEPER_INPUT_LIMIT {
+                bail!("Account Keeper input is too large");
+            }
+        }
+        InputSource::File { path } => {
+            if path.trim().is_empty() {
+                bail!("Account Keeper input path is required");
+            }
+        }
     }
-    let text = std::fs::read_to_string(path)?;
-    let accounts = parse_input(&text)?;
+    Ok(())
+}
+
+fn read_input_accounts(source: &InputSource) -> Result<Vec<ImportedAccount>> {
+    validate_input_source_shape(source)?;
+    match source {
+        InputSource::Inline { text } => parse_input(text),
+        InputSource::File { path } => {
+            let path = Path::new(path);
+            let metadata = std::fs::metadata(path)?;
+            if metadata.len() > ACCOUNT_KEEPER_INPUT_LIMIT as u64 {
+                bail!("Account Keeper input is too large");
+            }
+            parse_input(&std::fs::read_to_string(path)?)
+        }
+    }
+}
+
+pub fn validate_input_source(source: &InputSource) -> Result<InputValidationDto> {
+    let accounts = read_input_accounts(source)?;
     Ok(InputValidationDto {
         valid_count: accounts.len(),
         masked_accounts: accounts
@@ -1088,7 +1119,7 @@ fn ensure_worker_fields(
 pub fn account_keeper_validate_input(
     request: PreviewRequest,
 ) -> std::result::Result<InputValidationDto, String> {
-    validate_input_path(Path::new(&request.input_path)).map_err(|error| error.to_string())
+    validate_input_source(&request.source).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1119,7 +1150,7 @@ async fn start_batch(
     let batch_id = uuid::Uuid::new_v4().to_string();
     let receiver = claim_active_batch(&batch_id).await?;
     let setup = (|| -> Result<(JobCheckpoint, VaultFile)> {
-        let imports = read_input_accounts(Path::new(&request.input_path))?;
+        let imports = read_input_accounts(&request.source)?;
         if imports.is_empty() {
             bail!("Account Keeper input contains no accounts");
         }
@@ -1405,11 +1436,14 @@ fn ensure_account_keeper_supported() -> Result<()> {
 }
 
 fn validate_start_request(request: &StartRequest) -> Result<()> {
-    if request.input_path.trim().is_empty() || request.output_path.trim().is_empty() {
-        bail!("Account Keeper input and output paths are required");
+    validate_input_source_shape(&request.source)?;
+    if request.output_path.trim().is_empty() {
+        bail!("Account Keeper output path is required");
     }
-    if Path::new(&request.input_path) == Path::new(&request.output_path) {
-        bail!("Account Keeper input and output paths must differ");
+    if let InputSource::File { path } = &request.source {
+        if Path::new(path) == Path::new(&request.output_path) {
+            bail!("Account Keeper input and output paths must differ");
+        }
     }
     if !matches!(
         request.adapter_id.as_str(),
@@ -1419,14 +1453,6 @@ fn validate_start_request(request: &StartRequest) -> Result<()> {
     }
     PasswordTemplate::parse(&request.template)?;
     Ok(())
-}
-
-fn read_input_accounts(path: &Path) -> Result<Vec<ImportedAccount>> {
-    let metadata = std::fs::metadata(path)?;
-    if metadata.len() > 16 * 1024 * 1024 {
-        bail!("Account Keeper input is too large");
-    }
-    parse_input(&std::fs::read_to_string(path)?)
 }
 
 fn load_job_view(batch_id: &str) -> Result<JobView> {
@@ -2646,6 +2672,117 @@ mod tests {
     }
 
     #[test]
+    fn inline_and_file_sources_parse_identically() {
+        let text = "owner@example.test|part|two|JBSWY3DPEHPK3PXP\n";
+        let path = test_dir("input-source-equivalence").join("batch.txt");
+        std::fs::write(&path, text).unwrap();
+
+        let inline = read_input_accounts(&InputSource::Inline {
+            text: text.to_string(),
+        })
+        .unwrap();
+        let file = read_input_accounts(&InputSource::File {
+            path: path.to_string_lossy().to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(inline, file);
+        assert_eq!(inline[0].current_password, "part|two");
+    }
+
+    #[test]
+    fn input_sources_reject_empty_and_oversized_values_without_echoing_secrets() {
+        let empty = read_input_accounts(&InputSource::Inline {
+            text: String::new(),
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(empty.contains("required"));
+
+        let secret = "SYNTHETIC_SECRET_FRAGMENT";
+        let oversized = format!("{secret}{}", "x".repeat(ACCOUNT_KEEPER_INPUT_LIMIT));
+        let error = read_input_accounts(&InputSource::Inline { text: oversized })
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "Account Keeper input is too large");
+        assert!(!error.contains(secret));
+    }
+
+    #[test]
+    fn start_request_rejects_empty_output_and_same_file_paths() {
+        let inline = StartRequest {
+            source: InputSource::Inline {
+                text: "owner@example.test|current-password|JBSWY3DPEHPK3PXP".into(),
+            },
+            output_path: String::new(),
+            template: "Local-{random:16}".into(),
+            adapter_id: "fixture-v1".into(),
+            keep_profile_running: false,
+            pause_after_current: false,
+        };
+        assert!(validate_start_request(&inline).is_err());
+
+        let file = StartRequest {
+            source: InputSource::File {
+                path: "C:/synthetic/batch.txt".into(),
+            },
+            output_path: "C:/synthetic/batch.txt".into(),
+            ..inline
+        };
+        assert!(validate_start_request(&file).is_err());
+    }
+
+    #[test]
+    fn inline_source_is_absent_from_checkpoint_and_job_view() {
+        let source_text = "owner@example.test|current-password|JBSWY3DPEHPK3PXP";
+        let imports = read_input_accounts(&InputSource::Inline {
+            text: source_text.into(),
+        })
+        .unwrap();
+        let runtime = FakeProfileRuntime {
+            fingerprints: vec![FingerprintCandidate::new("windows-a", "Alpha", "Windows")],
+            ..Default::default()
+        };
+        let mut vault = VaultFile::default();
+        let request = StartRequest {
+            source: InputSource::Inline {
+                text: source_text.into(),
+            },
+            output_path: "C:/synthetic/result.json".into(),
+            template: "Local-{random:16}".into(),
+            adapter_id: "fixture-v1".into(),
+            keep_profile_running: false,
+            pause_after_current: false,
+        };
+        let checkpoint = merge_imports_and_checkpoint(
+            &runtime,
+            &mut vault,
+            &imports,
+            &request,
+            "batch-inline",
+            "2026-07-30T00:00:00Z",
+        )
+        .unwrap();
+        let view = job_view_from_checkpoint(&checkpoint, &vault);
+        let persisted = format!(
+            "{} {}",
+            serde_json::to_string(&checkpoint).unwrap(),
+            serde_json::to_string(&view).unwrap()
+        )
+        .to_lowercase();
+
+        for forbidden in [
+            "owner@example.test",
+            "current-password",
+            "jbswy3dpehpk3pxp",
+            "source_text",
+            "inputsource",
+        ] {
+            assert!(!persisted.contains(forbidden));
+        }
+    }
+
+    #[test]
     fn password_submission_then_failed_verification_becomes_critical() {
         let mut state = AccountRunState::new("account-key");
         state.transition(AccountEvent::PasswordAccepted).unwrap();
@@ -3081,7 +3218,10 @@ mod tests {
             "owner@example.test|old-password|JBSWY3DPEHPK3PXP\nsecond@example.test|other-password|",
         )
         .unwrap();
-        let preview = validate_input_path(&path).unwrap();
+        let preview = validate_input_source(&InputSource::File {
+            path: path.to_string_lossy().to_string(),
+        })
+        .unwrap();
         assert_eq!(preview.valid_count, 2);
         assert_eq!(
             preview.masked_accounts,
@@ -3177,7 +3317,9 @@ mod tests {
             &mut vault,
             &imports,
             &StartRequest {
-                input_path: "C:/synthetic/accounts.txt".into(),
+                source: InputSource::File {
+                    path: "C:/synthetic/accounts.txt".into(),
+                },
                 output_path: "C:/synthetic/output.json".into(),
                 template: "Local-{random:16}".into(),
                 adapter_id: "fixture-v1".into(),
@@ -3216,7 +3358,9 @@ mod tests {
             &mut vault,
             &imports,
             &StartRequest {
-                input_path: "C:/synthetic/accounts.txt".into(),
+                source: InputSource::File {
+                    path: "C:/synthetic/accounts.txt".into(),
+                },
                 output_path: "C:/synthetic/output.json".into(),
                 template: "Local-{random:16}".into(),
                 adapter_id: "fixture-v1".into(),
