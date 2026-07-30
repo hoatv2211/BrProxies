@@ -534,6 +534,122 @@ test("OpenAI adapter checks cancellation between fill and click", async () => {
   assert.equal(clicks, 0);
 });
 
+test("OpenAI adapter submits localized login forms by semantic type", async () => {
+  let totpVisible = false;
+  let submitClicks = 0;
+  const locator = ({ visible = false, dynamicVisible, onClick, onFill } = {}) => ({
+    first() {
+      return this;
+    },
+    async isVisible() {
+      return dynamicVisible ? dynamicVisible() : visible;
+    },
+    async click() {
+      onClick?.();
+    },
+    async fill(value) {
+      onFill?.(value);
+    },
+  });
+  const page = {
+    locator(selector) {
+      if (selector.includes('autocomplete="username"')) {
+        return locator({
+          visible: true,
+          onFill: (value) => assert.equal(value, "synthetic@example.test"),
+        });
+      }
+      if (selector === 'button[type="submit"], input[type="submit"]') {
+        return locator({
+          visible: true,
+          onClick: () => {
+            submitClicks += 1;
+            totpVisible = true;
+          },
+        });
+      }
+      if (selector.includes('autocomplete="one-time-code"')) {
+        return locator({ dynamicVisible: () => totpVisible });
+      }
+      return locator();
+    },
+    getByRole(_role, options = {}) {
+      return locator({
+        visible: options.name instanceof RegExp && options.name.test("Tiếp tục"),
+      });
+    },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.submitCredentials(page, {
+    account: "synthetic@example.test",
+    password: "synthetic",
+  });
+
+  assert.equal(submitClicks, 1);
+});
+
+test("OpenAI adapter opens localized password reset by semantic href", async () => {
+  let stage = "email";
+  let resetClicks = 0;
+  const locator = ({ visible, onClick } = {}) => ({
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return Boolean(visible?.());
+    },
+    async click() {
+      onClick?.();
+    },
+    async fill() {},
+  });
+  const page = {
+    url: () => "https://chatgpt.com/auth/login",
+    async goto() {
+      stage = "email";
+    },
+    locator(selector) {
+      if (selector.includes('autocomplete="username"')) {
+        return locator({ visible: () => stage === "email" });
+      }
+      if (selector.includes('autocomplete="current-password"')) {
+        return locator({ visible: () => stage === "password" });
+      }
+      if (selector === 'button[type="submit"], input[type="submit"]') {
+        return locator({
+          visible: () => stage === "email",
+          onClick: () => {
+            stage = "password";
+          },
+        });
+      }
+      if (selector === 'a[href*="reset-password"], a[href*="forgot-password"]') {
+        return locator({
+          visible: () => stage === "password",
+          onClick: () => {
+            resetClicks += 1;
+          },
+        });
+      }
+      return locator({ visible: () => false });
+    },
+    getByRole() {
+      return locator({ visible: () => false });
+    },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.openPasswordChange(page, {
+    account: "synthetic@example.test",
+  });
+
+  assert.equal(resetClicks, 1);
+});
+
 test("emitted worker messages contain no credentials, tokens, HTML, or account", async () => {
   const { events } = await execute([
     "login_ready",
