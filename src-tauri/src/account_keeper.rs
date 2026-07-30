@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::future::Future;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
@@ -842,12 +843,26 @@ fn read_input_accounts(source: &InputSource) -> Result<Vec<ImportedAccount>> {
     match source {
         InputSource::Inline { text } => parse_input(text),
         InputSource::File { path } => {
-            let path = Path::new(path);
-            let metadata = std::fs::metadata(path)?;
+            let file = std::fs::File::open(Path::new(path))
+                .map_err(|_| anyhow::anyhow!("Account Keeper input file could not be opened"))?;
+            let metadata = file
+                .metadata()
+                .map_err(|_| anyhow::anyhow!("Account Keeper input file could not be inspected"))?;
             if metadata.len() > ACCOUNT_KEEPER_INPUT_LIMIT as u64 {
                 bail!("Account Keeper input is too large");
             }
-            parse_input(&std::fs::read_to_string(path)?)
+
+            let mut bytes = Vec::with_capacity(metadata.len() as usize);
+            file.take((ACCOUNT_KEEPER_INPUT_LIMIT + 1) as u64)
+                .read_to_end(&mut bytes)
+                .map_err(|_| anyhow::anyhow!("Account Keeper input file could not be read"))?;
+            if bytes.len() > ACCOUNT_KEEPER_INPUT_LIMIT {
+                bail!("Account Keeper input is too large");
+            }
+
+            let text = String::from_utf8(bytes)
+                .map_err(|_| anyhow::anyhow!("Account Keeper input is not valid UTF-8"))?;
+            parse_input(&text)
         }
     }
 }
@@ -2672,6 +2687,50 @@ mod tests {
     }
 
     #[test]
+    fn preview_request_rejects_legacy_and_unknown_outer_fields() {
+        for payload in [
+            serde_json::json!({
+                "inputPath": "C:\\synthetic\\batch.txt"
+            }),
+            serde_json::json!({
+                "source": { "kind": "inline", "text": "synthetic" },
+                "inputPath": "C:\\synthetic\\batch.txt"
+            }),
+            serde_json::json!({
+                "source": { "kind": "inline", "text": "synthetic" },
+                "unexpected": true
+            }),
+        ] {
+            assert!(serde_json::from_value::<PreviewRequest>(payload).is_err());
+        }
+    }
+
+    #[test]
+    fn start_request_rejects_legacy_and_unknown_outer_fields() {
+        let legacy = serde_json::json!({
+            "source": { "kind": "inline", "text": "synthetic" },
+            "inputPath": "C:\\synthetic\\batch.txt",
+            "outputPath": "C:\\synthetic\\result.json",
+            "template": "Local-{random:16}",
+            "adapterId": "fixture-v1",
+            "keepProfileRunning": false,
+            "pauseAfterCurrent": false
+        });
+        let unknown = serde_json::json!({
+            "source": { "kind": "inline", "text": "synthetic" },
+            "outputPath": "C:\\synthetic\\result.json",
+            "template": "Local-{random:16}",
+            "adapterId": "fixture-v1",
+            "keepProfileRunning": false,
+            "pauseAfterCurrent": false,
+            "unexpected": true
+        });
+
+        assert!(serde_json::from_value::<StartRequest>(legacy).is_err());
+        assert!(serde_json::from_value::<StartRequest>(unknown).is_err());
+    }
+
+    #[test]
     fn inline_and_file_sources_parse_identically() {
         let text = "owner@example.test|part|two|JBSWY3DPEHPK3PXP\n";
         let path = test_dir("input-source-equivalence").join("batch.txt");
@@ -2706,6 +2765,42 @@ mod tests {
             .to_string();
         assert_eq!(error, "Account Keeper input is too large");
         assert!(!error.contains(secret));
+    }
+
+    #[test]
+    fn oversized_file_is_rejected_with_generic_error() {
+        let path = test_dir("oversized-input").join("batch.txt");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len((ACCOUNT_KEEPER_INPUT_LIMIT + 1) as u64)
+            .unwrap();
+
+        let error = read_input_accounts(&InputSource::File {
+            path: path.to_string_lossy().to_string(),
+        })
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(error, "Account Keeper input is too large");
+    }
+
+    #[test]
+    fn invalid_utf8_file_is_rejected_without_exposing_content_or_path() {
+        let path_secret = "SYNTHETIC_PATH_SECRET";
+        let byte_secret = "SYNTHETIC_BYTE_SECRET";
+        let path = test_dir("invalid-utf8").join(format!("{path_secret}.txt"));
+        let mut bytes = byte_secret.as_bytes().to_vec();
+        bytes.push(0xff);
+        std::fs::write(&path, bytes).unwrap();
+
+        let error = read_input_accounts(&InputSource::File {
+            path: path.to_string_lossy().to_string(),
+        })
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(error, "Account Keeper input is not valid UTF-8");
+        assert!(!error.contains(path_secret));
+        assert!(!error.contains(byte_secret));
     }
 
     #[test]
