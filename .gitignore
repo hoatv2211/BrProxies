@@ -60,3 +60,9 @@ android_manager/data/
 
 # ===== MCP server local install (downloaded by the user post-install) =====
 mcp/node_modules/
+
+# ===== Account Keeper generated runtime =====
+src-tauri/resources/account-keeper/
+account-keeper-result.json
+/src-tauri/target-deploy
+account-keeper-input.txt

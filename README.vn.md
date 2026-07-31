@@ -13,6 +13,10 @@ Windows helper scripts. Browser runtime duoc tai rieng khi chay.
 
 - **Browser profiles** - tao, clone, pin, gan tag, sap xep, va chay Chromium
   profile rieng biet.
+- **Account Keeper (Windows 10/11 MVP)** - doi password cho account duoc uy
+  quyen theo tung account, dung profile persistent, vault DPAPI va manual
+  recovery. [English guide](docs/account-keeper.md) |
+  [Huong dan tieng Viet](docs/account-keeper.vn.md).
 - **Fingerprints** - chinh device, screen, WebGL/WebGPU, locale, timezone,
   WebRTC, media devices, geolocation, va noise settings.
 - **Proxies** - them HTTP, HTTPS, SOCKS5 proxy, test TCP/UDP/geo, va gan proxy

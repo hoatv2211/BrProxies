@@ -25,6 +25,11 @@ if ($Help) {
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
+# Set-Location only moves PowerShell's location, not the .NET process working
+# directory. Relative paths passed to [System.IO.File] APIs resolve against the
+# latter, so keep them in sync or Test-FileWritable probes the wrong path (e.g.
+# smart launch\src-tauri\...) and reports every build as "file locked".
+[Environment]::CurrentDirectory = $repoRoot.Path
 
 $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
 if (Test-Path $cargoBin) {
@@ -101,29 +106,149 @@ function Run-Step($Title, $Command, $Arguments, $WorkingDirectory = $repoRoot.Pa
 
 function Test-FileWritable($Path) {
   if (-not (Test-Path -LiteralPath $Path)) { return $true }
+  # Resolve to an absolute path so [System.IO.File]::Open does not resolve a
+  # relative $Path against the .NET working directory, which can differ from
+  # PowerShell's location and make a free file look permanently locked.
+  $absolute = (Resolve-Path -LiteralPath $Path).Path
   try {
-    $stream = [System.IO.File]::Open($Path, 'Open', 'ReadWrite', 'None')
-    $stream.Close()
+    $stream = [System.IO.File]::Open(
+      $absolute,
+      [System.IO.FileMode]::Open,
+      [System.IO.FileAccess]::Write,
+      ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+    )
+    $stream.Dispose()
     return $true
   } catch {
     return $false
   }
 }
 
-function Stop-LockingBrProxies($Path) {
-  if (-not (Test-Path -LiteralPath $Path)) { return }
-  $target = (Resolve-Path -LiteralPath $Path).Path
-  $locked = @(Get-Process -Name "brproxies" -ErrorAction SilentlyContinue | Where-Object {
-    try { $_.Path -eq $target } catch { $false }
-  })
-  if ($locked.Count -eq 0) { return }
-  Write-Host "Closing running BrProxies before build..."
-  foreach ($process in $locked) {
-    Stop-Process -Id $process.Id -Force
+function Wait-FileWritable {
+  param(
+    [string]$Path,
+    [double]$TimeoutSeconds = 30,
+    [int]$PollMilliseconds = 100,
+    [scriptblock]$BeforeProbe
+  )
+
+  $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(0, $TimeoutSeconds))
+  do {
+    if (Test-FileWritable $Path) { return $true }
+    if ($BeforeProbe) { & $BeforeProbe }
+    if (Test-FileWritable $Path) { return $true }
+    if ([DateTime]::UtcNow -ge $deadline) { return $false }
+    Start-Sleep -Milliseconds ([Math]::Max(1, $PollMilliseconds))
+  } while ($true)
+}
+
+function Test-BrProxiesProcessTarget {
+  param(
+    [object]$Process,
+    [string]$TargetPath
+  )
+
+  try {
+    $processPath = $Process.Path
+  } catch {
+    return $true
   }
-  for ($i = 0; $i -lt 50; $i++) {
-    if (Test-FileWritable $Path) { return }
-    Start-Sleep -Milliseconds 100
+  if ([string]::IsNullOrWhiteSpace($processPath)) { return $true }
+  try {
+    return [System.IO.Path]::GetFullPath($processPath) -ieq
+      [System.IO.Path]::GetFullPath($TargetPath)
+  } catch {
+    return $false
+  }
+}
+
+function Stop-LockingBrProxies {
+  param(
+    [string]$Path,
+    [double]$TimeoutSeconds = 90,
+    [int]$PollMilliseconds = 100
+  )
+
+  if (-not (Test-Path -LiteralPath $Path)) { return $true }
+  $target = (Resolve-Path -LiteralPath $Path).Path
+  if (Test-FileWritable $Path) { return $true }
+
+  $processName = [System.IO.Path]::GetFileNameWithoutExtension($target)
+  $stoppedIds = [System.Collections.Generic.HashSet[int]]::new()
+  $stopLockingProcesses = {
+    $candidates = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
+    foreach ($process in $candidates) {
+      if (-not (Test-BrProxiesProcessTarget -Process $process -TargetPath $target)) {
+        continue
+      }
+      if ($stoppedIds.Add([int]$process.Id)) {
+        Write-Host "Closing running BrProxies process $($process.Id) before build..."
+      }
+      try { Stop-Process -Id $process.Id -Force -ErrorAction Stop } catch {}
+    }
+  }
+
+  Write-Host "Waiting for Windows to release BrProxies executable..."
+  $waitArguments = @{
+    Path = $Path
+    TimeoutSeconds = $TimeoutSeconds
+    PollMilliseconds = $PollMilliseconds
+    BeforeProbe = $stopLockingProcesses
+  }
+  return Wait-FileWritable @waitArguments
+}
+
+function Sync-AccountKeeperResources {
+  param(
+    [string]$Source,
+    [string]$Destination
+  )
+
+  $required = @(
+    "manifest.json",
+    "node/node.exe",
+    "worker/account-keeper-worker.mjs",
+    "worker/node_modules/patchright/package.json",
+    "worker/node_modules/patchright-core/package.json"
+  )
+  foreach ($relative in $required) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Source $relative))) {
+      throw "Account Keeper build resource is missing: $relative"
+    }
+  }
+
+  $sourceManifest = Join-Path $Source "manifest.json"
+  $destinationManifest = Join-Path $Destination "manifest.json"
+  $destinationReady = Test-Path -LiteralPath $destinationManifest
+  if ($destinationReady) {
+    $destinationReady = (Get-FileHash -LiteralPath $sourceManifest).Hash -eq
+      (Get-FileHash -LiteralPath $destinationManifest).Hash
+  }
+  if ($destinationReady) {
+    foreach ($relative in $required) {
+      if (-not (Test-Path -LiteralPath (Join-Path $Destination $relative))) {
+        $destinationReady = $false
+        break
+      }
+    }
+  }
+  if ($destinationReady) {
+    Write-Host "Skipping Account Keeper worker resources; manifest unchanged."
+    return
+  }
+
+  Write-Host "Staging Account Keeper worker resources..."
+  New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  Get-ChildItem -LiteralPath $Source -Force | Copy-Item -Destination $Destination -Recurse -Force
+
+  foreach ($relative in $required) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Destination $relative))) {
+      throw "Account Keeper release resource is missing after staging: $relative"
+    }
+  }
+  if ((Get-FileHash -LiteralPath $sourceManifest).Hash -ne
+      (Get-FileHash -LiteralPath $destinationManifest).Hash) {
+    throw "Account Keeper release resource manifest does not match"
   }
 }
 
@@ -144,7 +269,7 @@ $androidPython = Join-Path $repoRoot "$androidVenv\Scripts\python.exe"
 $npmHash = Get-InputHash @("package.json", "package-lock.json")
 $androidDepsHash = Get-InputHash @("android_manager\pyproject.toml")
 $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
-$tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\capabilities", "smart launch\build.bat", "smart launch\smart-build.ps1")
+$tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "scripts\prepare-account-keeper-worker.mjs", "smart launch\build.bat", "smart launch\smart-build.ps1")
 
 $needNpm = $Full -or $Deps -or -not (Test-Path -LiteralPath "node_modules") -or ((Get-Cache "npm") -ne $npmHash)
 if ($needNpm) {
@@ -175,19 +300,20 @@ $needFrontend = $Full -or -not (Test-Path -LiteralPath "dist\index.html") -or ((
 $exePath = "src-tauri\target\release\brproxies.exe"
 $needDesktop = $Full -or $needFrontend -or -not (Test-Path -LiteralPath $exePath) -or ((Get-Cache "tauri") -ne $tauriHash)
 if ($needDesktop) {
-  Stop-LockingBrProxies $exePath
-  if (-not (Test-FileWritable $exePath)) {
-    throw "BrProxies is still locking $exePath. Close it manually, then run smart launch\build.bat again."
+  if (-not (Stop-LockingBrProxies $exePath)) {
+    throw "Another process is still locking $exePath after 90 seconds. Close the process holding the file, then run smart launch\build.bat again."
   }
   Run-Step "Building desktop app..." "npm.cmd" @("run", "tauri", "build", "--", "--no-bundle")
   $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
-  $tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\capabilities", "smart launch\build.bat", "smart launch\smart-build.ps1")
+  $tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "scripts\prepare-account-keeper-worker.mjs", "smart launch\build.bat", "smart launch\smart-build.ps1")
   Set-Cache "frontend" $frontendHash
   Set-Cache "tauri" $tauriHash
 } else {
   Write-Host "Skipping web assets; frontend inputs unchanged."
   Write-Host "Skipping desktop app; Tauri/Rust inputs unchanged."
 }
+
+Sync-AccountKeeperResources -Source "src-tauri/resources/account-keeper" -Destination "src-tauri/target/release/account-keeper"
 
 Write-Host ""
 Write-Host "Build complete."

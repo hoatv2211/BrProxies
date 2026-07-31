@@ -115,11 +115,16 @@ pub fn runtime_has_bad_branding_patch() -> Result<bool> {
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn count_bytes(haystack: &[u8], needle: &[u8]) -> usize {
-    haystack.windows(needle.len()).filter(|window| *window == needle).count()
+    haystack
+        .windows(needle.len())
+        .filter(|window| *window == needle)
+        .count()
 }
 fn manifest_path() -> Result<PathBuf> {
     Ok(runtime_dir()?.join("manifest.json"))

@@ -6,7 +6,8 @@ MCP server for letting AI clients control BrProxies browser profiles through:
 - CDP connections to launched browser profiles through patchright.
 
 This MCP server controls browser profiles, proxies, fingerprints, folders,
-cookies, and browser tabs. It does not control Android Manager devices.
+cookies, browser tabs, and the redacted Account Keeper daemon queue. It does
+not control Android Manager devices.
 
 Requires Node 18 or newer. The desktop app can download this package from
 Settings, but you still install dependencies and register it in your MCP client.
@@ -78,6 +79,22 @@ API tools:
 - `list_proxies`, `add_proxy`, `delete_proxy`
 - `list_fingerprints`, `list_folders`, `rename_folder`, `delete_folder`
 - `export_cookies`, `import_cookies`
+
+Account Keeper daemon tools:
+
+- `account_keeper_create_job(input_path, output_path?, template?, keep_profile_running?, authorize_password_change)`
+- `account_keeper_list_jobs()` and `account_keeper_get_job(id)`
+- `account_keeper_continue_job(id)`, `account_keeper_resume_job(id)`, and
+  `account_keeper_cancel_job(id)`
+
+Account Keeper accepts local file paths only. Put
+`account|current_password|totp_secret` records in the local input file; never
+send credentials through MCP. Creating a job requires
+`authorize_password_change: true`. Responses contain only redacted job IDs,
+states, stages, canonical error codes, counts, timestamps, and verification
+presence. BrProxies processes one job at a time in FIFO order. After an app
+restart, an interrupted job becomes `recovery_required` and must be resumed
+explicitly; it never auto-resumes.
 
 Browser tools use CDP via patchright and target the active tab of a profile:
 
