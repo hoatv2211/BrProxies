@@ -770,6 +770,91 @@ test("OpenAI adapter does not treat public ChatGPT pages as signed in", async ()
   assert.equal(await openaiChatgptAdapter.classify(signedInPage), "signed_in");
 });
 
+test("OpenAI openLogin preserves an existing signed-in session", async () => {
+  const page = fakeOpenAiPage({
+    url: "https://chatgpt.com/",
+    visible: [{ role: "button", label: "Profile menu" }],
+  });
+  page.goto = async () => {
+    throw new Error("must not navigate away from the signed-in session");
+  };
+
+  await openaiChatgptAdapter.openLogin(page);
+});
+
+test("OpenAI openLogin resumes from an expired-session dialog", async () => {
+  let stage = "expired";
+  const actions = [];
+  const locator = ({ visible, onClick } = {}) => ({
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return Boolean(visible?.());
+    },
+    async click() {
+      onClick?.();
+    },
+    getByRole(role, options = {}) {
+      if (
+        role === "button"
+        && options.name instanceof RegExp
+        && options.name.test("Log in")
+      ) {
+        return locator({
+          visible: () => stage === "expired",
+          onClick: () => {
+            actions.push("login");
+            stage = "transition";
+          },
+        });
+      }
+      return locator({ visible: () => false });
+    },
+    locator() {
+      return locator({ visible: () => false });
+    },
+  });
+  const page = {
+    url: () => "https://chatgpt.com/",
+    async goto() {
+      throw new Error("must use the expired-session login action");
+    },
+    locator(selector) {
+      if (selector.includes('autocomplete="username"')) {
+        return locator({ visible: () => stage === "email" });
+      }
+      return locator({ visible: () => false });
+    },
+    getByRole(role, options = {}) {
+      if (role === "dialog") {
+        return locator({ visible: () => stage === "expired" });
+      }
+      if (
+        role === "button"
+        && options.name instanceof RegExp
+        && options.name.test("Profile menu")
+      ) {
+        return locator({ visible: () => stage === "expired" || stage === "transition" });
+      }
+      return locator({ visible: () => false });
+    },
+    async waitForTimeout() {
+      if (stage === "transition") {
+        stage = "email";
+      }
+    },
+  };
+
+  await openaiChatgptAdapter.openLogin(page);
+
+  assert.deepEqual(actions, ["login"]);
+  assert.equal(stage, "email");
+});
+
 test("OpenAI adapter treats a post-login billing interstitial as signed in", async () => {
   const page = fakeOpenAiPage({
     url: "https://chatgpt.com/",
@@ -852,6 +937,157 @@ test("OpenAI logout dismisses a blocking interstitial before opening the menu", 
   await openaiChatgptAdapter.logout(page);
 
   assert.deepEqual(events, ["dismiss", "menu", "logout"]);
+});
+
+test("OpenAI logout force-clicks the profile menu when its avatar intercepts clicks", async () => {
+  const events = [];
+  let menuOpen = false;
+  const hidden = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return false;
+    },
+    async count() {
+      return 0;
+    },
+  };
+  const menuButton = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return true;
+    },
+    async click(options) {
+      if (options?.force !== true) {
+        throw new Error("avatar intercepts pointer events");
+      }
+      events.push("menu");
+      menuOpen = true;
+    },
+  };
+  const logoutItem = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return menuOpen;
+    },
+    async click() {
+      events.push("logout");
+    },
+  };
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) {
+        return menuButton;
+      }
+      return hidden;
+    },
+    getByRole(role, options = {}) {
+      if (role === "button" && options.name instanceof RegExp && options.name.test("Open profile menu")) {
+        return menuButton;
+      }
+      if ((role === "menuitem" || role === "button") && options.name instanceof RegExp && options.name.test("Log out")) {
+        return logoutItem;
+      }
+      return hidden;
+    },
+  };
+
+  await openaiChatgptAdapter.logout(page);
+
+  assert.deepEqual(events, ["menu", "logout"]);
+});
+
+test("OpenAI logout waits for the delayed logout menu item", async () => {
+  const events = [];
+  let menuOpen = false;
+  let waitTicks = 0;
+  const hidden = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return false;
+    },
+    async count() {
+      return 0;
+    },
+  };
+  const menuButton = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return true;
+    },
+    async click(options) {
+      assert.equal(options?.force, true);
+      menuOpen = true;
+      events.push("menu");
+    },
+  };
+  const logoutItem = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return menuOpen && waitTicks >= 2;
+    },
+    async click() {
+      events.push("logout");
+    },
+  };
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) {
+        return menuButton;
+      }
+      if (selector.includes('data-testid="log-out-menu-item"')) {
+        return logoutItem;
+      }
+      return hidden;
+    },
+    getByRole(role, options = {}) {
+      if (role === "button" && options.name instanceof RegExp && options.name.test("Open profile menu")) {
+        return menuButton;
+      }
+      if ((role === "menuitem" || role === "button") && options.name instanceof RegExp && options.name.test("Log out")) {
+        return logoutItem;
+      }
+      return hidden;
+    },
+    async waitForTimeout() {
+      waitTicks += 1;
+    },
+  };
+
+  await openaiChatgptAdapter.logout(page);
+
+  assert.deepEqual(events, ["menu", "logout"]);
 });
 
 test("OpenAI adapter reports an explicit rejected TOTP state", async () => {
@@ -982,6 +1218,80 @@ test("OpenAI adapter submits and waits for the identity challenge to leave", asy
 
   assert.equal(submitClicks, 1);
   assert.equal(passwordVisibleTicks <= 0, true);
+});
+
+test("OpenAI adapter waits for the new-password form to leave after submit", async () => {
+  let passwordVisibleTicks = 3;
+  let submitClicks = 0;
+  let waitTicks = 0;
+  const passwordInput = {
+    first() {
+      return this;
+    },
+    async isVisible() {
+      return passwordVisibleTicks > 0;
+    },
+    async fill(value) {
+      assert.equal(value, "synthetic-new-password");
+    },
+  };
+  const passwordInputs = {
+    first() {
+      return passwordInput;
+    },
+    async count() {
+      return 2;
+    },
+    nth() {
+      return passwordInput;
+    },
+  };
+  const submit = {
+    first() {
+      return this;
+    },
+    async isVisible() {
+      return passwordVisibleTicks > 0;
+    },
+    async click() {
+      submitClicks += 1;
+    },
+  };
+  const hidden = {
+    first() {
+      return this;
+    },
+    async isVisible() {
+      return false;
+    },
+  };
+  const page = {
+    locator(selector) {
+      if (selector === 'input[autocomplete="new-password"]') {
+        return passwordInputs;
+      }
+      if (selector === 'button[type="submit"], input[type="submit"]') {
+        return submit;
+      }
+      return hidden;
+    },
+    getByRole() {
+      return hidden;
+    },
+    async waitForTimeout() {
+      waitTicks += 1;
+      passwordVisibleTicks -= 1;
+    },
+  };
+
+  await openaiChatgptAdapter.submitPasswordChange(
+    page,
+    { newPassword: "synthetic-new-password" },
+  );
+
+  assert.equal(submitClicks, 1);
+  assert.equal(passwordVisibleTicks <= 0, true);
+  assert.equal(waitTicks, 4);
 });
 
 test("OpenAI adapter checks cancellation between fill and click", async () => {
@@ -1145,9 +1455,9 @@ test("OpenAI adapter waits for the password form to leave after submit", async (
   assert.equal(waitTicks, 4);
 });
 
-test("OpenAI adapter opens localized password reset by semantic href", async () => {
-  let stage = "email";
-  let resetClicks = 0;
+test("OpenAI adapter opens the signed-in password setting without logging out", async () => {
+  let stage = "signed_in";
+  const actions = [];
   const locator = ({ visible, onClick } = {}) => ({
     first() {
       return this;
@@ -1158,119 +1468,91 @@ test("OpenAI adapter opens localized password reset by semantic href", async () 
     async isVisible() {
       return Boolean(visible?.());
     },
-    async click() {
-      onClick?.();
+    async count() {
+      return 0;
     },
-    async fill() {},
+    async click(options) {
+      onClick?.(options);
+    },
   });
+  const hidden = () => locator({ visible: () => false });
   const page = {
-    url: () => "https://chatgpt.com/auth/login",
-    async goto() {
-      stage = "email";
-    },
+    url: () => stage === "identity"
+      ? "https://auth.openai.com/log-in/password"
+      : "https://chatgpt.com/",
     locator(selector) {
-      if (selector.includes('autocomplete="username"')) {
-        return locator({ visible: () => stage === "email" });
+      if (selector.includes('data-testid="accounts-profile-button"')) {
+        return locator({
+          visible: () => stage === "signed_in",
+          onClick: (options) => {
+            assert.equal(options?.force, true);
+            actions.push("profile");
+            stage = "profile_menu";
+          },
+        });
+      }
+      if (selector.includes('data-testid="settings-menu-item"')) {
+        return locator({
+          visible: () => stage === "profile_menu",
+          onClick: () => {
+            actions.push("settings");
+            stage = "settings";
+          },
+        });
+      }
+      if (selector.includes('data-testid="modal-settings"')) {
+        return locator({ visible: () => stage === "settings" || stage === "security" });
+      }
+      if (selector.includes('data-testid="security-tab"')) {
+        return locator({
+          visible: () => stage === "settings",
+          onClick: () => {
+            actions.push("security");
+            stage = "security";
+          },
+        });
+      }
+      if (selector.includes('data-testid="password-setting"')) {
+        return locator({
+          visible: () => stage === "security",
+          onClick: () => {
+            actions.push("password");
+            stage = "password_transition";
+          },
+        });
       }
       if (selector.includes('autocomplete="current-password"')) {
-        return locator({ visible: () => stage === "password" });
+        return locator({ visible: () => stage === "identity" });
       }
-      if (selector === 'button[type="submit"], input[type="submit"]') {
-        return locator({
-          visible: () => stage === "email",
-          onClick: () => {
-            stage = "password";
-          },
-        });
-      }
-      if (selector.includes("reset-password") || selector.includes("forgot-password")) {
-        return locator({
-          visible: () => stage === "password",
-          onClick: () => {
-            resetClicks += 1;
-          },
-        });
-      }
-      return locator({ visible: () => false });
-    },
-    getByRole() {
-      return locator({ visible: () => false });
-    },
-    async waitForTimeout() {},
-  };
-
-  await openaiChatgptAdapter.openPasswordChange(page, {
-    account: "synthetic@example.test",
-  });
-
-  assert.equal(resetClicks, 1);
-});
-
-test("OpenAI adapter follows a localized forgot-password link by role label", async () => {
-  let stage = "email";
-  let resetClicks = 0;
-  const locator = ({ visible, onClick } = {}) => ({
-    first() {
-      return this;
-    },
-    filter() {
-      return this;
-    },
-    async isVisible() {
-      return Boolean(visible?.());
-    },
-    async click() {
-      onClick?.();
-    },
-    async fill() {},
-  });
-  const page = {
-    url: () => "https://chatgpt.com/auth/login",
-    async goto() {
-      stage = "email";
-    },
-    locator(selector) {
-      if (selector.includes('autocomplete="username"')) {
-        return locator({ visible: () => stage === "email" });
-      }
-      if (selector.includes('autocomplete="current-password"')) {
-        return locator({ visible: () => stage === "password" });
-      }
-      if (selector === 'button[type="submit"], input[type="submit"]') {
-        return locator({
-          visible: () => stage === "email",
-          onClick: () => {
-            stage = "password";
-          },
-        });
-      }
-      return locator({ visible: () => false });
+      return hidden();
     },
     getByRole(role, options = {}) {
-      // Only the Vietnamese "Bạn quên mật khẩu?" link matches, and only on the
-      // identity-verification (password) step — mirroring the observed screen.
       if (
-        role === "link"
+        role === "button"
         && options.name instanceof RegExp
-        && options.name.test("Bạn quên mật khẩu?")
+        && options.name.test("Open profile menu")
       ) {
-        return locator({
-          visible: () => stage === "password",
-          onClick: () => {
-            resetClicks += 1;
-          },
-        });
+        return this.locator('[data-testid="accounts-profile-button"]');
       }
-      return locator({ visible: () => false });
+      if (role === "alert") {
+        return locator({ visible: () => stage === "password_transition" });
+      }
+      return hidden();
     },
-    async waitForTimeout() {},
+    async waitForTimeout() {
+      if (stage !== "password_transition") {
+        throw new Error("unexpected transition wait");
+      }
+      stage = "identity";
+    },
   };
 
   await openaiChatgptAdapter.openPasswordChange(page, {
     account: "synthetic@example.test",
   });
 
-  assert.equal(resetClicks, 1);
+  assert.deepEqual(actions, ["profile", "settings", "security", "password"]);
+  assert.equal(page.url(), "https://auth.openai.com/log-in/password");
 });
 
 test("emitted worker messages contain no credentials, tokens, HTML, or account", async () => {

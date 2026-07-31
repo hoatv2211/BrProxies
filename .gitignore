@@ -63,3 +63,4 @@ mcp/node_modules/
 
 # ===== Account Keeper generated runtime =====
 src-tauri/resources/account-keeper/
+account-keeper-result.json

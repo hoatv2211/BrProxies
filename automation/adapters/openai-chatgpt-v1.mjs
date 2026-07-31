@@ -14,6 +14,28 @@ export const openaiChatgptAdapter = {
   },
 
   async openLogin(page, { control } = {}) {
+    checkControl(control);
+    const expiredDialog = sessionExpiredDialog(page);
+    if (await visible(expiredDialog)) {
+      await clickFirstVisible([
+        expiredDialog.getByRole("button", { name: /log ?in|sign ?in|đăng nhập/i }),
+        expiredDialog.getByRole("link", { name: /log ?in|sign ?in|đăng nhập/i }),
+      ], control);
+      await waitForAny(page, authenticationSurfaceLocators(page), 15_000, control);
+      return;
+    }
+    try {
+      const current = new URL(page.url());
+      if (ALLOWED_ORIGINS.has(current.origin)) {
+        const state = await this.classify(page);
+        checkControl(control);
+        if (state === "signed_in") {
+          return;
+        }
+      }
+    } catch {
+      checkControl(control);
+    }
     await browserSideEffect(control, () =>
       page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" }),
     );
@@ -24,13 +46,7 @@ export const openaiChatgptAdapter = {
     // auth surface actually appears (or a challenge/error we still classify).
     await waitForAny(
       page,
-      [
-        emailInput(page),
-        currentPassword(page),
-        oneTimeCode(page),
-        page.locator('iframe[src*="challenges.cloudflare.com"]'),
-        page.getByRole("alert"),
-      ],
+      loginSurfaceLocators(page),
       15_000,
       control,
     );
@@ -197,20 +213,54 @@ export const openaiChatgptAdapter = {
     await waitUntilHidden(page, input, 15_000, control);
   },
 
-  async openPasswordChange(page, { account, control }) {
-    await this.logout(page, { control });
-    await this.openLogin(page, { control });
-    const email = emailInput(page);
-    if (!(await visible(email))) {
+  async openPasswordChange(page, { control } = {}) {
+    checkControl(control);
+    const state = await this.classify(page);
+    checkControl(control);
+    if (state !== "signed_in") {
       throw adapterError("flow_changed");
     }
-    await browserSideEffect(control, () => email.fill(account));
-    await clickFirstVisible([
-      page.getByRole("button", { name: /^(continue|next)$/i }),
-      submitControl(page),
-    ], control);
-    await waitForAny(page, [currentPassword(page)], 15_000, control);
-    await clickFirstVisible(forgotPasswordLocators(page), control);
+    await dismissBlockingDialog(page, control);
+
+    const menu = await firstVisible(accountMenuLocators(page));
+    if (!menu) {
+      throw adapterError("flow_changed");
+    }
+    await browserSideEffect(control, () => menu.click({ force: true }));
+
+    const settingsLocators = [
+      page.locator('[data-testid="settings-menu-item"]'),
+      page.getByRole("menuitem", { name: /^(settings|cài đặt)$/i }),
+      page.getByRole("button", { name: /^(settings|cài đặt)$/i }),
+    ];
+    await waitForAny(page, settingsLocators, 5_000, control);
+    await clickFirstVisible(settingsLocators, control);
+
+    const securityTabLocators = [
+      page.locator('[data-testid="security-tab"]'),
+      page.getByRole("tab", { name: /security( and login)?|bảo mật/i }),
+    ];
+    await waitForAny(page, securityTabLocators, 5_000, control);
+    await clickFirstVisible(securityTabLocators, control);
+
+    const passwordSettingLocators = [
+      page.locator('[data-testid="password-setting"]'),
+      page.getByRole("button", { name: /^(password|mật khẩu)\b/i }),
+    ];
+    await waitForAny(page, passwordSettingLocators, 5_000, control);
+    await clickFirstVisible(passwordSettingLocators, control);
+    await waitForAny(
+      page,
+      [
+        currentPassword(page),
+        newPassword(page),
+        oneTimeCode(page),
+        page.locator('iframe[src*="challenges.cloudflare.com"]'),
+      ],
+      15_000,
+      control,
+    );
+    await this.assertAllowedOrigin(page);
   },
 
   async submitPasswordChange(
@@ -233,6 +283,7 @@ export const openaiChatgptAdapter = {
       page.getByRole("button", { name: /^(continue|reset password|update password|save)$/i }),
       submitControl(page),
     ], control, onBeforeSubmit);
+    await waitUntilHidden(page, newPassword(page), 15_000, control);
   },
 
   async logout(page, { control } = {}) {
@@ -253,15 +304,18 @@ export const openaiChatgptAdapter = {
     if (!menu) {
       throw adapterError("flow_changed");
     }
-    await browserSideEffect(control, () => menu.click());
+    await browserSideEffect(control, () => menu.click({ force: true }));
     // Localized menu label (e.g. Vietnamese "Đăng xuất"). Unlike the submit
     // buttons there is no type="submit" fallback for a menu item, so the text
     // matcher must cover the localized rollouts we support.
     const logoutLabel = /^(log ?out|sign ?out|đăng xuất|thoát)$/i;
-    const logout = await firstVisible([
+    const logoutLocators = [
+      page.locator('[data-testid="log-out-menu-item"]'),
       page.getByRole("menuitem", { name: logoutLabel }),
       page.getByRole("button", { name: logoutLabel }),
-    ]);
+    ];
+    await waitForAny(page, logoutLocators, 5_000, control);
+    const logout = await firstVisible(logoutLocators);
     if (!logout) {
       throw adapterError("flow_changed");
     }
@@ -317,6 +371,30 @@ function blockingDialog(page) {
     hasText:
       /payment|billing|renew|subscription|plus|thanh toán|gia hạn|thanh toan/i,
   });
+}
+
+function sessionExpiredDialog(page) {
+  return page.getByRole("dialog").filter({
+    hasText: /session (has )?expired|session is no longer valid|log in again|phiên.*hết hạn/i,
+  });
+}
+
+function loginSurfaceLocators(page) {
+  return [
+    ...authenticationSurfaceLocators(page),
+    page.getByRole("alert"),
+    blockingDialog(page),
+    ...signedInLocators(page),
+  ];
+}
+
+function authenticationSurfaceLocators(page) {
+  return [
+    emailInput(page),
+    currentPassword(page),
+    oneTimeCode(page),
+    page.locator('iframe[src*="challenges.cloudflare.com"]'),
+  ];
 }
 
 // Close a post-login interstitial so subsequent menu/logout actions are not
