@@ -188,6 +188,21 @@ test("waits through a transient state after submitting the login password", asyn
   assert.equal(events.at(-1).type, "verified");
 });
 
+test("waits while the login form remains visible after password submit", async () => {
+  const { events } = await execute([
+    "login_ready",
+    "login_ready",
+    "login_ready",
+    "signed_in",
+    "password_change_ready",
+    "password_changed",
+    "login_ready",
+    "signed_in",
+  ]);
+
+  assert.equal(events.at(-1).type, "verified");
+});
+
 test("verifies recovery credentials without changing the password", async () => {
   const page = createFixturePage([
     "signed_in",
@@ -1482,6 +1497,88 @@ test("OpenAI logout waits for the delayed logout menu item", async () => {
   await openaiChatgptAdapter.logout(page);
 
   assert.deepEqual(events, ["menu", "logout"]);
+});
+
+test("OpenAI logout waits until a signed-out surface replaces the stale shell", async () => {
+  let menuOpen = false;
+  let logoutClicked = false;
+  let waitTicks = 0;
+  const hidden = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return false;
+    },
+    async count() {
+      return 0;
+    },
+  };
+  const profileButton = {
+    ...hidden,
+    async isVisible() {
+      return !logoutClicked || waitTicks < 2;
+    },
+    async click() {
+      menuOpen = true;
+    },
+  };
+  const logoutItem = {
+    ...hidden,
+    async isVisible() {
+      return menuOpen;
+    },
+    async click() {
+      logoutClicked = true;
+    },
+  };
+  const loginButton = {
+    ...hidden,
+    async isVisible() {
+      return logoutClicked && waitTicks >= 2;
+    },
+  };
+  const page = {
+    url: () => "https://chatgpt.com/",
+    context() {
+      return { pages: () => [page] };
+    },
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) {
+        return profileButton;
+      }
+      if (selector.includes('data-testid="log-out-menu-item"')) {
+        return logoutItem;
+      }
+      if (selector.includes('data-testid="login-button"')) {
+        return loginButton;
+      }
+      return hidden;
+    },
+    getByRole(role, options = {}) {
+      if (role === "button" && options.name instanceof RegExp && options.name.test("Open profile menu")) {
+        return profileButton;
+      }
+      if ((role === "menuitem" || role === "button") && options.name instanceof RegExp && options.name.test("Log out")) {
+        return logoutItem;
+      }
+      if ((role === "button" || role === "link") && options.name instanceof RegExp && options.name.test("Log in")) {
+        return loginButton;
+      }
+      return hidden;
+    },
+    async waitForTimeout() {
+      waitTicks += 1;
+    },
+  };
+
+  await openaiChatgptAdapter.logout(page);
+
+  assert.equal(logoutClicked, true);
+  assert.equal(waitTicks, 2);
 });
 
 test("OpenAI adapter reports an explicit rejected TOTP state", async () => {

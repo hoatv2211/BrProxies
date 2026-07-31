@@ -387,6 +387,7 @@ export const openaiChatgptAdapter = {
       throw adapterError("flow_changed");
     }
     await browserSideEffect(control, () => logout.click());
+    await waitForSignedOutSurface(page, 15_000, control);
   },
 
   async verifySignedIn(page, { control } = {}) {
@@ -624,6 +625,43 @@ async function waitForAuthenticationSurface(page, timeout, control) {
       ) {
         checkControl(control);
         return candidate;
+      }
+    }
+    checkControl(control);
+    await page.waitForTimeout(100);
+    checkControl(control);
+  }
+  throw adapterError("flow_changed");
+}
+
+async function waitForSignedOutSurface(page, timeout, control) {
+  if (
+    typeof page.waitForTimeout !== "function"
+    || typeof page.context !== "function"
+  ) {
+    return;
+  }
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    checkControl(control);
+    const pages = page.context().pages();
+    for (const candidate of pages) {
+      let origin;
+      try {
+        origin = new URL(candidate.url()).origin;
+      } catch {
+        continue;
+      }
+      if (
+        ALLOWED_ORIGINS.has(origin)
+        && await anyVisible([
+          ...authenticationSurfaceLocators(candidate),
+          ...signedOutLocators(candidate),
+          sessionExpiredDialog(candidate),
+        ])
+      ) {
+        checkControl(control);
+        return;
       }
     }
     checkControl(control);
