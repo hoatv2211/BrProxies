@@ -1,48 +1,92 @@
+<div align="center">
+
 # BrProxies
 
-[Tieng Viet](README.vn.md) | [Page](https://hoatv2211.github.io/BrProxies/)
+**One desktop app for anti-detect browsing at scale.**
 
-BrProxies is a Windows-first desktop launcher for anti-detect browser profile
-management, fingerprint control, proxy testing, local automation, crawler proxy
-pooling, and experimental Android instance control.
+Isolated browser profiles · real fingerprint spoofing · proxy infrastructure ·
+SMS verification · authorized account operations · local automation & MCP — all
+in a single Windows-first launcher.
+
+[Tiếng Việt](README.vn.md) · [Landing page](https://hoatv2211.github.io/BrProxies/) · [hoatv2211/BrProxies](https://github.com/hoatv2211/BrProxies)
+
+![Browsers workspace](docs/screenshots/Browsers.png)
+
+</div>
+
+---
+
+## Why BrProxies
+
+Running many identities online usually means stitching together a paid
+anti-detect browser, a separate proxy dashboard, an SMS site, and glue scripts.
+BrProxies folds that whole stack into one native app: every profile is a fully
+isolated Chromium instance with its own fingerprint, proxy, cookies, and
+storage — and every part is scriptable through a local API and MCP server.
+
+- **Real isolation, not tab groups.** Each profile has its own `user-data-dir`,
+  persistent cookies, and bound proxy. Nothing bleeds across identities.
+- **Fingerprints that pass the checkers.** 170 device profiles covering WebGL /
+  WebGPU / Canvas / audio / WebRTC / fonts — validated against fingerprint.com,
+  Pixelscan, BrowserScan, and Twilio WebRTC (see [proof below](#validation)).
+- **Proxy infrastructure built in.** Add your own SOCKS5/HTTP proxies with
+  TCP/UDP/geo checks, pull residential traffic from ProxyShard, or farm free
+  public proxies through the Redis-backed ProxyPool.
+- **Verification without a SIM.** Rent a number, pull the one-time SMS code, and
+  clear phone challenges — the 5SIM token never leaves the Rust backend.
+- **Automate everything.** A local HTTP API + MCP server expose profile launch,
+  CDP handoff, and account operations to your scripts and AI agents.
+
+## What's Inside
+
+| Capability | What it gives you |
+| ---------- | ----------------- |
+| **Browser profiles** | Create, clone, pin, tag, organize, and launch isolated Chromium profiles with per-profile proxy + fingerprint. |
+| **Fingerprints** | 170-profile library covering device identity, screen, WebGL/WebGPU, locale, timezone, WebRTC, media devices, geolocation, and noise. |
+| **Proxies** | Add HTTP/HTTPS/SOCKS5, run TCP/UDP/geo checks, bind proxies to profiles, and see live country + latency. |
+| **ProxyPool** | Collect public proxy candidates, live-test them, store working rows in Redis, recheck, and promote good ones into the main list. |
+| **ProxyShard** | Buy and manage residential proxy traffic (standard/premium/unmetered) from inside the app. |
+| **SMS Verify (5SIM)** | Browse 1,271 services with live prices, rent a number, and pull the SMS code — with a live countdown and full order/payment history. |
+| **Account Keeper** | Rotate passwords for authorized accounts one at a time, with persistent profiles, a DPAPI-protected vault, and manual recovery. |
+| **Android Manager** | Run real Android Studio AVD instances on Windows, open the screen with scrcpy, and import running ADB devices. |
+| **Automation API + MCP** | Local HTTP API (`127.0.0.1:40325`, JWT Bearer) and MCP server for scripting, CDP handoff, and AI-agent control. |
+| **SDKs** | Standalone Python and Node SDKs to launch the patched runtime without the desktop app. |
+
+## The Workspace
+
+Ten panels, one window. Every screen below is the live app.
+
+### Browser profiles & fingerprints
+
+| Browsers | Fingerprint library |
+| -------- | ------------------- |
+| ![Browsers workspace](docs/screenshots/Browsers.png) | ![Fingerprint library](docs/screenshots/fingerprints.png) |
+| Isolated Chromium profiles with per-row proxy, status, and one-click launch. | 170 GPU/device fingerprints, grouped by platform, ready to bind. |
+
+### Proxy infrastructure
+
+| Proxies | ProxyPool | ProxyShard |
+| ------- | --------- | ---------- |
+| ![Proxy manager](docs/screenshots/proxies.png) | ![ProxyPool workspace](docs/screenshots/proxypool.png) | ![ProxyShard residential](docs/screenshots/proxyshard.png) |
+| SOCKS5/HTTP with UDP + geo checks. | Redis-backed free-proxy harvesting & rechecks. | Residential traffic, bought & managed in-app. |
+
+### Verification & account operations
+
+| SMS Verify (5SIM) | Account Keeper |
+| ----------------- | -------------- |
+| ![SMS Verify](docs/screenshots/sms-verify.png) | ![Account Keeper](docs/screenshots/account-keeper.png) |
+| 1,271 services with live prices, flags, a live countdown, and cancel/ban. | Authorized password rotation, one profile at a time, secrets kept local. |
+
+### Mobile & system
+
+| Android Manager | Settings |
+| --------------- | -------- |
+| ![Android Manager](docs/screenshots/android.png) | ![Settings](docs/screenshots/settings.png) |
+| Real Android AVDs on Windows, controlled via scrcpy. | Geo checker, screen mode, and the local Automation API + Bearer token. |
 
 The project is developed at [hoatv2211/BrProxies](https://github.com/hoatv2211/BrProxies).
 The browser runtime is downloaded separately; this repo contains the launcher,
 local services, SDKs, MCP server, Chrome extension, and Windows helper scripts.
-
-## Main Screens
-
-| Browsers                                             | Fingerprints                                             |
-| ---------------------------------------------------- | -------------------------------------------------------- |
-| ![Browsers workspace](docs/screenshots/Browsers.png) | ![Fingerprint editor](docs/screenshots/fingerprints.png) |
-
-| Proxies                                        | ProxyPool                                              |
-| ---------------------------------------------- | ------------------------------------------------------ |
-| ![Proxy manager](docs/screenshots/proxies.png) | ![ProxyPool workspace](docs/screenshots/proxypool.png) |
-
-## What It Does
-
-- **Browser profiles** - create, clone, pin, tag, organize, and launch isolated
-  Chromium profiles.
-- **Account Keeper (Windows 10/11 MVP)** - rotate passwords for authorized
-  accounts one at a time with persistent profiles, a DPAPI-protected vault, and
-  manual recovery controls. [English guide](docs/account-keeper.md) |
-  [Tiếng Việt](docs/account-keeper.vn.md).
-- **Fingerprints** - edit device identity, screen, WebGL/WebGPU, locale,
-  timezone, WebRTC, media devices, geolocation, and noise settings.
-- **Proxies** - add HTTP, HTTPS, and SOCKS5 proxies, run TCP/UDP/geo checks,
-  and bind proxies to browser profiles.
-- **ProxyPool** - collect public proxy candidates, test live ones, store working
-  rows in Redis, recheck them, and promote good proxies into the main proxy
-  list.
-- **Android Manager** - run real Android Studio AVD instances on Windows, open
-  the screen with scrcpy, and import currently running ADB devices.
-- **Automation API** - expose a local HTTP API on `127.0.0.1:40325` with Bearer
-  token auth for browser automation and CDP handoff.
-- **MCP server** - bridge BrProxies into AI clients through the local API and
-  CDP.
-- **SDKs** - standalone Python and Node SDKs for launching the patched browser
-  runtime without the desktop app.
 
 ## Quick Start On Windows
 
@@ -232,7 +276,12 @@ smart launch/         Windows build/run helpers
 docs/screenshots/     README and guide screenshots
 ```
 
-## Validation Screenshots
+<a id="validation"></a>
+
+## Validation
+
+Fingerprints are validated against the public detection suites — real results
+from a launched BrProxies profile, not marketing mockups.
 
 | fingerprint.com                                                    | Twilio WebRTC                                                  |
 | ------------------------------------------------------------------ | -------------------------------------------------------------- |
@@ -245,6 +294,12 @@ docs/screenshots/     README and guide screenshots
 | Haru bot detection                                                    | reCAPTCHA score                                                    |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | ![Haru bot detection result](docs/screenshots/07-haru-bot-detect.jpg) | ![reCAPTCHA score result](docs/screenshots/08-recaptcha-score.jpg) |
+
+> **Account Keeper** is a Windows 10/11 workflow for rotating passwords on
+> operator-owned or explicitly authorized accounts only. It runs one account at
+> a time, keeps secrets in a DPAPI-protected vault, and never puts credentials
+> in job views or logs. See the [English guide](docs/account-keeper.md) ·
+> [Tiếng Việt](docs/account-keeper.vn.md).
 
 ## License
 

@@ -266,7 +266,7 @@ type ApiInfo = {
   base_url: string;
   token: string;
 };
-type Section = "browsers" | "accountKeeper" | "android" | "proxies" | "proxypool" | "proxyshard" | "fingerprints" | "androidTemplates" | "settings";
+type Section = "browsers" | "accountKeeper" | "android" | "proxies" | "proxypool" | "proxyshard" | "sms5sim" | "fingerprints" | "androidTemplates" | "settings";
 type AndroidManagerStatus = { running: boolean; pid: number | null; base_url: string; config_path: string };
 type AndroidHostCheck = { name: string; ok: boolean; detail: string };
 type AndroidValidation = { ok: boolean; runtime?: string; checks: AndroidHostCheck[] };
@@ -787,6 +787,7 @@ export default function App() {
             {section === "proxies" && <ProxiesView />}
             {section === "proxypool" && <ProxyPoolView />}
             {section === "proxyshard" && <ProxyShardView />}
+            {section === "sms5sim" && <Sms5simView />}
             {section === "fingerprints" && <FingerprintsView />}
             {section === "androidTemplates" && <AndroidTemplatesView onOpenAndroid={() => setSection("android")} />}
             {section === "settings" && <SettingsView />}
@@ -819,6 +820,7 @@ function Sidebar({
         { id: "proxies", label: "Proxies", svg: <IconWire /> },
         { id: "proxypool", label: "ProxyPool", svg: <IconPool /> },
         { id: "proxyshard", label: "ProxyShard", svg: <IconCart /> },
+        { id: "sms5sim", label: "SMS Verify", svg: <IconSms /> },
       ],
     },
     {
@@ -970,6 +972,19 @@ const IconCart = () => (
           stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
     <circle cx="5" cy="12" r="1" fill="currentColor"/>
     <circle cx="10.5" cy="12" r="1" fill="currentColor"/>
+  </svg>
+);
+const IconSms = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <path d="M2 2.5h10c.55 0 1 .45 1 1V9c0 .55-.45 1-1 1H6l-3 2.5V10H2c-.55 0-1-.45-1-1V3.5c0-.55.45-1 1-1Z"
+          stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+    <path d="M4.3 6.2h5.4M4.3 4.4h5.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+  </svg>
+);
+const IconClock = () => (
+  <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+    <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.3"/>
+    <path d="M7 4v3l2 1.3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 );
 const IconCog = () => (
@@ -2551,6 +2566,813 @@ const randSid = () => {
   for (let i = 0; i < 12; i++) s += a[Math.floor(Math.random() * a.length)];
   return s;
 };
+
+// ---- 5SIM SMS verification ----
+
+type Sms5simOrder = {
+  id: number;
+  phone: string;
+  operator: string;
+  product: string;
+  country: string;
+  expires: string;
+};
+
+type Sms5simPriceRow = {
+  country: string;
+  operator: string;
+  product: string;
+  cost: number;
+  count: number;
+  rate: number;
+};
+
+type Sms5simService = { slug: string; category: string; qty: number; price: number };
+type Sms5simCountry = { slug: string; iso: string; name: string };
+type Sms5simOrderRow = { id: number; phone: string; operator: string; product: string; country: string; price: number; status: string; created_at: string; expires: string; code: string | null };
+type Sms5simPaymentRow = { id: number; type: string; provider: string; amount: number; balance: number; created_at: string };
+
+// country/operator slugs come back lowercase (e.g. "england", "virtual34");
+// prettify for display without touching the value sent to the API.
+const titleCase = (s: string) => s.replace(/(^|[\s_-])(\w)/g, (_, sep, c) => sep + c.toUpperCase());
+
+// Seconds remaining until an RFC3339 timestamp, clamped at 0. Ticks once/sec so
+// the active-order card shows a live "MM:SS" countdown like the 5SIM web app.
+const secondsLeft = (iso: string) => {
+  if (!iso) return 0;
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return 0;
+  return Math.max(0, Math.round((t - Date.now()) / 1000));
+};
+const mmss = (secs: number) => {
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+};
+function useCountdown(iso?: string) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!iso) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [iso]);
+  void now; // re-render trigger only
+  return iso ? secondsLeft(iso) : 0;
+}
+
+// Windows can't render regional-indicator flag emoji, so use flag images keyed
+// by ISO-3166 alpha-2. flagcdn is CORS-open and tiny (20×15 PNG).
+function Flag({ iso, title }: { iso?: string; title?: string }) {
+  if (!iso) return <span className="sms-flag-blank" title={title} />;
+  return (
+    <img
+      className="sms-flag"
+      src={`https://flagcdn.com/20x15/${iso.toLowerCase()}.png`}
+      srcSet={`https://flagcdn.com/40x30/${iso.toLowerCase()}.png 2x`}
+      width={20}
+      height={15}
+      alt=""
+      title={title}
+      loading="lazy"
+      onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
+    />
+  );
+}
+
+type Sms5simProfile = { email: string; balance: number; rating: number; frozen_balance: number };
+
+function Sms5simView() {
+  // null = still probing whether a token is saved on disk.
+  const [hasToken, setHasToken] = useState<boolean | null>(null);
+  const [draft, setDraft] = useState("");
+  const [showToken, setShowToken] = useState(false);
+  const [profile, setProfile] = useState<Sms5simProfile | null>(null);
+  const [status, setStatus] = useState<"idle" | "checking" | "ok" | "err">("idle");
+  const [err, setErr] = useState("");
+
+  const connect = async () => {
+    setStatus("checking");
+    setErr("");
+    try {
+      const p = await invoke<Sms5simProfile>("sms5sim_profile");
+      setProfile(p);
+      setStatus("ok");
+    } catch (e) {
+      setProfile(null);
+      setStatus("err");
+      setErr(String(e));
+    }
+  };
+  const balance = profile?.balance ?? null;
+
+  useEffect(() => {
+    invoke<boolean>("sms5sim_has_token")
+      .then((has) => {
+        setHasToken(has);
+        if (has) connect();
+        else setStatus("idle");
+      })
+      .catch(() => setHasToken(false));
+  }, []);
+
+  const saveToken = async () => {
+    const next = draft.trim();
+    try {
+      await invoke("sms5sim_set_token", { token: next });
+      setHasToken(next !== "");
+      setDraft("");
+      toast.ok(next ? "5SIM token saved" : "5SIM token cleared");
+      if (next) connect();
+      else { setProfile(null); setStatus("idle"); }
+    } catch (e) { toast.err(String(e)); }
+  };
+
+  const connected = status === "ok";
+
+  return (
+    <section className="page ps-page">
+      <Topbar crumbs={["Workspace", "SMS Verify"]} search="" onSearch={() => {}} />
+
+      <div className="metric-strip">
+        <Metric label="5SIM" value={connected ? "Connected" : "—"} accent={connected} pulse={connected} />
+        <Metric label="Balance" value={balance != null ? `$${balance.toFixed(2)}` : "—"} />
+        <Metric label="Frozen" value={profile ? `$${profile.frozen_balance.toFixed(2)}` : "—"} />
+        <Metric label="Rating" value={profile ? profile.rating.toFixed(1) : "—"} />
+        <Metric label="Account" value={profile?.email || "—"} />
+      </div>
+
+      <div className="page-title">
+        <h1>SMS Verify</h1>
+        <div className="page-actions">
+          <button
+            className="proxy-buy-cta"
+            onClick={() => { openUrl("https://5sim.net/").catch(() => {}); }}
+            title="Open 5SIM in your browser"
+          >
+            <IconSms /> Open 5SIM
+          </button>
+        </div>
+      </div>
+
+      {/* Token — kept first so it's always on view. */}
+      <div className="card" style={{ marginBottom: 14 }}>
+        <h3>API token</h3>
+        <p className="muted small">
+          Paste your 5SIM <strong>API token</strong> (Profile → API in the{" "}
+          <a href="#" onClick={(e) => { e.preventDefault(); openUrl("https://5sim.net/settings/security").catch(() => {}); }}>5SIM dashboard</a>).
+          It's stored locally in <code>sms5sim.json</code> and sent as <code>Authorization: Bearer …</code> to 5sim.net — never exposed to the browser or automation worker.
+        </p>
+        <div className="ps-key-row">
+          <div className="copy-field ps-key-input">
+            <input
+              type={showToken ? "text" : "password"}
+              placeholder={hasToken ? "token saved — paste to replace…" : "paste API token…"}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") saveToken(); }}
+            />
+            <button
+              type="button"
+              className="copy-icon"
+              title={showToken ? "Hide" : "Show"}
+              onClick={() => setShowToken((v) => !v)}
+            >
+              {showToken ? "Hide" : "Show"}
+            </button>
+          </div>
+          <button className="btn-primary" onClick={saveToken} disabled={draft.trim() === ""}>Save</button>
+          <button className="btn-ghost" onClick={connect} disabled={!hasToken || status === "checking"}>
+            {status === "checking" ? "Checking…" : "Test"}
+          </button>
+        </div>
+        <div className="ps-key-status">
+          {status === "checking" && <span className="muted small">Validating…</span>}
+          {connected && <span className="status-pill status-active">Connected · {profile?.email} · ${balance?.toFixed(2)}</span>}
+          {status === "err" && <span className="status-pill status-failed" title={err}>Not connected — {err}</span>}
+          {status === "idle" && !hasToken && <span className="muted small">No token set yet.</span>}
+        </div>
+      </div>
+
+      <Sms5simVerifyCard connected={connected} onSpent={connect} />
+      {connected && <Sms5simHistoryCard />}
+    </section>
+  );
+}
+
+/// Order + payment history, tabbed like the 5SIM dashboard.
+const SMS_STATUS_FILTERS = ["ALL", "PENDING", "RECEIVED", "FINISHED", "TIMEOUT", "CANCELED", "BANNED"] as const;
+type SmsStatusFilter = (typeof SMS_STATUS_FILTERS)[number];
+
+function Sms5simHistoryCard() {
+  const [tab, setTab] = useState<"orders" | "payments">("orders");
+  const [orders, setOrders] = useState<Sms5simOrderRow[] | null>(null);
+  const [payments, setPayments] = useState<Sms5simPaymentRow[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [rowBusy, setRowBusy] = useState<number | null>(null);
+  const [statusFilter, setStatusFilter] = useState<SmsStatusFilter>("ALL");
+  const [query, setQuery] = useState("");
+  const [countries, setCountries] = useState<Sms5simCountry[]>([]);
+  const isoBySlug = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of countries) m[c.slug] = c.iso;
+    return m;
+  }, [countries]);
+  useEffect(() => {
+    invoke<Sms5simCountry[]>("sms5sim_countries").then(setCountries).catch(() => {});
+  }, []);
+
+  const load = async (which: "orders" | "payments") => {
+    setBusy(true); setErr("");
+    try {
+      if (which === "orders") setOrders(await invoke<Sms5simOrderRow[]>("sms5sim_orders", { limit: 50 }));
+      else setPayments(await invoke<Sms5simPaymentRow[]>("sms5sim_payments", { limit: 50 }));
+    } catch (e) { setErr(String(e)); }
+    finally { setBusy(false); }
+  };
+  // Load the active tab's data on mount and whenever the tab changes (once).
+  useEffect(() => {
+    if (tab === "orders" && orders === null) load("orders");
+    if (tab === "payments" && payments === null) load("payments");
+  }, [tab]); // eslint-disable-line
+
+  const act = async (id: number, kind: "cancel" | "ban") => {
+    setRowBusy(id);
+    try {
+      await invoke(kind === "cancel" ? "sms5sim_cancel_order" : "sms5sim_ban_order", { id });
+      toast.ok(`Order #${id} ${kind === "cancel" ? "cancelled" : "banned"}`);
+      await load("orders");
+    } catch (e) { toast.err(String(e)); }
+    finally { setRowBusy(null); }
+  };
+
+  const fmtDate = (iso: string) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleString();
+  };
+  const statusClass = (s: string) => {
+    const x = s.toUpperCase();
+    if (x === "FINISHED" || x === "RECEIVED") return "status-active";
+    if (x === "CANCELED" || x === "BANNED" || x === "TIMEOUT") return "status-failed";
+    return "";
+  };
+  // Only PENDING/RECEIVED orders are still live and can be cancelled/banned.
+  const isActive = (s: string) => ["PENDING", "RECEIVED"].includes(s.toUpperCase());
+
+  // Status chip + free-text (number/service) filtering, mirroring the web
+  // dashboard's Pending/Received/… tabs and "Search by number" box.
+  const shownOrders = useMemo(() => {
+    if (!orders) return [];
+    const q = query.trim().toLowerCase();
+    return orders.filter((o) =>
+      (statusFilter === "ALL" || o.status.toUpperCase() === statusFilter) &&
+      (!q || o.phone.toLowerCase().includes(q) || o.product.toLowerCase().includes(q))
+    );
+  }, [orders, statusFilter, query]);
+  const statusCount = (f: SmsStatusFilter) =>
+    !orders ? 0 : f === "ALL" ? orders.length : orders.filter((o) => o.status.toUpperCase() === f).length;
+
+  return (
+    <div className="card" style={{ marginTop: 14 }}>
+      <div className="ps-card-head">
+        <div className="ps-seg-toggle">
+          <button className={`ps-seg ${tab === "orders" ? "active" : ""}`} onClick={() => setTab("orders")}>Order history</button>
+          <button className={`ps-seg ${tab === "payments" ? "active" : ""}`} onClick={() => setTab("payments")}>Payments</button>
+        </div>
+        <button className="btn-ghost" onClick={() => load(tab)} disabled={busy}>
+          {busy ? "Loading…" : "Refresh"}
+        </button>
+      </div>
+
+      {err && <div className="ps-key-status"><span className="status-pill status-failed" title={err}>{err}</span></div>}
+
+      {tab === "orders" && (
+        <>
+          <div className="sms-hist-toolbar">
+            <input
+              className="sms-country-filter"
+              placeholder="Search by number or service…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+          <div className="sms-status-chips">
+            {SMS_STATUS_FILTERS.map((f) => (
+              <button
+                key={f}
+                className={`sms-chip ${statusFilter === f ? "active" : ""} ${f !== "ALL" ? `chip-${f.toLowerCase()}` : ""}`}
+                onClick={() => setStatusFilter(f)}
+              >
+                {f === "ALL" ? "All" : titleCase(f.toLowerCase())}
+                <span className="sms-chip-count">{statusCount(f)}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="sms-table-wrap">
+        {tab === "orders" ? (
+          <table className="sms-table">
+            <thead>
+              <tr>
+                <th>Date</th><th>Service</th><th>Country</th><th>Number</th><th>Operator</th>
+                <th className="num">Price</th><th>Code</th><th>Status</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {shownOrders.length === 0 && !busy && (
+                <tr><td colSpan={9} className="muted small" style={{ textAlign: "center", padding: 18 }}>
+                  {(orders?.length ?? 0) === 0 ? "No orders yet." : "No orders match the filter."}
+                </td></tr>
+              )}
+              {shownOrders.map((o) => (
+                <tr key={o.id}>
+                  <td className="muted small">{fmtDate(o.created_at)}</td>
+                  <td>{titleCase(o.product)}</td>
+                  <td>
+                    <span className="sms-country-cell">
+                      <Flag iso={isoBySlug[o.country]} title={titleCase(o.country)} />
+                      {titleCase(o.country)}
+                    </span>
+                  </td>
+                  <td className="mono">{o.phone}</td>
+                  <td className="mono muted">{o.operator}</td>
+                  <td className="num sms-price">${o.price}</td>
+                  <td className="mono">{o.code ?? "—"}</td>
+                  <td><span className={`status-pill ${statusClass(o.status)}`}>{o.status}</span></td>
+                  <td className="num">
+                    {isActive(o.status) && (
+                      <span className="sms-row-actions">
+                        <button
+                          className="sms-buy-btn sms-cancel-btn"
+                          disabled={rowBusy === o.id}
+                          title="Cancel (refund if no SMS yet)"
+                          onClick={() => act(o.id, "cancel")}
+                        >
+                          {rowBusy === o.id ? "…" : "Cancel"}
+                        </button>
+                        <button
+                          className="sms-buy-btn sms-ban-btn"
+                          disabled={rowBusy === o.id}
+                          title="Ban this number (report as bad)"
+                          onClick={() => act(o.id, "ban")}
+                        >
+                          Ban
+                        </button>
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <table className="sms-table">
+            <thead>
+              <tr><th>Date</th><th>Type</th><th>Provider</th><th className="num">Amount</th><th className="num">Balance after</th></tr>
+            </thead>
+            <tbody>
+              {(payments?.length ?? 0) === 0 && !busy && (
+                <tr><td colSpan={5} className="muted small" style={{ textAlign: "center", padding: 18 }}>No payments yet.</td></tr>
+              )}
+              {payments?.map((p) => (
+                <tr key={p.id}>
+                  <td className="muted small">{fmtDate(p.created_at)}</td>
+                  <td>{p.type === "buy" ? "Purchase" : titleCase(p.type)}</td>
+                  <td className="muted">{p.provider}</td>
+                  <td className={`num ${p.amount < 0 ? "sms-amt-neg" : "sms-amt-pos"}`}>
+                    {p.amount < 0 ? "−" : "+"}${Math.abs(p.amount).toFixed(4)}
+                  </td>
+                  <td className="num">${p.balance.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/// The 5SIM-web-style active order card: service + country header, a live
+/// countdown pill, the big copyable number, the received code, and inline
+/// Wait / Finish / Cancel / Ban actions. Kept separate so the countdown timer
+/// (a per-second interval) only re-renders this card, not the price table.
+function Sms5simActiveCard({
+  order, iso, code, phase, busy, err,
+  onWait, onFinish, onCancel, onBan, onDone,
+}: {
+  order: Sms5simOrder;
+  iso?: string;
+  code: string;
+  phase: "idle" | "waiting" | "received" | "done";
+  busy: boolean;
+  err: string;
+  onWait: () => void;
+  onFinish: () => void;
+  onCancel: () => void;
+  onBan: () => void;
+  onDone: () => void;
+}) {
+  const left = useCountdown(order.expires);
+  const expired = order.expires !== "" && left <= 0;
+  const low = left > 0 && left <= 30;
+
+  return (
+    <div className="card sms-active sms-order-card" style={{ marginBottom: 14 }}>
+      <div className="sms-oc-head">
+        <div className="sms-oc-ident">
+          <Flag iso={iso} title={titleCase(order.country)} />
+          <div className="sms-oc-title">
+            <strong>{titleCase(order.product)}</strong>
+            <span className="muted small">
+              #{order.id} · {titleCase(order.country)}{order.operator ? ` · ${order.operator}` : ""}
+            </span>
+          </div>
+        </div>
+        {order.expires !== "" && (
+          <span className={`sms-timer ${expired ? "expired" : low ? "low" : ""}`} title="Time left before the number expires">
+            <IconClock /> {expired ? "expired" : mmss(left)}
+          </span>
+        )}
+      </div>
+
+      <div className="sms-oc-number">
+        <button className="sms-bignum" title="Copy number"
+          onClick={() => { clip.write(order.phone); toast.ok("Copied number"); }}>
+          <span className="mono">{order.phone}</span>
+          <Icon.Clone />
+        </button>
+        <div className="sms-oc-code">
+          <span className="muted small">Code from SMS</span>
+          {code ? (
+            <button className="sms-code" title="Copy code"
+              onClick={() => { clip.write(code); toast.ok("Copied code"); }}>
+              <span className="mono">{code}</span>
+              <Icon.Clone />
+            </button>
+          ) : (
+            <span className="sms-code sms-code-empty mono">{phase === "waiting" ? "waiting…" : "—"}</span>
+          )}
+        </div>
+      </div>
+
+      <div className="sms-actions">
+        {phase !== "done" && !code && (
+          <button className="btn-primary" onClick={onWait} disabled={busy}>
+            {phase === "waiting" ? "Waiting for SMS…" : "Wait for code"}
+          </button>
+        )}
+        {code && phase !== "done" && (
+          <button className="btn-primary" onClick={onFinish} disabled={busy}>Finish (bill order)</button>
+        )}
+        {phase !== "done" && (
+          <button className="sms-buy-btn sms-cancel-btn" onClick={onCancel} disabled={busy} title="Only works before an SMS arrives">Cancel</button>
+        )}
+        {phase !== "done" && (
+          <button className="sms-buy-btn sms-ban-btn" onClick={onBan} disabled={busy} title="Report the number as bad">Ban</button>
+        )}
+        {phase === "done" && (
+          <button className="btn-primary" onClick={onDone}>Done</button>
+        )}
+      </div>
+      {phase === "waiting" && (
+        <p className="muted small" style={{ marginTop: 8 }}>
+          Polling 5SIM every 5s (up to 3 min). Trigger the SMS on the target site now.
+        </p>
+      )}
+      {err && <div className="ps-key-status"><span className="status-pill status-failed" title={err}>{err}</span></div>}
+    </div>
+  );
+}
+
+/// Full rent-a-number → wait-for-code → finish/cancel flow. Each step maps to
+/// one Tauri command; the order id + token stay in Rust.
+type SmsSortKey = "country" | "operator" | "rate" | "count" | "cost";
+
+function Sms5simVerifyCard({ connected, onSpent }: { connected: boolean; onSpent: () => void }) {
+  // ---- catalogues (guest, loaded once) ----
+  const [services, setServices] = useState<Sms5simService[]>([]);
+  const [countries, setCountries] = useState<Sms5simCountry[]>([]);
+  const isoBySlug = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of countries) m[c.slug] = c.iso;
+    return m;
+  }, [countries]);
+  useEffect(() => {
+    invoke<Sms5simService[]>("sms5sim_services").then(setServices).catch(() => {});
+    invoke<Sms5simCountry[]>("sms5sim_countries").then(setCountries).catch(() => {});
+  }, []);
+
+  // ---- price browser ----
+  const [product, setProduct] = useState("telegram");
+  const [rows, setRows] = useState<Sms5simPriceRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadErr, setLoadErr] = useState("");
+  const [inStockOnly, setInStockOnly] = useState(true);
+  const [countryFilter, setCountryFilter] = useState("");
+  const [sortKey, setSortKey] = useState<SmsSortKey>("count");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
+
+  // ---- active order flow ----
+  const [order, setOrder] = useState<Sms5simOrder | null>(null);
+  const [buyingKey, setBuyingKey] = useState<string | null>(null);
+  const [phase, setPhase] = useState<"idle" | "waiting" | "received" | "done">("idle");
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const loadPrices = async (slug?: string) => {
+    const p = (slug ?? product).trim();
+    if (!p) return;
+    setLoading(true);
+    setLoadErr("");
+    try {
+      const r = await invoke<Sms5simPriceRow[]>("sms5sim_prices", { product: p, country: null });
+      setRows(r);
+    } catch (e) { setLoadErr(String(e)); setRows([]); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { loadPrices(); /* initial */ }, []); // eslint-disable-line
+
+  const pickService = (slug: string) => {
+    setProduct(slug);
+    setPickerOpen(false);
+    setPickerQuery("");
+    loadPrices(slug);
+  };
+  const pickerResults = useMemo(() => {
+    const q = pickerQuery.trim().toLowerCase();
+    const base = q ? services.filter((s) => s.slug.toLowerCase().includes(q)) : services;
+    return base.slice(0, 200);
+  }, [services, pickerQuery]);
+
+  const toggleSort = (k: SmsSortKey) => {
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(k); setSortDir(k === "country" || k === "operator" ? "asc" : "desc"); }
+  };
+
+  const view = useMemo(() => {
+    const cf = countryFilter.trim().toLowerCase();
+    let out = rows.filter((r) =>
+      (!inStockOnly || r.count > 0) &&
+      (!cf || r.country.toLowerCase().includes(cf))
+    );
+    out = out.slice().sort((a, b) => {
+      const dir = sortDir === "asc" ? 1 : -1;
+      const av = a[sortKey], bv = b[sortKey];
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+    return out;
+  }, [rows, inStockOnly, countryFilter, sortKey, sortDir]);
+
+  const buy = async (r: Sms5simPriceRow) => {
+    if (!connected) { toast.err("Add a valid 5SIM token first"); return; }
+    const key = `${r.country}/${r.operator}/${r.product}`;
+    setErr("");
+    setBuyingKey(key);
+    const attempt = (operator: string) =>
+      invoke<Sms5simOrder>("sms5sim_buy_number", { country: r.country, operator, product: r.product });
+    try {
+      let o: Sms5simOrder;
+      try {
+        o = await attempt(r.operator);
+      } catch (e) {
+        // The Pcs column is cached; a specific operator can be dry at buy time.
+        // 5SIM's own remedy is to let it pick any operator in that country.
+        if (/no free phones/i.test(String(e)) && r.operator !== "any") {
+          toast.info(`${r.operator} empty — retrying with any operator…`);
+          o = await attempt("any");
+        } else {
+          throw e;
+        }
+      }
+      setOrder(o);
+      setCode("");
+      setPhase("idle");
+      onSpent();
+      toast.ok(`Rented ${o.phone}`);
+    } catch (e) {
+      const msg = /no free phones/i.test(String(e))
+        ? `No numbers free for ${titleCase(r.country)} right now — try another country.`
+        : String(e);
+      setErr(msg); toast.err(msg);
+    }
+    finally { setBuyingKey(null); }
+  };
+
+  const waitForCode = async () => {
+    if (!order) return;
+    setErr(""); setBusy(true); setPhase("waiting");
+    try {
+      const c = await invoke<string>("sms5sim_poll_code", { id: order.id, timeoutSecs: 180, intervalSecs: 5 });
+      setCode(c); setPhase("received");
+      toast.ok(`Code received: ${c}`);
+    } catch (e) { setErr(String(e)); setPhase("idle"); toast.err(String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const finish = async () => {
+    if (!order) return;
+    setBusy(true);
+    try {
+      await invoke("sms5sim_finish_order", { id: order.id });
+      setPhase("done");
+      toast.ok(`Order #${order.id} finished`);
+    } catch (e) { toast.err(String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const cancel = async () => {
+    if (!order) return;
+    setBusy(true);
+    try {
+      await invoke("sms5sim_cancel_order", { id: order.id });
+      toast.ok(`Order #${order.id} cancelled`);
+      resetOrder(); onSpent();
+    } catch (e) { toast.err(String(e)); }
+    finally { setBusy(false); }
+  };
+
+  // Ban the active number (report as bad). Unlike cancel it works after an SMS,
+  // so it's offered alongside cancel like the 5SIM web active-order card.
+  const banActive = async () => {
+    if (!order) return;
+    setBusy(true);
+    try {
+      await invoke("sms5sim_ban_order", { id: order.id });
+      toast.ok(`Order #${order.id} banned`);
+      resetOrder(); onSpent();
+    } catch (e) { toast.err(String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const resetOrder = () => { setOrder(null); setCode(""); setErr(""); setPhase("idle"); };
+
+  const Arrow = ({ k }: { k: SmsSortKey }) => (
+    <span className="sms-sort-arrow">{sortKey === k ? (sortDir === "asc" ? "▲" : "▼") : "↕"}</span>
+  );
+
+  return (
+    <>
+      {/* Active order takes over the top when one exists — styled like the
+          5SIM web "active orders" card: service+flag header, live countdown,
+          big copyable number, code field, and inline actions. */}
+      {order && (
+        <Sms5simActiveCard
+          order={order}
+          iso={isoBySlug[order.country]}
+          code={code}
+          phase={phase}
+          busy={busy}
+          err={err}
+          onWait={waitForCode}
+          onFinish={finish}
+          onCancel={cancel}
+          onBan={banActive}
+          onDone={resetOrder}
+        />
+      )}
+
+      {/* Price browser: pick a service, see country/operator prices, buy a row. */}
+      <div className="card">
+        <div className="ps-card-head">
+          <h3>Prices</h3>
+          <div className="sms-toolbar">
+            <input
+              className="sms-country-filter"
+              placeholder="Filter country…"
+              value={countryFilter}
+              onChange={(e) => setCountryFilter(e.target.value)}
+            />
+            <button
+              className={`ps-seg ${inStockOnly ? "active" : ""}`}
+              onClick={() => setInStockOnly((v) => !v)}
+              title="Only rows with available numbers"
+            >
+              In stock
+            </button>
+          </div>
+        </div>
+
+        <div className="sms-grid" style={{ gridTemplateColumns: "2fr auto" }}>
+          <label className="sms-field">
+            <span>Service {services.length > 0 && <em className="muted">({services.length})</em>}</span>
+            <div className="sms-picker">
+              <button
+                type="button"
+                className="sms-picker-btn"
+                onClick={() => { setPickerOpen((v) => !v); setPickerQuery(""); }}
+              >
+                <span className="mono">{product || "select service…"}</span>
+                <span className="sms-picker-caret">▾</span>
+              </button>
+              {pickerOpen && (
+                <>
+                  <div className="sms-picker-backdrop" onClick={() => setPickerOpen(false)} />
+                  <div className="sms-picker-pop">
+                    <input
+                      autoFocus
+                      className="sms-picker-search"
+                      placeholder={services.length ? "Search services…" : "Loading services…"}
+                      value={pickerQuery}
+                      onChange={(e) => setPickerQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && pickerResults[0]) pickService(pickerResults[0].slug);
+                        if (e.key === "Escape") setPickerOpen(false);
+                      }}
+                    />
+                    <div className="sms-picker-list">
+                      {pickerResults.length === 0 && (
+                        <div className="muted small" style={{ padding: 10 }}>No match.</div>
+                      )}
+                      {pickerResults.map((s) => (
+                        <button
+                          key={s.slug}
+                          className={`sms-picker-item ${s.slug === product ? "active" : ""}`}
+                          onClick={() => pickService(s.slug)}
+                        >
+                          <span className="mono sms-picker-slug">{s.slug}</span>
+                          <span className="sms-picker-qty muted">{s.qty.toLocaleString()}</span>
+                          <span className="sms-picker-price">${s.price}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </label>
+          <label className="sms-field" style={{ justifyContent: "flex-end" }}>
+            <span>&nbsp;</span>
+            <button className="btn-primary" onClick={() => loadPrices()} disabled={loading || !product.trim()}>
+              {loading ? "Loading…" : "Reload"}
+            </button>
+          </label>
+        </div>
+
+        {loadErr && <div className="ps-key-status"><span className="status-pill status-failed" title={loadErr}>{loadErr}</span></div>}
+
+        <div className="sms-table-wrap">
+          <table className="sms-table">
+            <thead>
+              <tr>
+                <th className="sortable" onClick={() => toggleSort("country")}>Country <Arrow k="country" /></th>
+                <th className="sortable" onClick={() => toggleSort("operator")}>Operator <Arrow k="operator" /></th>
+                <th className="sortable num" onClick={() => toggleSort("rate")}>Rate <Arrow k="rate" /></th>
+                <th className="sortable num" onClick={() => toggleSort("count")}>Pcs <Arrow k="count" /></th>
+                <th className="sortable num" onClick={() => toggleSort("cost")}>Price <Arrow k="cost" /></th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {view.length === 0 && !loading && (
+                <tr><td colSpan={6} className="muted small" style={{ textAlign: "center", padding: 18 }}>
+                  {rows.length === 0 ? "Load a service to see prices." : "No rows match the filters."}
+                </td></tr>
+              )}
+              {view.map((r) => {
+                const key = `${r.country}/${r.operator}/${r.product}`;
+                return (
+                  <tr key={key}>
+                    <td>
+                      <span className="sms-country-cell">
+                        <Flag iso={isoBySlug[r.country]} title={titleCase(r.country)} />
+                        {titleCase(r.country)}
+                      </span>
+                    </td>
+                    <td className="mono">{r.operator}</td>
+                    <td className="num">{r.rate > 0 ? `${r.rate.toFixed(1)}%` : "—"}</td>
+                    <td className="num">{r.count.toLocaleString()}</td>
+                    <td className="num sms-price">${r.cost}</td>
+                    <td className="num">
+                      <button
+                        className="sms-buy-btn"
+                        disabled={!connected || r.count === 0 || buyingKey === key || !!order}
+                        title={!connected ? "Add a token first" : r.count === 0 ? "Out of stock" : order ? "Finish the active order first" : "Rent this number"}
+                        onClick={() => buy(r)}
+                      >
+                        {buyingKey === key ? "…" : "Buy"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="muted small" style={{ marginTop: 8 }}>
+          {view.length} row{view.length === 1 ? "" : "s"} · prices are guest data from 5SIM (no token needed to browse).
+          {!connected && " Add a token above to buy."}
+        </p>
+      </div>
+    </>
+  );
+}
 
 function ProxyShardView() {
   // null = still loading the saved key from disk.
