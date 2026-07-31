@@ -63,6 +63,7 @@
   box-shadow: 0 14px 36px #00000026;
 }
 
+.account-keeper .account-keeper__critical-actions { display: flex; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
 .account-keeper .account-keeper__critical strong { color: #fecdd3; font-size: 14px; }
 .account-keeper .account-keeper__critical p { margin: 5px 0 0; color: #fda4af; font-size: 12px; line-height: 1.45; }
 

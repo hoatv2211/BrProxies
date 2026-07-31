@@ -751,6 +751,28 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     );
   };
 
+  const resolveCritical = async (job: JobView, account: AccountView | null) => {
+    if (!account) return;
+    const approved = await confirm({
+      title: "Verify & resolve critical account",
+      message:
+        `Re-verify the attempted password for ${account.masked_account} against the live login? ` +
+        "If it signs in, the new password is accepted and the profile is labeled.",
+      buttons: [
+        { label: "Cancel", value: false },
+        { label: "Verify & Resolve", value: true, primary: true },
+      ],
+    });
+    if (approved !== true) return;
+    await runAction(
+      `resolve-${account.account_key}`,
+      "account_keeper_resolve_critical",
+      { request: { batchId: job.batch_id, accountKey: account.account_key } },
+      "Critical account resolved. New password accepted.",
+      job.batch_id,
+    );
+  };
+
   const abandonJob = async (job: JobView) => {
     const approved = await confirm({
       title: "Abandon resumable job",
@@ -907,16 +929,29 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
               Job {shortJobId(blockingJob.batch_id)} is blocked. Verify the affected account manually before processing can continue.
             </p>
           </div>
-          <button
-            type="button"
-            className="btn-ghost danger"
-            onClick={() => void openProfile(
-              blockingJob.accounts.find((account) => account.stage === "critical") ?? null,
-            )}
-            disabled={!blockingJob.accounts.some((account) => account.stage === "critical" && account.profile_id)}
-          >
-            Open Profile
-          </button>
+          <div className="account-keeper__critical-actions">
+            <button
+              type="button"
+              className="btn-ghost danger"
+              onClick={() => void openProfile(
+                blockingJob.accounts.find((account) => account.stage === "critical") ?? null,
+              )}
+              disabled={!blockingJob.accounts.some((account) => account.stage === "critical" && account.profile_id)}
+            >
+              Open Profile
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => void resolveCritical(
+                blockingJob,
+                blockingJob.accounts.find((account) => account.stage === "critical") ?? null,
+              )}
+              disabled={busyAction !== null || !blockingJob.accounts.some((account) => account.stage === "critical" && account.profile_id)}
+            >
+              Verify &amp; Resolve
+            </button>
+          </div>
         </div>
       )}
 

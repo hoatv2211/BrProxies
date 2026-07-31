@@ -780,6 +780,12 @@ pub trait ProfileRuntime: Send + Sync {
     fn create_profile(&self, fingerprint_id: &str, name: &str) -> Result<String>;
     fn set_folder(&self, profile_id: &str, folder: &str) -> Result<()>;
 
+    /// Label a profile after a verified rotation (visible name + Notes line).
+    /// Default no-op so test doubles need not implement it.
+    fn set_label(&self, _profile_id: &str, _name: &str, _notes: &str) -> Result<()> {
+        Ok(())
+    }
+
     fn is_running(&self, _profile_id: &str) -> bool {
         false
     }
@@ -879,6 +885,10 @@ impl ProfileRuntime for TauriProfileRuntime {
 
     fn set_folder(&self, profile_id: &str, folder: &str) -> Result<()> {
         crate::profile::set_folder(profile_id, folder)
+    }
+
+    fn set_label(&self, profile_id: &str, name: &str, notes: &str) -> Result<()> {
+        crate::profile::set_account_keeper_label(profile_id, name, notes)
     }
 
     fn is_running(&self, profile_id: &str) -> bool {
@@ -998,6 +1008,10 @@ impl ProfileRuntime for HeadlessProfileRuntime {
 
     fn set_folder(&self, profile_id: &str, folder: &str) -> Result<()> {
         crate::profile::set_folder(profile_id, folder)
+    }
+
+    fn set_label(&self, profile_id: &str, name: &str, notes: &str) -> Result<()> {
+        crate::profile::set_account_keeper_label(profile_id, name, notes)
     }
 
     fn is_running(&self, profile_id: &str) -> bool {
@@ -1927,6 +1941,94 @@ fn resume_state_after_restart(
     }
 }
 
+/// Resolve a Critical account after the operator has confirmed (or completed)
+/// the password change manually. Re-verifies the attempted (`pending_password`)
+/// against the live login: on success it promotes the pending password to the
+/// current one, flips the account to `success`, labels the browser profile, and
+/// rewrites the output. The credentials never leave the DPAPI vault — the UI
+/// passes only batch_id + account_key.
+pub async fn resolve_critical(request: ManualControlRequest) -> Result<JobView> {
+    ensure_account_keeper_supported()?;
+    {
+        let active = active_batch().lock().await;
+        if active.batch_id.is_some() {
+            bail!("finish the active Account Keeper batch before resolving a critical account");
+        }
+    }
+
+    let mut vault = crate::account_keeper_store::load_vault()?;
+    let vault_index = vault
+        .accounts
+        .iter()
+        .position(|account| account.account_key == request.account_key)
+        .ok_or_else(|| anyhow::anyhow!("Account Keeper critical account is unavailable"))?;
+    if vault.accounts[vault_index].password_state != PasswordState::Unknown {
+        bail!("Account Keeper account does not need critical recovery");
+    }
+    let pending_password = vault.accounts[vault_index]
+        .pending_password
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("Account Keeper attempted password is unavailable"))?;
+    let account = vault.accounts[vault_index].account.clone();
+    let totp_secret = vault.accounts[vault_index]
+        .totp_secret
+        .clone()
+        .unwrap_or_default();
+
+    let mut checkpoint = crate::account_keeper_store::load_job(&request.batch_id)?;
+    let checkpoint_index = checkpoint
+        .accounts
+        .iter()
+        .position(|candidate| candidate.account_key == request.account_key)
+        .ok_or_else(|| anyhow::anyhow!("Account Keeper critical checkpoint is unavailable"))?;
+    if checkpoint.accounts[checkpoint_index].state != "critical" {
+        bail!("Account Keeper account is not critical");
+    }
+
+    let runtime = HeadlessProfileRuntime;
+    let profile_id = ensure_recovery_profile(
+        &runtime,
+        &request.account_key,
+        &mut vault,
+        vault_index,
+        crate::account_keeper_store::save_vault,
+    )?;
+    let imported = ImportedAccount {
+        line: 0,
+        account: account.clone(),
+        normalized_account: normalize_account(&account),
+        current_password: pending_password.clone(),
+        totp_secret,
+    };
+    let now = verify_headless_password(&imported, &profile_id, &pending_password, 300).await?;
+
+    let account_entry = &mut vault.accounts[vault_index];
+    account_entry.current_password = pending_password;
+    account_entry.pending_password = None;
+    account_entry.password_state = PasswordState::Changed;
+    account_entry.last_verified_at = Some(now.clone());
+    account_entry.last_status = Some("success".to_string());
+
+    let checkpoint_account = &mut checkpoint.accounts[checkpoint_index];
+    checkpoint_account.state = "success".to_string();
+    checkpoint_account.error = None;
+    checkpoint_account.updated_at = now.clone();
+    checkpoint.status = final_job_status(&checkpoint).to_string();
+
+    label_verified_profile(&runtime, &vault.accounts[vault_index]);
+    persist_snapshot(&mut checkpoint, &vault, &SystemClock, &NullEventSink)?;
+    Ok(job_view_from_checkpoint(&checkpoint, &vault))
+}
+
+#[tauri::command]
+pub async fn account_keeper_resolve_critical(
+    request: ManualControlRequest,
+) -> std::result::Result<JobView, String> {
+    resolve_critical(request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub async fn account_keeper_abandon_job(
     request: BatchRequest,
@@ -2182,6 +2284,7 @@ fn build_output(checkpoint: &JobCheckpoint, vault: &VaultFile, now: &str) -> Res
         accounts.push(OutputAccount {
             account: vault_account.account.clone(),
             password: vault_account.current_password.clone(),
+            new_password: vault_account.pending_password.clone(),
             password_state: vault_account.password_state,
             totp_secret: vault_account.totp_secret.clone(),
             profile_id: vault_account.profile_id.clone(),
@@ -2196,6 +2299,26 @@ fn build_output(checkpoint: &JobCheckpoint, vault: &VaultFile, now: &str) -> Res
         updated_at: now.to_string(),
         accounts,
     })
+}
+
+/// Label a profile for a verified account: visible name = the account, Notes =
+/// `account|password|totp_secret`. Best-effort — a labeling failure must not
+/// undo a successful rotation, so errors are swallowed. SECURITY: writes the
+/// plaintext credential line into the unencrypted profile JSON by operator
+/// request; only call after the rotation is verified and persisted.
+fn label_verified_profile(runtime: &dyn ProfileRuntime, vault_account: &VaultAccount) {
+    let notes = account_keeper_profile_notes(vault_account);
+    let _ = runtime.set_label(&vault_account.profile_id, &vault_account.account, &notes);
+}
+
+fn account_keeper_profile_notes(vault_account: &VaultAccount) -> String {
+    match vault_account.totp_secret.as_deref() {
+        Some(secret) if !secret.is_empty() => format!(
+            "{}|{}|{}",
+            vault_account.account, vault_account.current_password, secret
+        ),
+        _ => format!("{}|{}", vault_account.account, vault_account.current_password),
+    }
 }
 
 struct Coordinator {
@@ -2624,6 +2747,10 @@ impl Coordinator {
                                     WorkerEvent::Verified,
                                     &self.clock.now(),
                                 )?;
+                                label_verified_profile(
+                                    self.profiles.as_ref(),
+                                    &vault.accounts[vault_index],
+                                );
                                 checkpoint.status = "running".to_string();
                                 record_account_state(
                                     checkpoint,

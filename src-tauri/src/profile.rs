@@ -294,6 +294,24 @@ pub fn set_pin(id: &str, pinned: bool) -> Result<()> {
     Ok(())
 }
 
+/// Label an Account Keeper profile after a verified rotation: set the visible
+/// name to the account (e.g. the gmail) and write the credential line into
+/// Notes so operators can identify and reuse the profile from the browser list.
+///
+/// SECURITY: `notes` here contains the plaintext account/password/TOTP line by
+/// operator request. The profile JSON is NOT encrypted, so this deliberately
+/// widens exposure beyond the DPAPI vault; callers must only pass values the
+/// operator has already acknowledged as plaintext output.
+pub fn set_account_keeper_label(id: &str, name: &str, notes: &str) -> Result<()> {
+    let mut p = load_raw(id)?;
+    p.config
+        .insert("name".into(), serde_json::Value::String(name.to_string()));
+    p.config
+        .insert("notes".into(), serde_json::Value::String(notes.to_string()));
+    save_raw(&mut p)?;
+    Ok(())
+}
+
 /// Assign folder tag (empty string clears).
 pub fn set_folder(id: &str, folder: &str) -> Result<()> {
     let mut p = load_raw(id)?;
