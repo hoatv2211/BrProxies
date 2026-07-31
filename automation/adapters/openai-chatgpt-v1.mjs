@@ -18,6 +18,22 @@ export const openaiChatgptAdapter = {
       page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" }),
     );
     await this.assertAllowedOrigin(page);
+    // ChatGPT auth is a client-rendered SPA: domcontentloaded fires before the
+    // React login form mounts. Without waiting, the driver's first classify()
+    // sees an empty page and throws flow_changed. Wait until an interactive
+    // auth surface actually appears (or a challenge/error we still classify).
+    await waitForAny(
+      page,
+      [
+        emailInput(page),
+        currentPassword(page),
+        oneTimeCode(page),
+        page.locator('iframe[src*="challenges.cloudflare.com"]'),
+        page.getByRole("alert"),
+      ],
+      15_000,
+      control,
+    );
   },
 
   async classify(page) {
@@ -70,7 +86,12 @@ export const openaiChatgptAdapter = {
       return "password_changed";
     }
     if (await anyVisible([
-      page.getByRole("alert").filter({ hasText: /incorrect|invalid|wrong password/i }),
+      page
+        .getByRole("alert")
+        .filter({
+          hasText:
+            /(incorrect|invalid|wrong|does ?n['’]?t match).*(password|email|account|credential)|(password|email|account|credential).*(incorrect|invalid|wrong|does ?n['’]?t match)|wrong password|account.*not.*found|no account/i,
+        }),
     ])) {
       return "invalid_credentials";
     }
@@ -90,15 +111,16 @@ export const openaiChatgptAdapter = {
     }
 
     const current = new URL(url);
-    const signedInSignal = await anyVisible([
-      page.getByRole("button", { name: /profile|account|user menu/i }),
-      page.locator('button[data-testid*="profile"], button[aria-label*="profile" i]'),
-    ]);
-    if (
+    const onAppSurface =
       current.origin === "https://chatgpt.com" &&
-      !current.pathname.startsWith("/auth") &&
-      signedInSignal
-    ) {
+      !current.pathname.startsWith("/auth");
+    // A post-login billing/renewal interstitial covers the shell but only shows
+    // once signed in. Treat it as signed_in so the flow can dismiss it and
+    // continue to the password change instead of aborting as flow_changed.
+    if (onAppSurface && (await visible(blockingDialog(page)))) {
+      return "signed_in";
+    }
+    if (onAppSurface && (await anyVisible(signedInLocators(page)))) {
       return "signed_in";
     }
     return "flow_changed";
@@ -188,11 +210,7 @@ export const openaiChatgptAdapter = {
       submitControl(page),
     ], control);
     await waitForAny(page, [currentPassword(page)], 15_000, control);
-    await clickFirstVisible([
-      page.getByRole("link", { name: /^forgot password\??$/i }),
-      page.getByRole("button", { name: /^forgot password\??$/i }),
-      forgotPasswordControl(page),
-    ], control);
+    await clickFirstVisible(forgotPasswordLocators(page), control);
   },
 
   async submitPasswordChange(
@@ -228,16 +246,21 @@ export const openaiChatgptAdapter = {
     ) {
       return;
     }
-    const menu = await firstVisible([
-      page.getByRole("button", { name: /profile|account|user menu/i }),
-    ]);
+    // A post-login billing/renewal interstitial intercepts clicks on the
+    // account menu. Dismiss it first so the menu is reachable.
+    await dismissBlockingDialog(page, control);
+    const menu = await firstVisible(accountMenuLocators(page));
     if (!menu) {
       throw adapterError("flow_changed");
     }
     await browserSideEffect(control, () => menu.click());
+    // Localized menu label (e.g. Vietnamese "Đăng xuất"). Unlike the submit
+    // buttons there is no type="submit" fallback for a menu item, so the text
+    // matcher must cover the localized rollouts we support.
+    const logoutLabel = /^(log ?out|sign ?out|đăng xuất|thoát)$/i;
     const logout = await firstVisible([
-      page.getByRole("menuitem", { name: /^(log out|sign out)$/i }),
-      page.getByRole("button", { name: /^(log out|sign out)$/i }),
+      page.getByRole("menuitem", { name: logoutLabel }),
+      page.getByRole("button", { name: logoutLabel }),
     ]);
     if (!logout) {
       throw adapterError("flow_changed");
@@ -246,12 +269,87 @@ export const openaiChatgptAdapter = {
   },
 
   async verifySignedIn(page, { control } = {}) {
-    checkControl(control);
-    const state = await this.classify(page);
-    checkControl(control);
-    return state === "signed_in";
+    // After a fresh re-login the SPA takes a beat to mount its authenticated
+    // shell. A single classify() can race that mount and wrongly report failure
+    // even though the new password worked — poll until we see a signed-in
+    // surface or a terminal state, rather than trusting one snapshot.
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      checkControl(control);
+      const state = await this.classify(page);
+      checkControl(control);
+      if (state === "signed_in") {
+        return true;
+      }
+      if (state === "invalid_credentials" || state === "totp_rejected") {
+        return false;
+      }
+      if (Date.now() >= deadline) {
+        return false;
+      }
+      await page.waitForTimeout(100);
+    }
   },
 };
+
+// Locators that indicate an authenticated ChatGPT shell. Kept broad because the
+// signed-in header varies by rollout — the older "profile menu" button, the
+// account/data-testid avatar, the composer prompt textarea, and the sidebar
+// new-chat control. All of these only render once signed in.
+function signedInLocators(page) {
+  return [
+    page.getByRole("button", { name: /profile|account|user menu/i }),
+    page.locator('button[data-testid*="profile"], button[aria-label*="profile" i]'),
+    page.locator('[data-testid="profile-button"], [data-testid="accounts-profile-button"]'),
+    page.locator('#prompt-textarea, textarea[data-testid="prompt-textarea"]'),
+    page.locator('nav[aria-label*="chat" i], nav[aria-label*="history" i]'),
+    page.locator('a[data-testid="create-new-chat-button"], nav a[href="/"]'),
+  ];
+}
+
+// Post-login interstitials (e.g. the "Review payment method / Plus renewal
+// failed" dialog) only appear after authentication succeeds, but they cover the
+// authenticated shell so the normal signed-in locators may not match. Detect
+// the dialog so classify() can report signed_in, and so we know to dismiss it
+// before driving the account menu.
+function blockingDialog(page) {
+  return page.getByRole("dialog").filter({
+    hasText:
+      /payment|billing|renew|subscription|plus|thanh toán|gia hạn|thanh toan/i,
+  });
+}
+
+// Close a post-login interstitial so subsequent menu/logout actions are not
+// intercepted by the overlay. Best-effort: try the dialog's close control, then
+// Escape. Never throws — a missing dialog is the common case.
+async function dismissBlockingDialog(page, control) {
+  const dialog = blockingDialog(page);
+  if (!(await visible(dialog))) {
+    return;
+  }
+  const closeButton = await firstVisible([
+    dialog.getByRole("button", { name: /^(close|dismiss|đóng|not now|later|để sau)$/i }),
+    dialog.locator('button[aria-label*="close" i], button[aria-label*="đóng" i]'),
+  ]);
+  if (closeButton) {
+    await browserSideEffect(control, () => closeButton.click());
+  } else if (typeof page.keyboard?.press === "function") {
+    await browserSideEffect(control, () => page.keyboard.press("Escape"));
+  }
+  // Give the overlay a moment to tear down before the caller proceeds.
+  if (typeof page.waitForTimeout === "function") {
+    await page.waitForTimeout(200);
+  }
+  checkControl(control);
+}
+
+function accountMenuLocators(page) {
+  return [
+    page.getByRole("button", { name: /profile|account|user menu/i }),
+    page.locator('button[data-testid*="profile"], button[aria-label*="profile" i]'),
+    page.locator('[data-testid="profile-button"], [data-testid="accounts-profile-button"]'),
+  ];
+}
 
 function emailInput(page) {
   return page
@@ -279,10 +377,20 @@ function submitControl(page) {
   return page.locator('button[type="submit"], input[type="submit"]').first();
 }
 
-function forgotPasswordControl(page) {
-  return page
-    .locator('a[href*="reset-password"], a[href*="forgot-password"]')
-    .first();
+// The identity-verification screen offers a "forgot password" link that starts
+// the reset journey. Its label is localized (e.g. Vietnamese "Bạn quên mật
+// khẩu?"), so match on link/button text in several languages and on the reset
+// href, not on an anchored English string. Kept broad so a localized rollout
+// does not fall through to flow_changed.
+function forgotPasswordLocators(page) {
+  const label = /forgot.*password|reset.*password|quên mật khẩu|mật khẩu.*quên/i;
+  return [
+    page.getByRole("link", { name: label }),
+    page.getByRole("button", { name: label }),
+    page.locator(
+      'a[href*="reset-password"], a[href*="forgot-password"], a[href*="password/reset"], a[href*="password-reset"]',
+    ).first(),
+  ];
 }
 
 async function visible(locator) {
@@ -324,6 +432,10 @@ async function waitForAny(page, locators, timeout, control) {
     await page.waitForTimeout(100);
     checkControl(control);
   }
+  // Timing out here means the page never reached an expected surface. Returning
+  // silently lets the caller skip its next step and the flow driver then
+  // misreports the stall as invalid_credentials. Surface it as flow_changed.
+  throw adapterError("flow_changed");
 }
 
 async function waitUntilHidden(page, locator, timeout, control) {
