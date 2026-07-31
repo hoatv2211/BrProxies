@@ -1168,6 +1168,7 @@ pub fn run() {
             account_keeper::account_keeper_continue_manual,
             account_keeper::account_keeper_mark_failed,
             account_keeper::account_keeper_resume_job,
+            account_keeper::account_keeper_resolve_critical,
             account_keeper::account_keeper_abandon_job,
             account_keeper::account_keeper_clean_progress,
             account_keeper::account_keeper_export_result,

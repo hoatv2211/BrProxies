@@ -110,6 +110,11 @@ pub struct BatchOutput {
 pub struct OutputAccount {
     pub account: String,
     pub password: String,
+    /// The password the keeper attempted to switch to. Present when a rotation
+    /// was submitted (pending or verified) so operators can see which new
+    /// password was tried even if verification later failed (Critical).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_password: Option<String>,
     pub password_state: PasswordState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub totp_secret: Option<String>,
@@ -349,6 +354,7 @@ mod tests {
             accounts: vec![OutputAccount {
                 account: "synthetic@example.test".to_string(),
                 password: "synthetic-password".to_string(),
+                new_password: None,
                 password_state: PasswordState::Changed,
                 totp_secret: Some("JBSWY3DPEHPK3PXP".to_string()),
                 profile_id: "profile-id".to_string(),

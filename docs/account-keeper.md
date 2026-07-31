@@ -305,6 +305,14 @@ credential state is unknown. If the job cannot be safely continued, use
 only after confirming that it will write the current secret-bearing state to a
 plaintext JSON file.
 
+**Verify & Resolve** re-verifies the attempted (proposed) password against the
+live login. If it signs in, Account Keeper promotes the proposed password to the
+current one, flips the account to `success` / `password_state: changed`, labels
+the browser profile (see below), and rewrites the output. It only proceeds when
+the attempted password actually works; a failed verification leaves the account
+critical. The proposed password is read from the DPAPI vault — the UI passes
+only the batch and account keys, never credentials.
+
 ## Checkpoint, Resume, Abandon, And Export
 
 Account Keeper never auto-resumes a password-changing job when BrProxies
@@ -325,6 +333,14 @@ starts.
 Account identifiers are normalized and converted to stable account keys. A new
 account receives a persistent profile with a masked display name such as
 `acct-1a2b3c4d`; a later batch reuses the stored `profile_id`.
+
+After a verified rotation (normal flow or **Verify & Resolve**), the profile is
+relabeled: its visible name becomes the account (e.g. the email), and its Notes
+field is set to the `account|password|totp_secret` line so operators can
+identify and reuse the profile from the browser list. **Security note:** the
+profile JSON is not encrypted, so this writes the plaintext credential line to
+disk outside the DPAPI vault. This is intentional per operator request; treat
+the profiles directory as secret-bearing, like the output JSON.
 
 Windows data lives under:
 
@@ -359,6 +375,7 @@ Schema version 1:
     {
       "account": "owner@example.test",
       "password": "synthetic-generated-password",
+      "new_password": "synthetic-proposed-password",
       "password_state": "changed",
       "totp_secret": "JBSWY3DPEHPK3PXP",
       "profile_id": "profile-synthetic-001",
@@ -372,6 +389,10 @@ Schema version 1:
 Output rules:
 
 - `password` is the last known usable password.
+- `new_password` is the password Account Keeper attempted to switch to. It is
+  present while a rotation is pending or critical (so an operator can see which
+  new password was tried after a failed verification), and omitted once the
+  rotation is verified and promoted into `password`.
 - `password_state` is `original`, `changed`, or `unknown`.
 - `status` is the current terminal or checkpointed account state.
 - A known failed account retains the original password.
