@@ -130,6 +130,62 @@ async fn health() -> Json<Value> {
     }))
 }
 
+async fn account_keeper_daemon_status() -> ApiResult {
+    Ok(Json(serde_json::to_value(crate::account_keeper_daemon::status().await)
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?))
+}
+
+async fn account_keeper_create_job(
+    Json(request): Json<crate::account_keeper_daemon::CreateJobRequest>,
+) -> ApiResult {
+    let value = crate::account_keeper_daemon::create_job(request)
+        .await
+        .map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(serde_json::to_value(value).unwrap_or(Value::Null)))
+}
+
+async fn account_keeper_list_daemon_jobs() -> ApiResult {
+    Ok(Json(serde_json::to_value(crate::account_keeper_daemon::list_jobs().await)
+        .unwrap_or(Value::Null)))
+}
+
+async fn account_keeper_get_daemon_job(Path(id): Path<String>) -> ApiResult {
+    let value = crate::account_keeper_daemon::get_job(&id)
+        .await
+        .map_err(|e| err(StatusCode::NOT_FOUND, e))?;
+    Ok(Json(serde_json::to_value(value).unwrap_or(Value::Null)))
+}
+
+fn account_keeper_control_error(error: String) -> ApiError {
+    let status = if error == "Account Keeper daemon job was not found" {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::CONFLICT
+    };
+    err(status, error)
+}
+
+async fn account_keeper_continue_daemon_job(Path(id): Path<String>) -> ApiResult {
+    let value = crate::account_keeper_daemon::continue_job(&id)
+        .await
+        .map_err(account_keeper_control_error)?;
+    Ok(Json(serde_json::to_value(value).unwrap_or(Value::Null)))
+}
+
+async fn account_keeper_resume_daemon_job(Path(id): Path<String>) -> ApiResult {
+    let value = crate::account_keeper_daemon::resume_job(&id)
+        .await
+        .map_err(account_keeper_control_error)?;
+    Ok(Json(serde_json::to_value(value).unwrap_or(Value::Null)))
+}
+
+async fn account_keeper_cancel_daemon_job(Path(id): Path<String>) -> ApiResult {
+    let value = crate::account_keeper_daemon::cancel_job(&id)
+        .await
+        .map_err(account_keeper_control_error)?;
+    Ok(Json(serde_json::to_value(value).unwrap_or(Value::Null)))
+}
+
 async fn list_profiles() -> ApiResult {
     let metas = crate::profile::list_all()
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -684,6 +740,24 @@ pub async fn serve(secret: String, port: u16) {
         .route("/running", get(list_running))
         .route("/proxies", get(list_proxies).post(add_proxy))
         .route("/proxies/:id", delete(delete_proxy))
+        .route("/account-keeper/daemon", get(account_keeper_daemon_status))
+        .route(
+            "/account-keeper/jobs",
+            get(account_keeper_list_daemon_jobs).post(account_keeper_create_job),
+        )
+        .route("/account-keeper/jobs/:id", get(account_keeper_get_daemon_job))
+        .route(
+            "/account-keeper/jobs/:id/continue",
+            post(account_keeper_continue_daemon_job),
+        )
+        .route(
+            "/account-keeper/jobs/:id/resume",
+            post(account_keeper_resume_daemon_job),
+        )
+        .route(
+            "/account-keeper/jobs/:id/cancel",
+            post(account_keeper_cancel_daemon_job),
+        )
         .route(
             "/android/*path",
             get(android_forward_get)

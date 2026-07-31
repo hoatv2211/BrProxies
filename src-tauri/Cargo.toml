@@ -4,6 +4,7 @@ version = "0.1.5"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+default-run = "brproxies"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -37,9 +38,6 @@ jsonwebtoken = "9"
 # Cookie import/export from the profile's Chromium Cookies SQLite DB.
 # Values are v10 (AES-128-CBC) with a SHA-256 domain prefix; the OSCrypt
 # key is fixed because BrProxies runs with --use-mock-keychain (patch 0041).
-# MCP bootstrap: download the server tarball from GitHub + extract.
-flate2 = "1"
-tar = "0.4"
 rusqlite = { version = "0.32", features = ["bundled"] }
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }

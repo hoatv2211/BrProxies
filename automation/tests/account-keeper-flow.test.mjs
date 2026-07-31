@@ -938,6 +938,40 @@ test("OpenAI adapter does not treat public ChatGPT pages as signed in", async ()
   assert.equal(await openaiChatgptAdapter.classify(signedInPage), "signed_in");
 });
 
+test("OpenAI adapter does not treat the guest composer shell as signed in", async () => {
+  const locator = (isVisible) => ({
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return isVisible;
+    },
+    async count() {
+      return isVisible ? 1 : 0;
+    },
+    nth() {
+      return this;
+    },
+  });
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      return locator(
+        selector.includes('data-testid="login-button"')
+        || selector.includes("#prompt-textarea"),
+      );
+    },
+    getByRole() {
+      return locator(false);
+    },
+  };
+
+  assert.equal(await openaiChatgptAdapter.classify(page), "flow_changed");
+});
+
 test("OpenAI openLogin preserves an existing signed-in session", async () => {
   const page = fakeOpenAiPage({
     url: "https://chatgpt.com/",
@@ -948,6 +982,67 @@ test("OpenAI openLogin preserves an existing signed-in session", async () => {
   };
 
   await openaiChatgptAdapter.openLogin(page);
+});
+
+test("OpenAI openLogin probes the app session before forcing direct login", async () => {
+  let currentUrl = "about:blank";
+  const navigations = [];
+  const page = fakeOpenAiPage({
+    url: currentUrl,
+    visible: [{ role: "button", label: "Profile menu" }],
+  });
+  page.url = () => currentUrl;
+  page.goto = async (url) => {
+    navigations.push(url);
+    currentUrl = url;
+  };
+
+  await openaiChatgptAdapter.openLogin(page);
+
+  assert.deepEqual(navigations, ["https://chatgpt.com/"]);
+});
+
+test("OpenAI openLogin waits for a delayed password form mount", async () => {
+  let stage = "initial";
+  let waits = 0;
+  const locator = ({ visible = false } = {}) => ({
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return typeof visible === "function" ? visible() : visible;
+    },
+  });
+  const page = {
+    url: () => stage === "initial"
+      ? "about:blank"
+      : "https://auth.openai.com/log-in/password",
+    async goto() {
+      stage = "loading";
+    },
+    locator(selector) {
+      return locator({
+        visible: () =>
+          selector.includes('autocomplete="current-password"')
+          && stage === "password",
+      });
+    },
+    getByRole() {
+      return locator();
+    },
+    async waitForTimeout() {
+      waits += 1;
+      stage = "password";
+    },
+  };
+
+  await openaiChatgptAdapter.openLogin(page);
+
+  assert.equal(stage, "password");
+  assert.equal(waits, 1);
 });
 
 test("OpenAI adapter closes stale auth tabs before a new worker flow", async () => {
@@ -1400,6 +1495,14 @@ test("OpenAI adapter reports an explicit rejected TOTP state", async () => {
   assert.equal(await openaiChatgptAdapter.classify(page), "totp_rejected");
 });
 
+test("OpenAI adapter prefers a visible TOTP input over a generic verify heading", async () => {
+  const page = fakeOpenAiFormPage({
+    totpVisible: true,
+    heading: "Verify your identity",
+  });
+
+  assert.equal(await openaiChatgptAdapter.classify(page), "totp_required");
+});
 test("OpenAI password-change classifier contextualizes only a visible current password", async () => {
   const passwordPage = fakeOpenAiFormPage({ currentPasswordVisible: true });
   assert.equal(await openaiChatgptAdapter.classify(passwordPage), "login_ready");
@@ -1697,6 +1800,44 @@ test("OpenAI adapter submits Vietnamese login forms without a submit type", asyn
   assert.equal(submitClicks, 1);
 });
 
+test("OpenAI adapter does not wait for provider navigation when submitting TOTP", async () => {
+  let clickOptions = null;
+  const locator = ({ visible = false, onFill } = {}) => ({
+    first() {
+      return this;
+    },
+    async isVisible() {
+      return visible;
+    },
+    async fill(value) {
+      onFill?.(value);
+    },
+    async click(options) {
+      clickOptions = options;
+    },
+  });
+  const page = {
+    locator(selector) {
+      if (selector.includes('autocomplete="one-time-code"')) {
+        return locator({
+          visible: true,
+          onFill: (value) => assert.equal(value, "123456"),
+        });
+      }
+      if (selector === 'button[type="submit"], input[type="submit"]') {
+        return locator({ visible: true });
+      }
+      return locator();
+    },
+    getByRole() {
+      return locator();
+    },
+  };
+
+  await openaiChatgptAdapter.submitTotp(page, "123456");
+
+  assert.deepEqual(clickOptions, { noWaitAfter: true });
+});
 test("OpenAI adapter waits for the password form to leave after submit", async () => {
   let passwordVisibleTicks = 3;
   let submitClicks = 0;
@@ -1752,6 +1893,110 @@ test("OpenAI adapter waits for the password form to leave after submit", async (
   assert.equal(waitTicks, 4);
 });
 
+test("OpenAI adapter clicks the visible submit control for the login password", async () => {
+  let passwordVisible = true;
+  let pressed = null;
+  let buttonClicks = 0;
+  let buttonClickOptions = null;
+  const locator = ({ visible = false, onClick, onFill, onPress } = {}) => ({
+    first() {
+      return this;
+    },
+    async isVisible() {
+      return typeof visible === "function" ? visible() : visible;
+    },
+    async click(options) {
+      buttonClicks += 1;
+      buttonClickOptions = options;
+      onClick?.();
+    },
+    async fill(value) {
+      onFill?.(value);
+    },
+    async press(key, options) {
+      pressed = { key, options };
+      onPress?.();
+    },
+  });
+  const page = {
+    locator(selector) {
+      if (selector.includes('autocomplete="current-password"')) {
+        return locator({
+          visible: () => passwordVisible,
+          onFill: (value) => assert.equal(value, "synthetic"),
+          onPress: () => {
+            passwordVisible = false;
+          },
+        });
+      }
+      if (selector === 'button[type="submit"], input[type="submit"]') {
+        return locator({
+          visible: true,
+          onClick: () => {
+            passwordVisible = false;
+          },
+        });
+      }
+      return locator();
+    },
+    getByRole() {
+      return locator();
+    },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.submitCredentials(page, {
+    account: "synthetic@example.test",
+    password: "synthetic",
+  });
+
+  assert.equal(pressed, null);
+  assert.equal(buttonClicks, 1);
+  assert.deepEqual(buttonClickOptions, { noWaitAfter: true });
+});
+test("OpenAI adapter does not wait for provider navigation when submitting login", async () => {
+  let clickOptions = null;
+  const locator = ({ visible = false, onClick, onFill } = {}) => ({
+    first() {
+      return this;
+    },
+    async isVisible() {
+      return visible;
+    },
+    async click(options) {
+      clickOptions = options;
+      onClick?.();
+    },
+    async fill(value) {
+      onFill?.(value);
+    },
+  });
+  const page = {
+    locator(selector) {
+      if (selector.includes('autocomplete="current-password"')) {
+        return locator({
+          visible: true,
+          onFill: (value) => assert.equal(value, "synthetic"),
+        });
+      }
+      if (selector === 'button[type="submit"], input[type="submit"]') {
+        return locator({ visible: true });
+      }
+      return locator();
+    },
+    getByRole() {
+      return locator();
+    },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.submitCredentials(page, {
+    account: "synthetic@example.test",
+    password: "synthetic",
+  });
+
+  assert.deepEqual(clickOptions, { noWaitAfter: true });
+});
 test("OpenAI adapter opens the signed-in password setting without logging out", async () => {
   let stage = "signed_in";
   const actions = [];
@@ -1988,6 +2233,7 @@ function fakeOpenAiFormPage({
   emailVisible = false,
   captchaVisible = false,
   currentPasswordVisible = false,
+  totpVisible = false,
   heading = null,
   onCurrentPasswordFill,
   onSemanticSubmit,
@@ -2024,6 +2270,9 @@ function fakeOpenAiFormPage({
           isVisible: currentPasswordVisible,
           onFill: onCurrentPasswordFill,
         });
+      }
+      if (selector.includes('autocomplete="one-time-code"')) {
+        return locator({ isVisible: totpVisible });
       }
       return locator();
     },
