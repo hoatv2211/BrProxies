@@ -1,8 +1,16 @@
 // BrProxies Tauri backend.
 
+pub mod account_keeper;
+mod account_keeper_daemon;
+pub mod account_keeper_agent;
+mod account_keeper_format;
+mod account_keeper_store;
+mod account_keeper_worker;
+mod actions;
 mod android;
 mod api;
 mod cookies;
+mod dpapi;
 mod fingerprints;
 mod launch;
 mod mcp_setup;
@@ -41,6 +49,27 @@ async fn mcp_download(dir: String) -> Result<String, String> {
         .await
         .map(|p| p.display().to_string())
         .map_err(|e| e.to_string())
+}
+
+// ---- Profile actions/plugins ----
+
+#[tauri::command]
+fn actions_list(profile_id: String) -> Result<Vec<actions::ProfileActionCommand>, String> {
+    actions::list_for_profile(&profile_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn actions_run(
+    profile_id: String,
+    action_id: String,
+    command_id: String,
+) -> Result<actions::ActionRunResult, String> {
+    actions::run(&profile_id, &action_id, &command_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn actions_config_path() -> Result<String, String> {
+    actions::config_path_string().map_err(|e| e.to_string())
 }
 
 // ---- Profiles ----
@@ -1127,6 +1156,27 @@ pub fn run() {
             profile_import,
             clipboard_write,
             clipboard_read,
+            account_keeper::account_keeper_defaults,
+            account_keeper::account_keeper_validate_input,
+            account_keeper::account_keeper_validate_template,
+            account_keeper::account_keeper_start_batch,
+            account_keeper::account_keeper_list_jobs,
+            account_keeper::account_keeper_list_profiles,
+            account_keeper::account_keeper_get_job,
+            account_keeper::account_keeper_pause_after_current,
+            account_keeper::account_keeper_cancel_batch,
+            account_keeper::account_keeper_continue_manual,
+            account_keeper::account_keeper_mark_failed,
+            account_keeper::account_keeper_resume_job,
+            account_keeper::account_keeper_resolve_critical,
+            account_keeper::account_keeper_abandon_job,
+            account_keeper::account_keeper_clean_progress,
+            account_keeper::account_keeper_export_result,
+            account_keeper::account_keeper_open_profile,
+            account_keeper::account_keeper_delete_profile,
+            actions_list,
+            actions_run,
+            actions_config_path,
             profile_set_pin,
             profile_set_folder,
             folder_rename,
@@ -1222,6 +1272,8 @@ pub fn run() {
                 Ok(_) => {}
                 Err(e) => eprintln!("[launcher] temporary purge failed: {e}"),
             }
+
+            account_keeper_daemon::start();
 
             // API task on the shared tokio runtime.
             match settings::ensure_secret() {

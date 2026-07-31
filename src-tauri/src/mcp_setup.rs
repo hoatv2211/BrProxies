@@ -1,66 +1,52 @@
-// Download the MCP server source from our R2 CDN into a user-chosen
-// folder.  The app does NOT run or manage it — the user installs deps
-// + registers it with their MCP client themselves (see
-// the BrProxies MCP README).
-//
-// The bundle ships pre-packed at ~12 KB (just index.js + package.json
-// + README.md), so the download is instant and contains no
-// node_modules / .gitignore noise.
+// Write the MCP server source embedded in the BrProxies executable into a
+// user-chosen folder. The app does not run or manage this Node process; the
+// user installs dependencies and registers it with an MCP client.
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-/// Public R2.dev URL for the MCP server bundle (matches the launcher's
-/// runtime bucket — same CDN as the browser, Widevine and fingerprint
-/// library archives).
-const MCP_ARCHIVE_URL: &str =
-    "https://pub-e57a7c60f6934eb09a6600bf2fc59cdc.r2.dev/ShardX-MCP.tar.gz";
+/// MCP source files compiled into the BrProxies executable.
+const EMBEDDED_MCP_FILES: &[(&str, &str)] = &[
+    ("index.js", include_str!("../../mcp/index.js")),
+    (
+        "account-keeper-tools.js",
+        include_str!("../../mcp/account-keeper-tools.js"),
+    ),
+    ("package.json", include_str!("../../mcp/package.json")),
+    ("README.md", include_str!("../../mcp/README.md")),
+];
 
-/// Top-level directory inside the tarball that wraps the actual files.
-const MCP_TOP_DIR: &str = "ShardX-MCP";
+fn write_embedded_mcp(dest: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest).context("create MCP destination")?;
+    for (name, contents) in EMBEDDED_MCP_FILES {
+        std::fs::write(dest.join(name), contents)
+            .with_context(|| format!("write embedded MCP file {name}"))?;
+    }
+    Ok(())
+}
 
 /// Download the MCP server into `<dir>/mcp` and return that path.
 pub async fn download_mcp(dir: &Path) -> Result<PathBuf> {
     let dest = dir.join("mcp");
-    let bytes = reqwest::get(MCP_ARCHIVE_URL)
-        .await
-        .context("download MCP archive")?
-        .error_for_status()
-        .context("MCP archive request failed")?
-        .bytes()
-        .await
-        .context("read MCP archive")?;
-
-    let gz = flate2::read::GzDecoder::new(&bytes[..]);
-    let mut archive = tar::Archive::new(gz);
-    std::fs::create_dir_all(&dest)?;
-    let mut extracted = 0usize;
-
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?.into_owned();
-        // Strip the single top-level wrapper dir from the archive so files
-        // land directly under dest/.
-        let rel: PathBuf = path
-            .strip_prefix(MCP_TOP_DIR)
-            .unwrap_or(&path)
-            .to_path_buf();
-        if rel.as_os_str().is_empty() {
-            continue;
-        }
-        let out = dest.join(&rel);
-        if entry.header().entry_type().is_dir() {
-            std::fs::create_dir_all(&out)?;
-        } else {
-            if let Some(parent) = out.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            entry.unpack(&out)?;
-            extracted += 1;
-        }
-    }
-    if extracted == 0 {
-        anyhow::bail!("MCP archive contained no files (CDN delivered an empty bundle?)");
-    }
+    write_embedded_mcp(&dest)?;
     Ok(dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_bundle_contains_account_keeper_tools() {
+        let root = std::env::temp_dir().join(format!("brproxies-mcp-test-{}", uuid::Uuid::new_v4()));
+        let dest = root.join("mcp");
+
+        write_embedded_mcp(&dest).unwrap();
+
+        let index = std::fs::read_to_string(dest.join("index.js")).unwrap();
+        let tools = std::fs::read_to_string(dest.join("account-keeper-tools.js")).unwrap();
+        assert!(index.contains("registerAccountKeeperTools"));
+        assert!(tools.contains("account_keeper_create_job"));
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
