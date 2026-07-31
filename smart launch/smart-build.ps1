@@ -25,6 +25,11 @@ if ($Help) {
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
+# Set-Location only moves PowerShell's location, not the .NET process working
+# directory. Relative paths passed to [System.IO.File] APIs resolve against the
+# latter, so keep them in sync or Test-FileWritable probes the wrong path (e.g.
+# smart launch\src-tauri\...) and reports every build as "file locked".
+[Environment]::CurrentDirectory = $repoRoot.Path
 
 $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
 if (Test-Path $cargoBin) {
@@ -101,9 +106,13 @@ function Run-Step($Title, $Command, $Arguments, $WorkingDirectory = $repoRoot.Pa
 
 function Test-FileWritable($Path) {
   if (-not (Test-Path -LiteralPath $Path)) { return $true }
+  # Resolve to an absolute path so [System.IO.File]::Open does not resolve a
+  # relative $Path against the .NET working directory, which can differ from
+  # PowerShell's location and make a free file look permanently locked.
+  $absolute = (Resolve-Path -LiteralPath $Path).Path
   try {
     $stream = [System.IO.File]::Open(
-      $Path,
+      $absolute,
       [System.IO.FileMode]::Open,
       [System.IO.FileAccess]::Write,
       ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)

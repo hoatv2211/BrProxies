@@ -770,6 +770,90 @@ test("OpenAI adapter does not treat public ChatGPT pages as signed in", async ()
   assert.equal(await openaiChatgptAdapter.classify(signedInPage), "signed_in");
 });
 
+test("OpenAI adapter treats a post-login billing interstitial as signed in", async () => {
+  const page = fakeOpenAiPage({
+    url: "https://chatgpt.com/",
+    visible: [{ role: "dialog", label: "Xem lại phương thức thanh toán" }],
+  });
+  assert.equal(await openaiChatgptAdapter.classify(page), "signed_in");
+});
+
+test("OpenAI logout dismisses a blocking interstitial before opening the menu", async () => {
+  const events = [];
+  let dialogVisible = true;
+  const dialogButton = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return dialogVisible;
+    },
+    getByRole() {
+      return dialogButton;
+    },
+    locator() {
+      return dialogButton;
+    },
+    async click() {
+      events.push("dismiss");
+      dialogVisible = false;
+    },
+  };
+  const menuButton = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return !dialogVisible;
+    },
+    async click() {
+      events.push("menu");
+    },
+  };
+  const logoutItem = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return !dialogVisible;
+    },
+    async click() {
+      events.push("logout");
+    },
+  };
+  const page = {
+    url: () => "https://chatgpt.com/",
+    keyboard: { async press() { events.push("escape"); } },
+    async waitForTimeout() {},
+    locator() {
+      return { first() { return this; }, filter() { return this; }, async isVisible() { return false; }, async count() { return 0; } };
+    },
+    getByRole(role, options = {}) {
+      if (role === "dialog") return dialogButton;
+      if (role === "button" && options.name instanceof RegExp && options.name.test("Profile menu")) {
+        return menuButton;
+      }
+      if ((role === "menuitem" || role === "button") && options.name instanceof RegExp && options.name.test("Log out")) {
+        return logoutItem;
+      }
+      return { first() { return this; }, filter() { return this; }, async isVisible() { return false; } };
+    },
+  };
+
+  await openaiChatgptAdapter.logout(page);
+
+  assert.deepEqual(events, ["dismiss", "menu", "logout"]);
+});
+
 test("OpenAI adapter reports an explicit rejected TOTP state", async () => {
   const page = fakeOpenAiPage({
     url: "https://auth.openai.com/u/mfa-otp-challenge",
@@ -1099,7 +1183,7 @@ test("OpenAI adapter opens localized password reset by semantic href", async () 
           },
         });
       }
-      if (selector === 'a[href*="reset-password"], a[href*="forgot-password"]') {
+      if (selector.includes("reset-password") || selector.includes("forgot-password")) {
         return locator({
           visible: () => stage === "password",
           onClick: () => {
@@ -1110,6 +1194,73 @@ test("OpenAI adapter opens localized password reset by semantic href", async () 
       return locator({ visible: () => false });
     },
     getByRole() {
+      return locator({ visible: () => false });
+    },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.openPasswordChange(page, {
+    account: "synthetic@example.test",
+  });
+
+  assert.equal(resetClicks, 1);
+});
+
+test("OpenAI adapter follows a localized forgot-password link by role label", async () => {
+  let stage = "email";
+  let resetClicks = 0;
+  const locator = ({ visible, onClick } = {}) => ({
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return Boolean(visible?.());
+    },
+    async click() {
+      onClick?.();
+    },
+    async fill() {},
+  });
+  const page = {
+    url: () => "https://chatgpt.com/auth/login",
+    async goto() {
+      stage = "email";
+    },
+    locator(selector) {
+      if (selector.includes('autocomplete="username"')) {
+        return locator({ visible: () => stage === "email" });
+      }
+      if (selector.includes('autocomplete="current-password"')) {
+        return locator({ visible: () => stage === "password" });
+      }
+      if (selector === 'button[type="submit"], input[type="submit"]') {
+        return locator({
+          visible: () => stage === "email",
+          onClick: () => {
+            stage = "password";
+          },
+        });
+      }
+      return locator({ visible: () => false });
+    },
+    getByRole(role, options = {}) {
+      // Only the Vietnamese "Bạn quên mật khẩu?" link matches, and only on the
+      // identity-verification (password) step — mirroring the observed screen.
+      if (
+        role === "link"
+        && options.name instanceof RegExp
+        && options.name.test("Bạn quên mật khẩu?")
+      ) {
+        return locator({
+          visible: () => stage === "password",
+          onClick: () => {
+            resetClicks += 1;
+          },
+        });
+      }
       return locator({ visible: () => false });
     },
     async waitForTimeout() {},
