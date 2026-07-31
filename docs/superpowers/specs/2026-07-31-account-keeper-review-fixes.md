@@ -4,10 +4,9 @@ Ngày: 2026-07-31
 
 ## Bối cảnh
 
-Tài liệu tổng hợp kết quả review flow Account Keeper, đối chiếu với hai spec design:
-
-- `docs/superpowers/specs/2026-07-31-account-keeper-daemon-mcp-design.md`
-- `docs/superpowers/specs/2026-07-31-account-keeper-missing-profile-recovery-design.md`
+Tài liệu tổng hợp kết quả review flow Account Keeper, đối chiếu với hai spec design
+đã thực thi xong (daemon/MCP và missing-profile recovery — spec gốc đã dọn sau khi
+tính năng hoàn thành; kiến trúc hiện hành phản ánh trong code).
 
 Phạm vi review: coordinator + daemon Rust (`account_keeper.rs`, `account_keeper_daemon.rs`),
 worker + protocol Node (`automation/account-keeper-*.mjs`), adapter provider
