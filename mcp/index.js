@@ -16,6 +16,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { chromium } from "patchright";
+import { registerAccountKeeperTools } from "./account-keeper-tools.js";
 
 const API = (process.env.BRPROXIES_API || process.env.SHARDX_API || "http://127.0.0.1:40325").replace(/\/+$/, "");
 const TOKEN = process.env.BRPROXIES_TOKEN || process.env.SHARDX_TOKEN || "";
@@ -101,6 +102,8 @@ const text = (v) => ({
 });
 
 const server = new McpServer({ name: "brproxies", version: "0.1.0" });
+
+registerAccountKeeperTools(server, { api, text, z });
 
 // ================= API tools =================
 

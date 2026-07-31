@@ -44,6 +44,39 @@ Windows phù hợp.
   cho debug dùng thư mục `automation/` và yêu cầu system `node` trong `PATH`.
   Release build không dùng fallback này.
 
+## Daemon Chạy Nền Và MCP
+
+Bản BrProxies đã build tự khởi động Account Keeper daemon trong tiến trình ứng
+dụng. Giữ BrProxies đang chạy khi job hoạt động; đóng MCP client không làm dừng
+job hiện tại.
+
+- Queue chạy FIFO và chỉ có một Account Keeper job active tại mỗi thời điểm.
+- Request của job được lưu local trong file daemon được bảo vệ bằng DPAPI.
+- MCP và Automation API chỉ nhận đường dẫn input/output local. Không truyền
+  account, password, TOTP secret, cookie hoặc token trong tool arguments.
+- Tạo job bắt buộc có `authorize_password_change: true`.
+- Dùng `account_keeper_list_jobs` hoặc `account_keeper_get_job` để xem trạng
+  thái đã redact. Response không chứa đường dẫn input/output hay credential.
+- Chỉ dùng `account_keeper_continue_job` sau khi người vận hành tự hoàn tất
+  CAPTCHA, email verification, device approval hoặc security challenge đang
+  hiển thị.
+- Sau khi BrProxies restart, job bị gián đoạn chuyển thành
+  `recovery_required`. Daemon không tự resume; phải gọi
+  `account_keeper_resume_job` rõ ràng.
+- Dùng `account_keeper_cancel_job` để hủy theo password-state safety rules.
+  Hủy sau password submission có thể tạo trạng thái critical/unknown.
+
+Các MCP tool:
+
+```text
+account_keeper_create_job
+account_keeper_list_jobs
+account_keeper_get_job
+account_keeper_continue_job
+account_keeper_resume_job
+account_keeper_cancel_job
+```
+
 ## Chuẩn Bị Dữ Liệu Input
 
 Dùng text dán hoặc file plaintext UTF-8. Cả hai mode input đều dùng format sau,

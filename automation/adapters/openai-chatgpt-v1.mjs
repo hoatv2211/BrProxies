@@ -54,15 +54,37 @@ export const openaiChatgptAdapter = {
       checkControl(control);
     }
     await browserSideEffect(control, () =>
+      page.goto(APP_URL, { waitUntil: "domcontentloaded" }),
+    );
+    await this.assertAllowedOrigin(page);
+    try {
+      await waitForAny(page, loginSurfaceLocators(page), 5_000, control);
+      const state = await this.classify(page);
+      if (
+        state === "signed_in"
+        || state === "login_ready"
+        || state === "totp_required"
+        || state === "totp_rejected"
+        || state === "unsupported_login_method"
+        || state?.state === "manual_required"
+      ) {
+        return page;
+      }
+    } catch (error) {
+      if (error?.code !== "flow_changed") {
+        throw error;
+      }
+    }
+    await browserSideEffect(control, () =>
       page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" }),
     );
-    return page;
     await this.assertAllowedOrigin(page);
     // ChatGPT auth is a client-rendered SPA: domcontentloaded fires before the
     // React login form mounts. Without waiting, the driver's first classify()
     // sees an empty page and throws flow_changed. Wait until an interactive
     // auth surface actually appears (or a challenge/error we still classify).
     await waitForAny(page, loginSurfaceLocators(page), 15_000, control);
+    return page;
   },
 
   async classify(page) {
@@ -95,15 +117,15 @@ export const openaiChatgptAdapter = {
       return "totp_rejected";
     }
 
+    if (await visible(oneTimeCode(page))) {
+      return "totp_required";
+    }
+
     if (await anyVisible([
       page.getByRole("heading", { name: /verify|security check|unusual activity/i }),
       page.getByRole("alert").filter({ hasText: /verify|security check|unusual activity/i }),
     ])) {
       return { state: "manual_required", reason: "security_challenge", url };
-    }
-
-    if (await visible(oneTimeCode(page))) {
-      return "totp_required";
     }
     if (await visible(newPassword(page))) {
       return "password_change_ready";
@@ -147,6 +169,9 @@ export const openaiChatgptAdapter = {
     const onAppSurface =
       current.origin === "https://chatgpt.com" &&
       !current.pathname.startsWith("/auth");
+    if (onAppSurface && (await anyVisible(signedOutLocators(page)))) {
+      return "flow_changed";
+    }
     // A post-login billing/renewal interstitial covers the shell but only shows
     // once signed in. Treat it as signed_in so the flow can dismiss it and
     // continue to the password change instead of aborting as flow_changed.
@@ -195,7 +220,7 @@ export const openaiChatgptAdapter = {
       await clickFirstVisible([
         page.getByRole("button", { name: /^(continue|log in|sign in|tiếp tục|đăng nhập)$/i }),
         submitControl(page),
-      ], control);
+      ], control, undefined, { noWaitAfter: true });
       await waitUntilHidden(page, passwordInput, 15_000, control);
       return true;
     }
@@ -230,7 +255,7 @@ export const openaiChatgptAdapter = {
     await clickFirstVisible([
       page.getByRole("button", { name: /^(continue|verify|submit|tiếp tục|xác minh|gửi)$/i }),
       submitControl(page),
-    ], control);
+    ], control, undefined, { noWaitAfter: true });
   },
 
   async submitIdentityChallenge(page, password, { control } = {}) {
@@ -403,6 +428,15 @@ function signedInLocators(page) {
   ];
 }
 
+function signedOutLocators(page) {
+  const label = /^(log ?in|sign ?in|\u0111\u0103ng nh\u1eadp)$/i;
+  return [
+    page.locator('[data-testid="login-button"]'),
+    page.getByRole("button", { name: label }),
+    page.getByRole("link", { name: label }),
+  ];
+}
+
 // Post-login interstitials (e.g. the "Review payment method / Plus renewal
 // failed" dialog) only appear after authentication succeeds, but they cover the
 // authenticated shell so the normal signed-in locators may not match. Detect
@@ -424,6 +458,7 @@ function sessionExpiredDialog(page) {
 function loginSurfaceLocators(page) {
   return [
     ...authenticationSurfaceLocators(page),
+    ...signedOutLocators(page),
     page.getByRole("alert"),
     blockingDialog(page),
     ...signedInLocators(page),
@@ -541,14 +576,14 @@ async function firstVisible(locators) {
   return null;
 }
 
-async function clickFirstVisible(locators, control, onBeforeClick) {
+async function clickFirstVisible(locators, control, onBeforeClick, clickOptions) {
   checkControl(control);
   const locator = await firstVisible(locators);
   checkControl(control);
   if (!locator) {
     throw adapterError("flow_changed");
   }
-  await browserSideEffect(control, () => locator.click(), onBeforeClick);
+  await browserSideEffect(control, () => locator.click(clickOptions), onBeforeClick);
 }
 
 async function waitForAny(page, locators, timeout, control) {

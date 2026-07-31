@@ -1,6 +1,7 @@
 // BrProxies Tauri backend.
 
 pub mod account_keeper;
+mod account_keeper_daemon;
 pub mod account_keeper_agent;
 mod account_keeper_format;
 mod account_keeper_store;
@@ -1270,6 +1271,8 @@ pub fn run() {
                 Ok(_) => {}
                 Err(e) => eprintln!("[launcher] temporary purge failed: {e}"),
             }
+
+            account_keeper_daemon::start();
 
             // API task on the shared tokio runtime.
             match settings::ensure_secret() {

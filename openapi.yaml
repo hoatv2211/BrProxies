@@ -100,6 +100,7 @@ tags:
   - name: Profiles
   - name: Folders
   - name: Proxies
+  - name: Account Keeper
 
 paths:
   /health:
@@ -670,6 +671,132 @@ paths:
                   id: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /account-keeper/daemon:
+    get:
+      tags: [Account Keeper]
+      summary: Get Account Keeper daemon status
+      responses:
+        "200":
+          description: Redacted queue status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountKeeperDaemonStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /account-keeper/jobs:
+    get:
+      tags: [Account Keeper]
+      summary: List Account Keeper daemon jobs
+      responses:
+        "200":
+          description: Redacted FIFO job list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AccountKeeperDaemonJob" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Account Keeper]
+      summary: Queue an authorized password-change job
+      description: |
+        Accepts local file paths only. Credentials remain in the input file
+        and are never returned by this API. Password-change authorization must
+        be explicitly set to true.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAccountKeeperDaemonJob" }
+      responses:
+        "200":
+          description: Redacted queued job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountKeeperDaemonJob" }
+        "400":
+          description: Invalid path, input, template, or missing authorization.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /account-keeper/jobs/{id}:
+    get:
+      tags: [Account Keeper]
+      summary: Get one Account Keeper daemon job
+      parameters:
+        - $ref: "#/components/parameters/AccountKeeperJobId"
+      responses:
+        "200":
+          description: Redacted job state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountKeeperDaemonJob" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Job not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /account-keeper/jobs/{id}/continue:
+    post:
+      tags: [Account Keeper]
+      summary: Continue after manual security action
+      parameters:
+        - $ref: "#/components/parameters/AccountKeeperJobId"
+      responses:
+        "200":
+          description: Redacted job state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountKeeperDaemonJob" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Job is not waiting for manual action.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /account-keeper/jobs/{id}/resume:
+    post:
+      tags: [Account Keeper]
+      summary: Resume an interrupted job explicitly
+      parameters:
+        - $ref: "#/components/parameters/AccountKeeperJobId"
+      responses:
+        "200":
+          description: Redacted resumed job state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountKeeperDaemonJob" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Job is not recovery_required or cannot be recovered safely.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /account-keeper/jobs/{id}/cancel:
+    post:
+      tags: [Account Keeper]
+      summary: Cancel a queued or active job
+      parameters:
+        - $ref: "#/components/parameters/AccountKeeperJobId"
+      responses:
+        "200":
+          description: Redacted job state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountKeeperDaemonJob" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Job cannot be cancelled in its current state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /android/health:
     get:
       tags: [Android]
@@ -784,6 +911,13 @@ components:
       description: Profile UUID.
       schema: { type: string, format: uuid }
 
+    AccountKeeperJobId:
+      name: id
+      in: path
+      required: true
+      description: Opaque Account Keeper daemon job UUID.
+      schema: { type: string, format: uuid }
+
   responses:
     Unauthorized:
       description: Missing or invalid Bearer token.
@@ -794,6 +928,64 @@ components:
       properties:
         error: { type: string }
       required: [error]
+
+    AccountKeeperDaemonStatus:
+      type: object
+      required: [running, queued]
+      properties:
+        running: { type: boolean }
+        queued: { type: integer, minimum: 0 }
+        active_job_id: { type: string, format: uuid, nullable: true }
+
+    CreateAccountKeeperDaemonJob:
+      type: object
+      additionalProperties: false
+      required: [input_path, authorize_password_change]
+      properties:
+        input_path:
+          type: string
+          description: Absolute local UTF-8 input-file path.
+        output_path:
+          type: string
+          description: Optional absolute local output-file path.
+        template:
+          type: string
+          description: Optional Account Keeper password template.
+        keep_profile_running:
+          type: boolean
+          default: true
+        authorize_password_change:
+          type: boolean
+          enum: [true]
+
+    AccountKeeperDaemonJob:
+      type: object
+      description: Redacted daemon job. Never contains file paths or credentials.
+      required:
+        - id
+        - status
+        - account_count
+        - has_last_verified_at
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [queued, running, waiting_manual, recovery_required, completed, failed, critical, cancelled]
+        batch_id: { type: string, format: uuid, nullable: true }
+        stage:
+          type: string
+          nullable: true
+          description: Redacted Account Keeper account stage.
+        error_code:
+          type: string
+          nullable: true
+          description: Canonical redacted error code.
+        account_count: { type: integer, minimum: 0 }
+        has_last_verified_at: { type: boolean }
+        created_at: { type: string }
+        updated_at: { type: string }
 
     FingerprintEnvelope:
       type: object

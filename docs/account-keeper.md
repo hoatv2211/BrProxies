@@ -43,6 +43,38 @@ location with appropriate Windows file permissions.
   the debug-only fallback uses `automation/` and requires system `node` on
   `PATH`. Release builds do not use this fallback.
 
+## Background Daemon And MCP
+
+The built BrProxies app starts an in-process Account Keeper daemon. Keep
+BrProxies running while jobs execute; closing the MCP client does not stop the
+active job.
+
+- Jobs use FIFO order with one active Account Keeper job at a time.
+- Job requests are stored locally in a DPAPI-protected daemon file.
+- MCP and the Automation API accept local input/output paths only. Never pass
+  accounts, passwords, TOTP secrets, cookies, or tokens in tool arguments.
+- Creating a job requires `authorize_password_change: true`.
+- Use `account_keeper_list_jobs` or `account_keeper_get_job` for redacted
+  status. Responses omit input/output paths and all credential fields.
+- Use `account_keeper_continue_job` only after completing the visible CAPTCHA,
+  email verification, device approval, or other security challenge manually.
+- On BrProxies restart, an interrupted job becomes `recovery_required`. It is
+  never resumed automatically; call `account_keeper_resume_job` explicitly.
+- Use `account_keeper_cancel_job` to cancel through the normal password-state
+  safety rules. Cancellation after password submission may produce a critical
+  unknown credential state.
+
+Available MCP tools:
+
+```text
+account_keeper_create_job
+account_keeper_list_jobs
+account_keeper_get_job
+account_keeper_continue_job
+account_keeper_resume_job
+account_keeper_cancel_job
+```
+
 ## Prepare Input Records
 
 Provide records as pasted text or a UTF-8 plaintext file. Both input modes use

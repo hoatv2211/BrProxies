@@ -121,6 +121,10 @@ pub fn account_keeper_worker_dir() -> Result<PathBuf> {
     Ok(path)
 }
 
+pub fn account_keeper_daemon_path() -> Result<PathBuf> {
+    Ok(account_keeper_dir()?.join("daemon.bin"))
+}
+
 pub fn atomic_write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(value).context("serialize atomic JSON")?;
     atomic_write_bytes(path, &bytes)

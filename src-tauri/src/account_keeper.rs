@@ -1433,6 +1433,16 @@ pub fn inspect_headless_recovery(source: &InputSource) -> Result<Option<Headless
     }))
 }
 
+fn headless_worker_resource_root_from(executable: &Path) -> Option<PathBuf> {
+    executable.parent().map(Path::to_path_buf)
+}
+
+fn headless_worker_resource_root() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|executable| headless_worker_resource_root_from(&executable))
+}
+
 pub async fn run_headless_batch(
     request: StartRequest,
     timeout_seconds: u64,
@@ -1451,7 +1461,7 @@ pub async fn run_headless_batch(
         clock: Arc::new(SystemClock),
         profiles: Arc::new(runtime),
         workers: Arc::new(NodeWorkerTransport {
-            resource_root: None,
+            resource_root: headless_worker_resource_root(),
         }),
         events: Arc::new(NullEventSink),
     };
@@ -1505,6 +1515,25 @@ pub async fn run_headless_batch(
     })
 }
 
+fn ensure_recovery_profile<F>(
+    runtime: &dyn ProfileRuntime,
+    account_key: &str,
+    vault: &mut VaultFile,
+    vault_index: usize,
+    persist: F,
+) -> Result<String>
+where
+    F: FnOnce(&VaultFile) -> Result<()>,
+{
+    let current_profile_id = vault.accounts[vault_index].profile_id.clone();
+    let profile_id = ensure_profile_mapping(runtime, account_key, Some(&current_profile_id))?;
+    if profile_id != current_profile_id {
+        vault.accounts[vault_index].profile_id = profile_id.clone();
+        persist(vault)?;
+    }
+    Ok(profile_id)
+}
+
 pub async fn recover_headless_credentials(
     source: &InputSource,
     timeout_seconds: u64,
@@ -1524,7 +1553,14 @@ pub async fn recover_headless_credentials(
     if vault.accounts[vault_index].password_state != PasswordState::Unknown {
         return Ok(());
     }
-    let profile_id = vault.accounts[vault_index].profile_id.clone();
+    let runtime = HeadlessProfileRuntime;
+    let profile_id = ensure_recovery_profile(
+        &runtime,
+        &account_key,
+        &mut vault,
+        vault_index,
+        crate::account_keeper_store::save_vault,
+    )?;
     let now = verify_headless_password(
         imported,
         &profile_id,
@@ -1571,7 +1607,14 @@ pub async fn recover_headless_pending_credentials(
         .last_job_id
         .clone()
         .ok_or_else(|| anyhow::anyhow!("Account Keeper pending recovery checkpoint is unavailable"))?;
-    let profile_id = vault_account.profile_id.clone();
+    let runtime = HeadlessProfileRuntime;
+    let profile_id = ensure_recovery_profile(
+        &runtime,
+        &account_key,
+        &mut vault,
+        vault_index,
+        crate::account_keeper_store::save_vault,
+    )?;
     let now = verify_headless_password(
         imported,
         &profile_id,
@@ -1619,7 +1662,7 @@ async fn verify_headless_password(
     let runtime = HeadlessProfileRuntime;
     let cdp_endpoint = prepare_profile_cdp(&runtime, &profile_id).await?;
     let transport = NodeWorkerTransport {
-        resource_root: None,
+        resource_root: headless_worker_resource_root(),
     };
     let mut session = transport
         .spawn(WorkerStart {
@@ -1872,7 +1915,8 @@ fn resume_state_after_restart(
         bail!("critical Account Keeper jobs cannot be resumed");
     }
     match state {
-        "success" | "failed" | "cancelled" | "waiting_manual" => Ok(None),
+        "success" | "failed" | "cancelled" => Ok(None),
+        "waiting_manual" => Ok(Some("queued")),
         "queued"
         | "launching"
         | "logging_in"
@@ -2040,7 +2084,7 @@ fn ensure_account_keeper_supported() -> Result<()> {
     }
 }
 
-fn validate_start_request(request: &StartRequest) -> Result<()> {
+pub(crate) fn validate_start_request(request: &StartRequest) -> Result<()> {
     validate_input_source_shape(&request.source)?;
     if request.output_path.trim().is_empty() {
         bail!("Account Keeper output path is required");
@@ -3578,7 +3622,7 @@ mod tests {
         }
         assert_eq!(
             resume_state_after_restart("waiting_manual", PasswordState::Original).unwrap(),
-            None
+            Some("queued")
         );
         assert_eq!(
             resume_state_after_restart("logging_in", PasswordState::Original).unwrap(),
@@ -3795,13 +3839,14 @@ mod tests {
     #[derive(Default)]
     struct FakeProfileRuntime {
         fingerprints: Vec<FingerprintCandidate>,
+        existing_profiles: HashSet<String>,
         created: StdMutex<Vec<(String, String)>>,
         folders: StdMutex<Vec<(String, String)>>,
     }
 
     impl ProfileRuntime for FakeProfileRuntime {
-        fn profile_exists(&self, _profile_id: &str) -> bool {
-            false
+        fn profile_exists(&self, profile_id: &str) -> bool {
+            self.existing_profiles.contains(profile_id)
         }
 
         fn list_fingerprints(&self) -> Result<Vec<FingerprintCandidate>> {
@@ -3888,6 +3933,56 @@ mod tests {
             last_job_id: Some("batch-1".into()),
             last_status: Some("queued".into()),
         })
+    }
+
+    #[test]
+    fn recovery_profile_replaces_missing_mapping_before_verification() {
+        let runtime = FakeProfileRuntime {
+            fingerprints: vec![FingerprintCandidate::new("windows-a", "Alpha", "Windows")],
+            ..Default::default()
+        };
+        let mut vault = synthetic_vault();
+        vault.accounts[0].profile_id = "missing-profile".into();
+        vault.accounts[0].password_state = PasswordState::Unknown;
+        vault.accounts[0].pending_password = Some("synthetic-pending".into());
+        let mut persisted_profile_id = None;
+
+        let profile_id = ensure_recovery_profile(&runtime, "account-key", &mut vault, 0, |saved| {
+            persisted_profile_id = Some(saved.accounts[0].profile_id.clone());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(profile_id, "profile-created");
+        assert_eq!(persisted_profile_id.as_deref(), Some("profile-created"));
+        assert_eq!(vault.accounts[0].password_state, PasswordState::Unknown);
+        assert_eq!(
+            vault.accounts[0].pending_password.as_deref(),
+            Some("synthetic-pending")
+        );
+    }
+
+    #[test]
+    fn recovery_profile_reuses_existing_mapping_without_persisting() {
+        let runtime = FakeProfileRuntime {
+            existing_profiles: HashSet::from(["profile-1".to_string()]),
+            ..Default::default()
+        };
+        let mut vault = synthetic_vault();
+        vault.accounts[0].password_state = PasswordState::Unknown;
+        vault.accounts[0].pending_password = Some("synthetic-pending".into());
+        let mut persisted = false;
+
+        let profile_id = ensure_recovery_profile(&runtime, "account-key", &mut vault, 0, |_| {
+            persisted = true;
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(profile_id, "profile-1");
+        assert!(!persisted);
+        assert!(runtime.created.into_inner().unwrap().is_empty());
+        assert_eq!(vault.accounts[0].password_state, PasswordState::Unknown);
     }
 
     fn synthetic_checkpoint() -> JobCheckpoint {
@@ -4166,6 +4261,16 @@ mod tests {
         assert_eq!(totp_retry_delay(60), Duration::from_secs(30));
         assert_eq!(totp_retry_delay(61), Duration::from_secs(29));
         assert_eq!(totp_retry_delay(89), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn headless_agent_resolves_worker_resources_beside_executable() {
+        let executable = Path::new(r"C:\BrProxies\account-keeper-agent.exe");
+
+        assert_eq!(
+            headless_worker_resource_root_from(executable),
+            Some(PathBuf::from(r"C:\BrProxies")),
+        );
     }
 
     #[test]
