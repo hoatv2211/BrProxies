@@ -215,8 +215,19 @@ async function authenticate({
   let totpPending = false;
   for (let step = 0; step < 16; step += 1) {
     let result = await classify({ pageSource, adapter, control });
-    if (loginStepPending && result.state === "flow_changed") {
-      result = await waitForLoginTransition({ pageSource, adapter, control });
+    if (
+      loginStepPending
+      && (
+        result.state === "flow_changed"
+        || (credentialsSubmitted && result.state === "login_ready")
+      )
+    ) {
+      result = await waitForLoginTransition({
+        pageSource,
+        adapter,
+        control,
+        credentialsSubmitted,
+      });
     }
     loginStepPending = false;
     if (totpPending) {
@@ -520,11 +531,19 @@ async function waitForTotpTransition({
   throw flowError("navigation_failed");
 }
 
-async function waitForLoginTransition({ pageSource, adapter, control }) {
+async function waitForLoginTransition({
+  pageSource,
+  adapter,
+  control,
+  credentialsSubmitted = false,
+}) {
   for (let poll = 0; poll < 150; poll += 1) {
     await cancellableDelay(control, 100);
     const result = await classify({ pageSource, adapter, control });
-    if (result.state !== "flow_changed") {
+    if (
+      result.state !== "flow_changed"
+      && !(credentialsSubmitted && result.state === "login_ready")
+    ) {
       return result;
     }
   }
