@@ -20,6 +20,7 @@ const FAILURE_MESSAGES = new Map([
   ["worker_not_ready", "Browser flow is not provisioned"],
 ]);
 const ADAPTER_IDS = new Set(["fixture-v1", "openai-chatgpt-v1"]);
+const OPERATIONS = new Set(["change_password", "verify_credentials"]);
 const STAGES = new Set([
   "launching",
   "logging_in",
@@ -55,6 +56,7 @@ const INBOUND_FIELDS = {
     "protocol_version",
     "type",
     "request_id",
+    "operation",
     "adapter_id",
     "cdp_endpoint",
     "account",
@@ -108,11 +110,21 @@ export function parseInbound(line) {
 
   switch (message.type) {
     case "start":
+      assertAllowedValue(
+        message.operation ?? "change_password",
+        OPERATIONS,
+        "operation",
+      );
       assertAllowedValue(message.adapter_id, ADAPTER_IDS, "adapter_id");
       assertString(message.cdp_endpoint, "cdp_endpoint", 1, 256);
       assertString(message.account, "account", 1, 320);
       assertString(message.current_password, "current_password", 1, 128);
-      assertString(message.new_password, "new_password", 12, 128);
+      assertString(
+        message.new_password,
+        "new_password",
+        message.operation === "verify_credentials" ? 0 : 12,
+        128,
+      );
       break;
     case "totp_code":
       if (typeof message.code !== "string" || !/^\d{6}$/.test(message.code)) {

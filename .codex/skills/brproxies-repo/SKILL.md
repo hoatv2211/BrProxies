@@ -18,6 +18,7 @@ Use this skill as first-pass repo memory. Read the minimum reference needed, the
 - Windows helper scripts: `smart launch/*.bat`, cleanup helper `cleanup-proxypool.ps1`.
 - Docs: `README.md`, `README.vn.md`, ProxyPool spec/plan under `docs/superpowers`.
 - SDKs: `sdks/python`, `sdks/node`, MCP server in `mcp`.
+- Account Keeper: use `$account-keeper` for its UI, Rust coordinator/store/worker, Node flow/adapters, worker bundle, live verification, and secret-bearing result handling.
 
 For more detail, read `references/repo-map.md`.
 
@@ -27,8 +28,9 @@ For more detail, read `references/repo-map.md`.
 2. For UI behavior, inspect `src/App.tsx` state/types/handlers and matching CSS before changing.
 3. For Tauri commands, update Rust handler, `invoke_handler!`, TypeScript invoke call, and settings/store structs together.
 4. For ProxyPool, keep Python API, scheduler/storage tests, Tauri bridge, and UI table/actions aligned.
-5. Preserve user changes in dirty worktree. Never revert unrelated files.
-6. Verify with focused commands from `references/commands.md`.
+5. For Account Keeper, load `$account-keeper` before inspecting credentials, password-state transitions, or provider automation.
+6. Preserve user changes in dirty worktree. Never revert unrelated files.
+7. Verify with focused commands from `references/commands.md`.
 
 ## ProxyPool Rules
 

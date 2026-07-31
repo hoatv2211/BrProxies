@@ -132,7 +132,9 @@ Ví dụ không hợp lệ gồm thiếu placeholder, có hai placeholder, `{ran
    plaintext UTF-8.
 3. Với text dán, bấm **Validate Input** để validate rõ ràng. File được validate
    ngay sau khi chọn.
-4. Bấm **Browse** dưới **Output file** và chọn đường dẫn output JSON plaintext.
+4. Giữ đường dẫn mặc định
+   `%USERPROFILE%\Documents\account-keeper-result.json`, hoặc bấm **Browse**
+   dưới **Output file** để chọn đường dẫn output JSON plaintext khác.
 5. Nhập password template cho batch, rồi bấm **Validate Template**.
 6. Kiểm tra identity account đã mask, tổng số account đã parse và lỗi theo dòng.
 7. Xác nhận rằng input đang dùng chứa secret plaintext và output cũng vậy.
@@ -161,7 +163,9 @@ Với mỗi tài khoản, Account Keeper:
 1. Resolve hoặc tạo profile BrProxies lâu dài của account.
 2. Launch profile với CDP được bật.
 3. Start một Node/Patchright worker mới cho account.
-4. Đăng nhập bằng phương thức email/password trực tiếp hiện tại.
+4. Classify session hiện tại. Nếu profile đã đăng nhập, worker bỏ qua việc nhập
+   credential và mở thẳng **Settings** > **Security and login** > **Password**.
+   Nếu chưa đăng nhập, worker dùng email/password trực tiếp.
 5. Chỉ tạo TOTP local khi form TOTP đang hiển thị yêu cầu.
 6. Pause để người vận hành xử lý khi có security challenge.
 7. Submit password đã sinh qua provider flow được hỗ trợ.
@@ -186,6 +190,27 @@ Stage bình thường gồm `queued`, `launching`, `logging_in`, `submitting_tot
 - **Keep profile running after completion** quyết định process của profile hoàn
   tất bình thường có tiếp tục mở hay không. Profile lâu dài và user-data vẫn
   được ánh xạ kể cả khi process đã stop.
+- **Logs** hiển thị snapshot đã redact của job đang chọn: timestamp, account đã
+  mask, stage, số lần thử và canonical error code.
+- **Clean** chỉ xóa progress checkpoint terminal có status `completed`,
+  `failed`, `cancelled` hoặc `abandoned`. Nút bị disable với job đang chạy và
+  `critical`; profile đã verify trong section 04 không bị xóa.
+
+## Profile Đã Verify
+
+Section **04 Profiles** chỉ liệt kê record trong vault đã verify đăng nhập bằng
+password mới với `status: success` và `password_state: changed`.
+
+- **Run** launch persistent profile đã ánh xạ.
+- **Delete** stop profile, xóa browser data local và xóa mapping trong Account
+  Keeper vault.
+- **Import Info** hiển thị metadata local cho 9Router hoặc Cockpit. **Copy JSON**
+  copy cùng payload đó.
+
+Payload import gồm `schema_version`, `kind`, `profile_id`, `account_status`,
+`last_verified_at`, `api_base_url` và `vault_ref` opaque. Payload không chứa
+account identifier, password, TOTP secret, cookie, access token, refresh token
+hoặc browser-session data.
 
 ## Can Thiệp Thủ Công
 
@@ -389,11 +414,10 @@ và resume rõ ràng sau khi restart Tauri. Workflow cũng xác nhận filename 
 BrProxies bình thường không thay đổi. Cleanup xóa QA root và dừng child process.
 Không thay fixture bằng account hoặc provider production.
 
-## Tích Hợp 9router Và Cockpit Trong Tương Lai
+## Ranh Giới Import 9Router Và Cockpit
 
-Tích hợp 9router hoặc Cockpit là vấn đề adapter/API trong tương lai, không phải
-tính năng export session. Tích hợp tương lai có thể dùng stable `profile_id`,
-account status đã redact và opaque reference local được người vận hành chấp
-thuận tới encrypted vault. Tích hợp không được yêu cầu export cookie, browser
-session, access token hoặc refresh token. Provider OAuth hoặc gateway-token
-support cần design và authorization review riêng.
+Payload import ở section 04 là local profile reference, không phải session
+export. Consumer có thể dùng stable `profile_id`, success metadata đã redact,
+local API base URL và opaque vault reference. Cookie export, browser-session
+export, credential export và token export vẫn nằm ngoài tính năng này. Provider
+OAuth hoặc gateway-token support cần design và authorization review riêng.

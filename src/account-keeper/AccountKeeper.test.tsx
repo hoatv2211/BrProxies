@@ -24,6 +24,74 @@ const inlineRecord = [
 const defaultTemplate = "BrP@{random:16}!";
 const defaultOutputPath = "C:\\Users\\synthetic\\Documents\\account-keeper-result.json";
 
+const failedJob = {
+  batch_id: "job-failed",
+  status: "failed",
+  updated_at: "2026-07-31T03:03:40Z",
+  output_path: defaultOutputPath,
+  keep_profile_running: true,
+  pause_after_current: false,
+  accounts: [{
+    account_key: "account-key",
+    masked_account: "o***r@example.test",
+    profile_id: "profile-1",
+    stage: "failed",
+    attempts: 1,
+    updated_at: "2026-07-31T03:03:40Z",
+    error_code: "flow_changed",
+  }],
+};
+
+const managedProfile = {
+  profile_id: "profile-1",
+  masked_account: "o***r@example.test",
+  status: "success",
+  last_verified_at: "2026-07-31T03:00:00Z",
+  running: false,
+  import_payload: {
+    schema_version: 1,
+    kind: "brproxies-account-keeper-profile",
+    profile_id: "profile-1",
+    account_status: "success",
+    last_verified_at: "2026-07-31T03:00:00Z",
+    api_base_url: "http://127.0.0.1:40325",
+    vault_ref: "account-keeper://vault/account-key",
+  },
+};
+
+async function defaultInvoke(command: string) {
+  if (command === "account_keeper_defaults") {
+    return { template: defaultTemplate, outputPath: defaultOutputPath };
+  }
+  if (command === "account_keeper_list_jobs") return [];
+  if (command === "account_keeper_list_profiles") return [];
+  if (command === "account_keeper_validate_input") {
+    return { validCount: 2, maskedAccounts: ["o***r@example.test", "a***n@example.test"] };
+  }
+  if (command === "account_keeper_validate_template") {
+    return {
+      valid: true,
+      finalLength: 22,
+      hasUppercase: true,
+      hasLowercase: true,
+      hasDigit: true,
+      hasSymbol: true,
+    };
+  }
+  if (command === "account_keeper_start_batch") {
+    return {
+      batch_id: "job-1",
+      status: "running",
+      updated_at: "2026-07-29T00:00:00Z",
+      output_path: "C:\\fixtures\\result.json",
+      keep_profile_running: false,
+      pause_after_current: false,
+      accounts: [],
+    };
+  }
+  return null;
+}
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((promiseResolve) => {
@@ -41,37 +109,7 @@ describe("AccountKeeper", () => {
     delete document.documentElement.dataset.accountKeeperQaConfig;
     delete document.documentElement.dataset.accountKeeperQaStatus;
     mocks.listen.mockResolvedValue(mocks.unlisten);
-    mocks.invoke.mockImplementation(async (command: string) => {
-      if (command === "account_keeper_defaults") {
-        return { template: defaultTemplate, outputPath: defaultOutputPath };
-      }
-      if (command === "account_keeper_list_jobs") return [];
-      if (command === "account_keeper_validate_input") {
-        return { validCount: 2, maskedAccounts: ["o***r@example.test", "a***n@example.test"] };
-      }
-      if (command === "account_keeper_validate_template") {
-        return {
-          valid: true,
-          finalLength: 22,
-          hasUppercase: true,
-          hasLowercase: true,
-          hasDigit: true,
-          hasSymbol: true,
-        };
-      }
-      if (command === "account_keeper_start_batch") {
-        return {
-          batch_id: "job-1",
-          status: "running",
-          updated_at: "2026-07-29T00:00:00Z",
-          output_path: "C:\\fixtures\\result.json",
-          keep_profile_running: false,
-          pause_after_current: false,
-          accounts: [],
-        };
-      }
-      return null;
-    });
+    mocks.invoke.mockImplementation(defaultInvoke);
   });
 
   afterEach(cleanup);
@@ -427,6 +465,64 @@ describe("AccountKeeper", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Paste text" }));
     expect(screen.getByLabelText("Account input")).toHaveValue("");
+  });
+
+  it("toggles redacted logs and cleans selected terminal progress", async () => {
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "account_keeper_list_jobs") return [failedJob];
+      if (command === "account_keeper_get_job") return failedJob;
+      if (command === "account_keeper_clean_progress") {
+        return { batchId: failedJob.batch_id, cleaned: true, forgottenRecoveryAccounts: 1 };
+      }
+      return defaultInvoke(command);
+    });
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    await screen.findByText("o***r@example.test");
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    const logs = await screen.findByRole("region", { name: "Progress logs" });
+    expect(logs).toHaveTextContent("flow_changed");
+    expect(logs).not.toHaveTextContent("current-password");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clean" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_clean_progress",
+      { request: { batchId: failedJob.batch_id } },
+    ));
+    await screen.findByText("No progress to display.");
+    expect(screen.getByText("Progress cleaned. Unknown recovery state forgotten; browser profile was preserved.")).toBeInTheDocument();
+  });
+
+  it("lists successful profiles with run, delete, and import actions", async () => {
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "account_keeper_list_profiles") return [managedProfile];
+      if (command === "account_keeper_open_profile") return { launched: true, already_running: false };
+      if (command === "account_keeper_delete_profile") return { profile_id: "profile-1", deleted: true };
+      return defaultInvoke(command);
+    });
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    expect(await screen.findByRole("heading", { name: "Profiles" })).toBeInTheDocument();
+    expect(screen.getByText("o***r@example.test")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run profile o***r@example.test" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_open_profile",
+      { request: { profileId: "profile-1" } },
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Import info o***r@example.test" }));
+    const importInfo = await screen.findByRole("region", { name: "9Router/Cockpit import info" });
+    const importPayload = importInfo.querySelector("pre")?.textContent ?? "";
+    expect(importPayload).toContain("brproxies-account-keeper-profile");
+    expect(importPayload).not.toContain("password");
+    expect(importPayload).not.toContain("totp");
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete profile o***r@example.test" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_delete_profile",
+      { request: { profileId: "profile-1" } },
+    ));
   });
 
   it("accepts synthetic QA configuration only through the dev bridge", async () => {

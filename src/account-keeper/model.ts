@@ -4,6 +4,8 @@ import type {
   InputSource,
   JobStatus,
   JobView,
+  ManagedProfileView,
+  ProgressLogEntry,
   ProgressEvent,
 } from "./types";
 
@@ -72,4 +74,28 @@ export function reduceProgress(jobs: readonly JobView[], event: ProgressEvent): 
   const nextJobs = [...jobs];
   nextJobs[jobIndex] = nextJob;
   return nextJobs;
+}
+
+export function isCleanableJob(job: JobView | null): boolean {
+  return job !== null
+    && !job.batchBlocked
+    && ["completed", "failed", "cancelled", "abandoned"].includes(job.status);
+}
+
+export function progressLogEntries(job: JobView | null): ProgressLogEntry[] {
+  if (!job) return [];
+  return job.accounts
+    .map((account) => ({
+      key: `${account.account_key}:${account.updated_at}:${account.stage}`,
+      updated_at: account.updated_at || job.updated_at,
+      masked_account: account.masked_account,
+      stage: account.stage,
+      attempts: account.attempts,
+      error_code: account.error_code,
+    }))
+    .sort((left, right) => left.updated_at.localeCompare(right.updated_at));
+}
+
+export function profileImportJson(profile: ManagedProfileView): string {
+  return JSON.stringify(profile.import_payload, null, 2);
 }

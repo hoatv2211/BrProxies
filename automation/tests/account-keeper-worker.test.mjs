@@ -80,6 +80,18 @@ test("creates dedicated page and switches to allowed-origin popup", async () => 
   assert.equal(await session.current(), popup);
 });
 
+test("rescans context pages when an allowed auth popup event is missed", async () => {
+  const context = new FakeContext([]);
+  const session = await createControlledPageSession(context, [
+    "https://chatgpt.com",
+    "https://auth.openai.com",
+  ]);
+  const popup = new FakePage("https://auth.openai.com/log-in/password");
+  context.existing.push(popup);
+
+  assert.equal(await session.current(), popup);
+});
+
 class FakePage extends EventEmitter {
   constructor(url) {
     super();

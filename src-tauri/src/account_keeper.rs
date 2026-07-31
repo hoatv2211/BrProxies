@@ -216,7 +216,7 @@ impl JobStatus {
         }
     }
 
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Queued => "queued",
             Self::Running => "running",
@@ -267,7 +267,7 @@ pub struct TemplateRequest {
     pub template: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartRequest {
     pub source: InputSource,
@@ -317,6 +317,7 @@ pub enum WorkerEvent {
 #[derive(Debug, Clone)]
 pub struct WorkerStart {
     pub request_id: String,
+    pub operation: String,
     pub adapter_id: String,
     pub cdp_endpoint: String,
     pub account: String,
@@ -425,6 +426,7 @@ impl WorkerTransport for NodeWorkerTransport {
                     "protocol_version": 1,
                     "type": "start",
                     "request_id": start.request_id,
+                    "operation": start.operation,
                     "adapter_id": start.adapter_id,
                     "cdp_endpoint": start.cdp_endpoint,
                     "account": start.account,
@@ -638,6 +640,51 @@ pub struct OpenProfileResult {
 }
 
 #[derive(Default)]
+struct NullEventSink;
+
+impl EventSink for NullEventSink {
+    fn emit(&self, _event: &ProgressEvent) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManagedProfileImportPayload {
+    pub schema_version: u32,
+    pub kind: String,
+    pub profile_id: String,
+    pub account_status: String,
+    pub last_verified_at: Option<String>,
+    pub api_base_url: String,
+    pub vault_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManagedProfileView {
+    pub profile_id: String,
+    pub masked_account: String,
+    pub status: String,
+    pub last_verified_at: Option<String>,
+    pub running: bool,
+    pub import_payload: ManagedProfileImportPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanProgressResult {
+    pub batch_id: String,
+    pub cleaned: bool,
+    pub forgotten_recovery_accounts: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteManagedProfileResult {
+    pub profile_id: String,
+    pub deleted: bool,
+}
+
+#[derive(Default)]
 struct ActiveBatch {
     batch_id: Option<String>,
     control_sender: Option<mpsc::Sender<JobControl>>,
@@ -758,32 +805,76 @@ struct TauriProfileRuntime {
     window: tauri::WebviewWindow,
 }
 
+#[derive(Clone, Default)]
+struct HeadlessProfileRuntime;
+
+fn local_profile_exists(profile_id: &str) -> bool {
+    crate::profile::load_raw(profile_id).is_ok()
+}
+
+fn local_fingerprints() -> Result<Vec<FingerprintCandidate>> {
+    Ok(crate::fingerprints::list_all()?
+        .into_iter()
+        .map(|entry| FingerprintCandidate::new(entry.id, entry.label, entry.platform))
+        .collect())
+}
+
+fn create_local_profile(
+    window: Option<&tauri::WebviewWindow>,
+    fingerprint_id: &str,
+    name: &str,
+) -> Result<String> {
+    let mut payload = crate::merge_library_fingerprint(fingerprint_id)
+        .map_err(anyhow::Error::msg)?;
+    payload.insert(
+        "name".to_string(),
+        serde_json::Value::String(name.to_string()),
+    );
+    let value = serde_json::Value::Object(payload);
+    if !value.is_object() {
+        bail!("Account Keeper fingerprint payload is not an object");
+    }
+    let profile = crate::save_profile_core(window, value, true).map_err(anyhow::Error::msg)?;
+    Ok(profile.id)
+}
+
+fn profile_cdp_from_disk(profile_id: &str) -> Option<String> {
+    let path = crate::profile::user_data_dir(profile_id)
+        .ok()?
+        .join("DevToolsActivePort");
+    let contents = std::fs::read_to_string(path).ok()?;
+    let port = contents.lines().next()?.trim().parse::<u16>().ok()?;
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&address, Duration::from_millis(200)).ok()?;
+    Some(format!("http://127.0.0.1:{port}"))
+}
+
+fn local_profile_running(profile_id: &str) -> bool {
+    crate::process::Tracker::shared()
+        .running()
+        .iter()
+        .any(|profile| profile.profile_id == profile_id)
+        || profile_cdp_from_disk(profile_id).is_some()
+}
+
+fn local_profile_cdp(profile_id: &str) -> Option<String> {
+    crate::process::Tracker::shared()
+        .cdp(profile_id)
+        .map(|cdp| cdp.http_url)
+        .or_else(|| profile_cdp_from_disk(profile_id))
+}
+
 impl ProfileRuntime for TauriProfileRuntime {
     fn profile_exists(&self, profile_id: &str) -> bool {
-        crate::profile::load_raw(profile_id).is_ok()
+        local_profile_exists(profile_id)
     }
 
     fn list_fingerprints(&self) -> Result<Vec<FingerprintCandidate>> {
-        Ok(crate::fingerprints::list_all()?
-            .into_iter()
-            .map(|entry| FingerprintCandidate::new(entry.id, entry.label, entry.platform))
-            .collect())
+        local_fingerprints()
     }
 
     fn create_profile(&self, fingerprint_id: &str, name: &str) -> Result<String> {
-        let mut payload =
-            crate::merge_library_fingerprint(fingerprint_id).map_err(anyhow::Error::msg)?;
-        payload.insert(
-            "name".to_string(),
-            serde_json::Value::String(name.to_string()),
-        );
-        let value = serde_json::Value::Object(payload);
-        if !value.is_object() {
-            bail!("Account Keeper fingerprint payload is not an object");
-        }
-        let profile = crate::save_profile_core(Some(&self.window), value, true)
-            .map_err(anyhow::Error::msg)?;
-        Ok(profile.id)
+        create_local_profile(Some(&self.window), fingerprint_id, name)
     }
 
     fn set_folder(&self, profile_id: &str, folder: &str) -> Result<()> {
@@ -791,16 +882,11 @@ impl ProfileRuntime for TauriProfileRuntime {
     }
 
     fn is_running(&self, profile_id: &str) -> bool {
-        crate::process::Tracker::shared()
-            .running()
-            .iter()
-            .any(|profile| profile.profile_id == profile_id)
+        local_profile_running(profile_id)
     }
 
     fn cdp_http_url(&self, profile_id: &str) -> Option<String> {
-        crate::process::Tracker::shared()
-            .cdp(profile_id)
-            .map(|cdp| cdp.http_url)
+        local_profile_cdp(profile_id)
     }
 
     fn launch_with_cdp<'a>(&'a self, profile_id: &'a str) -> BoxFuture<'a, Result<Option<String>>> {
@@ -895,6 +981,43 @@ pub fn validate_template_value(template: &str) -> Result<TemplateValidationDto> 
         has_digit: true,
         has_symbol: true,
     })
+}
+
+impl ProfileRuntime for HeadlessProfileRuntime {
+    fn profile_exists(&self, profile_id: &str) -> bool {
+        local_profile_exists(profile_id)
+    }
+
+    fn list_fingerprints(&self) -> Result<Vec<FingerprintCandidate>> {
+        local_fingerprints()
+    }
+
+    fn create_profile(&self, fingerprint_id: &str, name: &str) -> Result<String> {
+        create_local_profile(None, fingerprint_id, name)
+    }
+
+    fn set_folder(&self, profile_id: &str, folder: &str) -> Result<()> {
+        crate::profile::set_folder(profile_id, folder)
+    }
+
+    fn is_running(&self, profile_id: &str) -> bool {
+        local_profile_running(profile_id)
+    }
+
+    fn cdp_http_url(&self, profile_id: &str) -> Option<String> {
+        local_profile_cdp(profile_id)
+    }
+
+    fn launch_with_cdp<'a>(&'a self, profile_id: &'a str) -> BoxFuture<'a, Result<Option<String>>> {
+        Box::pin(async move {
+            let outcome = crate::launch::launch_profile(profile_id, true, false).await?;
+            Ok(outcome.cdp.map(|cdp| cdp.http_url))
+        })
+    }
+
+    fn kill_profile<'a>(&'a self, profile_id: &'a str) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async move { crate::process::Tracker::shared().kill(profile_id).await })
+    }
 }
 
 fn default_config_for(document_dir: &Path) -> Result<AccountKeeperDefaultsDto> {
@@ -1192,23 +1315,10 @@ async fn start_batch(
     validate_start_request(&request)?;
     let batch_id = uuid::Uuid::new_v4().to_string();
     let receiver = claim_active_batch(&batch_id).await?;
-    let setup = (|| -> Result<(JobCheckpoint, VaultFile)> {
-        let imports = read_input_accounts(&request.source)?;
-        if imports.is_empty() {
-            bail!("Account Keeper input contains no accounts");
-        }
-        let mut vault = crate::account_keeper_store::load_vault()?;
-        let runtime = TauriProfileRuntime {
-            window: window.clone(),
-        };
-        let now = SystemClock.now();
-        let checkpoint = merge_imports_and_checkpoint(
-            &runtime, &mut vault, &imports, &request, &batch_id, &now,
-        )?;
-        crate::account_keeper_store::save_vault(&vault)?;
-        crate::account_keeper_store::save_job(&checkpoint)?;
-        Ok((checkpoint, vault))
-    })();
+    let runtime = TauriProfileRuntime {
+        window: window.clone(),
+    };
+    let setup = prepare_new_batch(&runtime, &request, &batch_id);
 
     let (checkpoint, vault) = match setup {
         Ok(value) => value,
@@ -1222,6 +1332,348 @@ async fn start_batch(
     Ok(view)
 }
 
+fn prepare_new_batch(
+    runtime: &dyn ProfileRuntime,
+    request: &StartRequest,
+    batch_id: &str,
+) -> Result<(JobCheckpoint, VaultFile)> {
+    let imports = read_input_accounts(&request.source)?;
+    if imports.is_empty() {
+        bail!("Account Keeper input contains no accounts");
+    }
+    let mut vault = crate::account_keeper_store::load_vault()?;
+    let now = SystemClock.now();
+    let checkpoint = merge_imports_and_checkpoint(
+        runtime,
+        &mut vault,
+        &imports,
+        request,
+        batch_id,
+        &now,
+    )?;
+    crate::account_keeper_store::save_vault(&vault)?;
+    crate::account_keeper_store::save_job(&checkpoint)?;
+    Ok((checkpoint, vault))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadlessRunResult {
+    pub job: JobView,
+    pub stopped_for_manual: bool,
+    pub timed_out: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HeadlessRecoveryState {
+    pub password_state: String,
+    pub has_pending_password: bool,
+    pub has_last_verified_at: bool,
+    pub last_status: Option<String>,
+    pub profile_running: bool,
+    pub latest_stage: Option<AccountStage>,
+    pub latest_error_code: Option<String>,
+}
+
+pub fn inspect_headless_recovery(source: &InputSource) -> Result<Option<HeadlessRecoveryState>> {
+    let imports = read_input_accounts(source)?;
+    if imports.len() != 1 {
+        return Ok(None);
+    }
+    let account_key = stable_account_key(&imports[0].normalized_account);
+    let vault = crate::account_keeper_store::load_vault()?;
+    let Some(account) = vault
+        .accounts
+        .iter()
+        .find(|account| account.account_key == account_key)
+    else {
+        return Ok(None);
+    };
+    let mut latest = None;
+    for checkpoint in crate::account_keeper_store::list_jobs()? {
+        if let Some(candidate) = checkpoint
+            .accounts
+            .iter()
+            .find(|candidate| candidate.account_key == account_key)
+        {
+            let replace = latest
+                .as_ref()
+                .is_none_or(|(updated_at, _, _): &(String, String, Option<String>)| {
+                    checkpoint.updated_at > *updated_at
+                });
+            if replace {
+                latest = Some((
+                    checkpoint.updated_at.clone(),
+                    candidate.state.clone(),
+                    candidate.error.clone(),
+                ));
+            }
+        }
+    }
+    let (latest_stage, latest_error_code) = latest
+        .map(|(_, state, error)| {
+            (
+                Some(account_stage_from_checkpoint(&state)),
+                error.as_deref().map(safe_error_code),
+            )
+        })
+        .unwrap_or((None, None));
+    Ok(Some(HeadlessRecoveryState {
+        password_state: match account.password_state {
+            PasswordState::Original => "original",
+            PasswordState::Changed => "changed",
+            PasswordState::Unknown => "unknown",
+        }
+        .to_string(),
+        has_pending_password: account.pending_password.is_some(),
+        has_last_verified_at: account.last_verified_at.is_some(),
+        last_status: account.last_status.as_deref().map(safe_error_code),
+        profile_running: local_profile_running(&account.profile_id),
+        latest_stage,
+        latest_error_code,
+    }))
+}
+
+pub async fn run_headless_batch(
+    request: StartRequest,
+    timeout_seconds: u64,
+) -> Result<HeadlessRunResult> {
+    ensure_account_keeper_supported()?;
+    validate_start_request(&request)?;
+    let batch_id = uuid::Uuid::new_v4().to_string();
+    let receiver = claim_active_batch(&batch_id).await?;
+    let runtime = HeadlessProfileRuntime;
+    if let Err(error) = prepare_new_batch(&runtime, &request, &batch_id) {
+        release_active_batch(&batch_id).await;
+        return Err(error);
+    }
+
+    let coordinator = Coordinator {
+        clock: Arc::new(SystemClock),
+        profiles: Arc::new(runtime),
+        workers: Arc::new(NodeWorkerTransport {
+            resource_root: None,
+        }),
+        events: Arc::new(NullEventSink),
+    };
+    let mut run = Box::pin(coordinator.run_batch(&batch_id, receiver));
+    let deadline = tokio::time::Instant::now()
+        + Duration::from_secs(timeout_seconds.clamp(30, 3600));
+    let mut poll = tokio::time::interval(Duration::from_millis(250));
+    let mut stopped_for_manual = false;
+    let mut timed_out = false;
+
+    let run_result = loop {
+        tokio::select! {
+            result = &mut run => break result,
+            _ = poll.tick() => {
+                if let Ok(view) = load_job_view(&batch_id) {
+                    if view.status == JobStatus::WaitingManual {
+                        stopped_for_manual = true;
+                        let _ = send_active_control(&batch_id, JobControl::Cancel).await;
+                        break match tokio::time::timeout(Duration::from_secs(15), &mut run).await {
+                            Ok(result) => result,
+                            Err(_) => Err(anyhow::anyhow!("Account Keeper manual stop timed out")),
+                        };
+                    }
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    timed_out = true;
+                    let _ = send_active_control(&batch_id, JobControl::Cancel).await;
+                    break match tokio::time::timeout(Duration::from_secs(15), &mut run).await {
+                        Ok(result) => result,
+                        Err(_) => Err(anyhow::anyhow!("Account Keeper timeout cancellation failed")),
+                    };
+                }
+            }
+        }
+    };
+
+    if let Err(error) = run_result {
+        let _ = mark_job_run_error(
+            &batch_id,
+            &error.to_string(),
+            coordinator.clock.as_ref(),
+            coordinator.events.as_ref(),
+        );
+    }
+    release_active_batch(&batch_id).await;
+    let job = load_job_view(&batch_id)?;
+    Ok(HeadlessRunResult {
+        job,
+        stopped_for_manual,
+        timed_out,
+    })
+}
+
+pub async fn recover_headless_credentials(
+    source: &InputSource,
+    timeout_seconds: u64,
+) -> Result<()> {
+    let imports = read_input_accounts(source)?;
+    if imports.len() != 1 {
+        bail!("Account Keeper credential recovery requires exactly one account");
+    }
+    let imported = &imports[0];
+    let account_key = stable_account_key(&imported.normalized_account);
+    let mut vault = crate::account_keeper_store::load_vault()?;
+    let vault_index = vault
+        .accounts
+        .iter()
+        .position(|account| account.account_key == account_key)
+        .ok_or_else(|| anyhow::anyhow!("Account Keeper recovery mapping is missing"))?;
+    if vault.accounts[vault_index].password_state != PasswordState::Unknown {
+        return Ok(());
+    }
+    let profile_id = vault.accounts[vault_index].profile_id.clone();
+    let now = verify_headless_password(
+        imported,
+        &profile_id,
+        &imported.current_password,
+        timeout_seconds,
+    )
+    .await?;
+    let account = &mut vault.accounts[vault_index];
+    account.current_password = imported.current_password.clone();
+    account.pending_password = None;
+    account.totp_secret = Some(imported.totp_secret.clone());
+    account.password_state = PasswordState::Original;
+    account.last_verified_at = Some(now);
+    account.last_status = Some("recovered".to_string());
+    crate::account_keeper_store::save_vault(&vault)?;
+    Ok(())
+}
+
+pub async fn recover_headless_pending_credentials(
+    source: &InputSource,
+    timeout_seconds: u64,
+) -> Result<JobView> {
+    let imports = read_input_accounts(source)?;
+    if imports.len() != 1 {
+        bail!("Account Keeper pending recovery requires exactly one account");
+    }
+    let imported = &imports[0];
+    let account_key = stable_account_key(&imported.normalized_account);
+    let mut vault = crate::account_keeper_store::load_vault()?;
+    let vault_index = vault
+        .accounts
+        .iter()
+        .position(|account| account.account_key == account_key)
+        .ok_or_else(|| anyhow::anyhow!("Account Keeper pending recovery mapping is missing"))?;
+    let vault_account = &vault.accounts[vault_index];
+    if vault_account.password_state != PasswordState::Unknown {
+        bail!("Account Keeper pending recovery is not required");
+    }
+    let pending_password = vault_account
+        .pending_password
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("Account Keeper pending recovery password is unavailable"))?;
+    let batch_id = vault_account
+        .last_job_id
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("Account Keeper pending recovery checkpoint is unavailable"))?;
+    let profile_id = vault_account.profile_id.clone();
+    let now = verify_headless_password(
+        imported,
+        &profile_id,
+        &pending_password,
+        timeout_seconds,
+    )
+    .await?;
+
+    let mut checkpoint = crate::account_keeper_store::load_job(&batch_id)?;
+    let checkpoint_account = checkpoint
+        .accounts
+        .iter_mut()
+        .find(|account| account.account_key == account_key)
+        .ok_or_else(|| anyhow::anyhow!("Account Keeper pending recovery account is unavailable"))?;
+    if checkpoint_account.state != "critical" {
+        bail!("Account Keeper pending recovery checkpoint is not critical");
+    }
+    checkpoint_account.state = "success".to_string();
+    checkpoint_account.error = None;
+    checkpoint_account.updated_at = now.clone();
+    checkpoint.status = final_job_status(&checkpoint).to_string();
+
+    let account = &mut vault.accounts[vault_index];
+    account.current_password = pending_password;
+    account.pending_password = None;
+    account.totp_secret = Some(imported.totp_secret.clone());
+    account.password_state = PasswordState::Changed;
+    account.last_verified_at = Some(now);
+    account.last_status = Some("success".to_string());
+    persist_snapshot(
+        &mut checkpoint,
+        &vault,
+        &SystemClock,
+        &NullEventSink,
+    )?;
+    Ok(job_view_from_checkpoint(&checkpoint, &vault))
+}
+
+async fn verify_headless_password(
+    imported: &ImportedAccount,
+    profile_id: &str,
+    candidate_password: &str,
+    timeout_seconds: u64,
+) -> Result<String> {
+    let runtime = HeadlessProfileRuntime;
+    let cdp_endpoint = prepare_profile_cdp(&runtime, &profile_id).await?;
+    let transport = NodeWorkerTransport {
+        resource_root: None,
+    };
+    let mut session = transport
+        .spawn(WorkerStart {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            operation: "verify_credentials".to_string(),
+            adapter_id: "openai-chatgpt-v1".to_string(),
+            cdp_endpoint,
+            account: imported.account.clone(),
+            current_password: candidate_password.to_string(),
+            new_password: String::new(),
+        })
+        .await?;
+
+    let verification = async {
+        loop {
+            match session.next_event().await? {
+                Some(WorkerEvent::Stage(_)) => {}
+                Some(WorkerEvent::TotpRequired) => {
+                    session
+                        .send(WorkerCommand::TotpCode(totp_now(&imported.totp_secret)?))
+                        .await?;
+                }
+                Some(WorkerEvent::Verified) => return Ok(()),
+                Some(WorkerEvent::ManualRequired { .. }) => {
+                    let _ = session.send(WorkerCommand::Cancel).await;
+                    bail!("Account Keeper credential recovery requires manual action");
+                }
+                Some(WorkerEvent::Failed { code }) => {
+                    bail!("Account Keeper credential recovery failed: {}", safe_error_code(&code));
+                }
+                Some(WorkerEvent::PasswordSubmitRequired | WorkerEvent::PasswordChanged) => {
+                    bail!("Account Keeper recovery worker attempted a password change");
+                }
+                None => bail!("Account Keeper credential recovery worker stopped"),
+            }
+        }
+    };
+    let verified = match tokio::time::timeout(
+        Duration::from_secs(timeout_seconds.clamp(30, 3600)),
+        verification,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            let _ = session.send(WorkerCommand::Cancel).await;
+            Err(anyhow::anyhow!("Account Keeper credential recovery timed out"))
+        }
+    };
+    let _ = session.finish().await;
+    verified?;
+    Ok(SystemClock.now())
+}
+
 #[tauri::command]
 pub fn account_keeper_list_jobs() -> std::result::Result<Vec<JobView>, String> {
     let vault = crate::account_keeper_store::load_vault().map_err(|error| error.to_string())?;
@@ -1232,6 +1684,22 @@ pub fn account_keeper_list_jobs() -> std::result::Result<Vec<JobView>, String> {
                 .collect()
         })
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn account_keeper_list_profiles() -> std::result::Result<Vec<ManagedProfileView>, String> {
+    let vault = crate::account_keeper_store::load_vault().map_err(|error| error.to_string())?;
+    let running = crate::process::Tracker::shared()
+        .running()
+        .into_iter()
+        .map(|profile| profile.profile_id)
+        .collect::<HashSet<_>>();
+    let settings = crate::settings::load().map_err(|error| error.to_string())?;
+    Ok(managed_profile_views(
+        &vault,
+        &running,
+        &format!("http://127.0.0.1:{}", settings.api_port),
+    ))
 }
 
 #[tauri::command]
@@ -1433,6 +1901,53 @@ pub async fn account_keeper_abandon_job(
     })
 }
 
+fn can_clean_checkpoint_status(status: &str) -> bool {
+    matches!(status, "completed" | "failed" | "cancelled" | "abandoned")
+}
+
+fn forget_unknown_recovery_accounts(vault: &mut VaultFile, checkpoint: &JobCheckpoint) -> usize {
+    let account_keys = checkpoint
+        .accounts
+        .iter()
+        .map(|account| account.account_key.as_str())
+        .collect::<HashSet<_>>();
+    let before = vault.accounts.len();
+    vault.accounts.retain(|account| {
+        account.password_state != PasswordState::Unknown
+            || !account_keys.contains(account.account_key.as_str())
+    });
+    before.saturating_sub(vault.accounts.len())
+}
+
+#[tauri::command]
+pub async fn account_keeper_clean_progress(
+    request: BatchRequest,
+) -> std::result::Result<CleanProgressResult, String> {
+    let active = active_batch().lock().await;
+    if active.batch_id.as_deref() == Some(request.batch_id.as_str()) {
+        return Err("active Account Keeper progress cannot be cleaned".to_string());
+    }
+    drop(active);
+    let checkpoint = crate::account_keeper_store::load_job(&request.batch_id)
+        .map_err(|error| error.to_string())?;
+    if !can_clean_checkpoint_status(&checkpoint.status) {
+        return Err("only terminal Account Keeper progress can be cleaned".to_string());
+    }
+    let mut vault =
+        crate::account_keeper_store::load_vault().map_err(|error| error.to_string())?;
+    let forgotten_recovery_accounts = forget_unknown_recovery_accounts(&mut vault, &checkpoint);
+    if forgotten_recovery_accounts > 0 {
+        crate::account_keeper_store::save_vault(&vault).map_err(|error| error.to_string())?;
+    }
+    crate::account_keeper_store::delete_job(&request.batch_id)
+        .map_err(|error| error.to_string())?;
+    Ok(CleanProgressResult {
+        batch_id: request.batch_id,
+        cleaned: true,
+        forgotten_recovery_accounts,
+    })
+}
+
 #[tauri::command]
 pub fn account_keeper_export_result(
     request: ExportRequest,
@@ -1464,6 +1979,53 @@ pub async fn account_keeper_open_profile(
         profile_id: request.profile_id,
         launched: true,
         already_running: false,
+    })
+}
+
+#[tauri::command]
+pub async fn account_keeper_delete_profile(
+    request: OpenProfileRequest,
+) -> std::result::Result<DeleteManagedProfileResult, String> {
+    let active = active_batch().lock().await;
+    if active.batch_id.is_some() {
+        return Err("finish the active Account Keeper batch before deleting a profile".to_string());
+    }
+    drop(active);
+
+    let mut vault = crate::account_keeper_store::load_vault().map_err(|error| error.to_string())?;
+    let index = vault
+        .accounts
+        .iter()
+        .position(|account| {
+            account.profile_id == request.profile_id
+                && account.password_state == PasswordState::Changed
+                && account.last_status.as_deref() == Some("success")
+        })
+        .ok_or_else(|| "Account Keeper managed profile was not found".to_string())?;
+
+    if crate::process::Tracker::shared()
+        .kill(&request.profile_id)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        for _ in 0..60 {
+            if !crate::process::Tracker::shared()
+                .running()
+                .iter()
+                .any(|profile| profile.profile_id == request.profile_id)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    crate::profile::delete(&request.profile_id).map_err(|error| error.to_string())?;
+    vault.accounts.remove(index);
+    crate::account_keeper_store::save_vault(&vault).map_err(|error| error.to_string())?;
+    Ok(DeleteManagedProfileResult {
+        profile_id: request.profile_id,
+        deleted: true,
     })
 }
 
@@ -1835,6 +2397,7 @@ impl Coordinator {
             let request_id = uuid::Uuid::new_v4().to_string();
             let start = WorkerStart {
                 request_id,
+                operation: "change_password".to_string(),
                 adapter_id: checkpoint.adapter_id.clone(),
                 cdp_endpoint,
                 account: vault.accounts[vault_index].account.clone(),
@@ -2570,6 +3133,47 @@ pub fn job_view_from_checkpoint(checkpoint: &JobCheckpoint, vault: &VaultFile) -
     }
 }
 
+fn managed_profile_views(
+    vault: &VaultFile,
+    running: &HashSet<String>,
+    api_base_url: &str,
+) -> Vec<ManagedProfileView> {
+    let mut profiles = vault
+        .accounts
+        .iter()
+        .filter(|account| {
+            account.password_state == PasswordState::Changed
+                && account.last_status.as_deref() == Some("success")
+        })
+        .map(|account| {
+            let last_verified_at = account.last_verified_at.clone();
+            ManagedProfileView {
+                profile_id: account.profile_id.clone(),
+                masked_account: mask_account(&account.account),
+                status: "success".to_string(),
+                last_verified_at: last_verified_at.clone(),
+                running: running.contains(&account.profile_id),
+                import_payload: ManagedProfileImportPayload {
+                    schema_version: SCHEMA_VERSION,
+                    kind: "brproxies-account-keeper-profile".to_string(),
+                    profile_id: account.profile_id.clone(),
+                    account_status: "success".to_string(),
+                    last_verified_at,
+                    api_base_url: api_base_url.to_string(),
+                    vault_ref: format!("account-keeper://vault/{}", account.account_key),
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    profiles.sort_by(|left, right| {
+        right
+            .last_verified_at
+            .cmp(&left.last_verified_at)
+            .then_with(|| left.masked_account.cmp(&right.masked_account))
+    });
+    profiles
+}
+
 pub fn apply_worker_event(
     state: &mut AccountRunState,
     vault: &mut VaultAccount,
@@ -3005,6 +3609,157 @@ mod tests {
         for forbidden in ["password", "totp", "secret", "token", "owner@example.test"] {
             assert!(!serialized.to_lowercase().contains(forbidden));
         }
+    }
+
+    #[test]
+    fn managed_profiles_include_only_verified_successes_without_secrets() {
+        let vault = VaultFile {
+            schema_version: crate::account_keeper_store::SCHEMA_VERSION,
+            accounts: vec![
+                VaultAccount {
+                    account_key: "success-key".into(),
+                    account: "owner@example.test".into(),
+                    current_password: "secret-current-password".into(),
+                    pending_password: None,
+                    totp_secret: Some("JBSWY3DPEHPK3PXP".into()),
+                    profile_id: "profile-success".into(),
+                    password_state: PasswordState::Changed,
+                    last_verified_at: Some("2026-07-31T03:00:00Z".into()),
+                    last_job_id: Some("job-success".into()),
+                    last_status: Some("success".into()),
+                },
+                VaultAccount {
+                    account_key: "failed-key".into(),
+                    account: "failed@example.test".into(),
+                    current_password: "failed-password".into(),
+                    pending_password: None,
+                    totp_secret: None,
+                    profile_id: "profile-failed".into(),
+                    password_state: PasswordState::Original,
+                    last_verified_at: None,
+                    last_job_id: Some("job-failed".into()),
+                    last_status: Some("failed".into()),
+                },
+            ],
+        };
+        let running = std::collections::HashSet::from(["profile-success".to_string()]);
+
+        let profiles = managed_profile_views(
+            &vault,
+            &running,
+            "http://127.0.0.1:40325",
+        );
+
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].profile_id, "profile-success");
+        assert!(profiles[0].running);
+        assert_eq!(profiles[0].import_payload.account_status, "success");
+        let serialized = serde_json::to_string(&profiles).unwrap().to_lowercase();
+        for forbidden in [
+            "owner@example.test",
+            "secret-current-password",
+            "jbswy3dpehpk3pxp",
+            "failed-password",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn clean_progress_accepts_safe_terminal_statuses_only() {
+        for status in ["completed", "failed", "cancelled", "abandoned"] {
+            assert!(can_clean_checkpoint_status(status));
+        }
+        for status in ["queued", "running", "paused", "waiting_manual", "critical"] {
+            assert!(!can_clean_checkpoint_status(status));
+        }
+    }
+
+    #[test]
+    fn clean_progress_forgets_only_matching_unknown_recovery_accounts() {
+        let mut vault = VaultFile {
+            schema_version: 1,
+            accounts: vec![
+                VaultAccount {
+                    account_key: "unknown-key".into(),
+                    account: "unknown@example.test".into(),
+                    current_password: "synthetic-current".into(),
+                    pending_password: Some("synthetic-pending".into()),
+                    totp_secret: Some("JBSWY3DPEHPK3PXP".into()),
+                    profile_id: "unknown-profile".into(),
+                    password_state: PasswordState::Unknown,
+                    last_verified_at: None,
+                    last_job_id: Some("batch-id".into()),
+                    last_status: Some("critical".into()),
+                },
+                VaultAccount {
+                    account_key: "verified-key".into(),
+                    account: "verified@example.test".into(),
+                    current_password: "synthetic-verified".into(),
+                    pending_password: None,
+                    totp_secret: Some("JBSWY3DPEHPK3PXP".into()),
+                    profile_id: "verified-profile".into(),
+                    password_state: PasswordState::Changed,
+                    last_verified_at: Some("2026-07-31T00:00:00Z".into()),
+                    last_job_id: Some("batch-id".into()),
+                    last_status: Some("success".into()),
+                },
+                VaultAccount {
+                    account_key: "unrelated-key".into(),
+                    account: "unrelated@example.test".into(),
+                    current_password: "synthetic-unrelated".into(),
+                    pending_password: Some("synthetic-pending".into()),
+                    totp_secret: Some("JBSWY3DPEHPK3PXP".into()),
+                    profile_id: "unrelated-profile".into(),
+                    password_state: PasswordState::Unknown,
+                    last_verified_at: None,
+                    last_job_id: Some("other-batch".into()),
+                    last_status: Some("critical".into()),
+                },
+            ],
+        };
+        let checkpoint = JobCheckpoint {
+            schema_version: 1,
+            batch_id: "batch-id".into(),
+            output_path: String::new(),
+            template: String::new(),
+            adapter_id: "openai-chatgpt-v1".into(),
+            keep_profile_running: true,
+            pause_after_current: false,
+            status: "failed".into(),
+            updated_at: "2026-07-31T00:00:00Z".into(),
+            accounts: vec![
+                AccountCheckpoint {
+                    account_key: "unknown-key".into(),
+                    profile_id: Some("unknown-profile".into()),
+                    state: "failed".into(),
+                    attempts: 1,
+                    updated_at: "2026-07-31T00:00:00Z".into(),
+                    error: Some("launch_failed".into()),
+                },
+                AccountCheckpoint {
+                    account_key: "verified-key".into(),
+                    profile_id: Some("verified-profile".into()),
+                    state: "success".into(),
+                    attempts: 1,
+                    updated_at: "2026-07-31T00:00:00Z".into(),
+                    error: None,
+                },
+            ],
+        };
+
+        let forgotten = forget_unknown_recovery_accounts(&mut vault, &checkpoint);
+
+        assert_eq!(forgotten, 1);
+        assert_eq!(vault.accounts.len(), 2);
+        assert!(vault
+            .accounts
+            .iter()
+            .any(|account| account.account_key == "verified-key"));
+        assert!(vault
+            .accounts
+            .iter()
+            .any(|account| account.account_key == "unrelated-key"));
     }
 
     #[test]

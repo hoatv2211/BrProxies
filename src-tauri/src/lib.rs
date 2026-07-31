@@ -1,6 +1,7 @@
 // BrProxies Tauri backend.
 
-mod account_keeper;
+pub mod account_keeper;
+pub mod account_keeper_agent;
 mod account_keeper_format;
 mod account_keeper_store;
 mod account_keeper_worker;
@@ -1159,6 +1160,7 @@ pub fn run() {
             account_keeper::account_keeper_validate_template,
             account_keeper::account_keeper_start_batch,
             account_keeper::account_keeper_list_jobs,
+            account_keeper::account_keeper_list_profiles,
             account_keeper::account_keeper_get_job,
             account_keeper::account_keeper_pause_after_current,
             account_keeper::account_keeper_cancel_batch,
@@ -1166,8 +1168,10 @@ pub fn run() {
             account_keeper::account_keeper_mark_failed,
             account_keeper::account_keeper_resume_job,
             account_keeper::account_keeper_abandon_job,
+            account_keeper::account_keeper_clean_progress,
             account_keeper::account_keeper_export_result,
             account_keeper::account_keeper_open_profile,
+            account_keeper::account_keeper_delete_profile,
             actions_list,
             actions_run,
             actions_config_path,

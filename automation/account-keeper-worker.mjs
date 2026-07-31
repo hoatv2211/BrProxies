@@ -69,6 +69,7 @@ async function runStart(request, session) {
     }
     const context = contexts[0];
     const adapter = getAdapter(request.adapter_id);
+    await adapter.prepareContext?.(context);
     const pageSession = await createControlledPageSession(
       context,
       adapter.allowedOrigins,

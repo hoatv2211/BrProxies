@@ -136,7 +136,9 @@ length is outside 12-128 characters.
    UTF-8 plaintext input file.
 3. For pasted text, click **Validate Input** explicitly. A selected file is
    validated immediately after selection.
-4. Click **Browse** under **Output file** and choose the plaintext output JSON path.
+4. Keep the default `%USERPROFILE%\Documents\account-keeper-result.json`, or
+   click **Browse** under **Output file** and choose another plaintext output
+   JSON path.
 5. Enter the batch password template, then click **Validate Template**.
 6. Review the masked account identities, parsed account count, and any
    line-specific errors.
@@ -166,7 +168,9 @@ For each account, Account Keeper:
 1. Resolves or creates the account's persistent BrProxies profile.
 2. Launches that profile with CDP enabled.
 3. Starts a fresh Node/Patchright worker for the account.
-4. Signs in with the current direct email/password method.
+4. Classifies the current session. If the profile is already signed in, it
+   skips credential submission and opens **Settings** > **Security and login**
+   > **Password** directly. Otherwise it signs in with direct email/password.
 5. Generates a local TOTP code only when requested by the visible TOTP form.
 6. Pauses for manual action when a security challenge appears.
 7. Submits the generated password through the supported provider flow.
@@ -191,6 +195,29 @@ states are `waiting_manual`, `failed`, `critical`, and `cancelled`.
 - **Keep profile running after completion** controls whether a normally
   completed profile process remains open. The persistent profile and its
   user-data directory remain mapped even when the process is stopped.
+- **Logs** shows a redacted snapshot for the selected job: timestamp, masked
+  account, stage, attempt count, and canonical error code only.
+- **Clean** removes a selected terminal progress checkpoint with status
+  `completed`, `failed`, `cancelled`, or `abandoned`. If the checkpoint contains
+  an account whose encrypted vault state is `unknown`, Clean also forgets that
+  recovery record so the account can be imported again. It is disabled for
+  active and `critical` jobs; verified accounts and browser profile data remain.
+
+## Verified Profiles
+
+Section **04 Profiles** lists only vault records that completed new-password
+verification with `status: success` and `password_state: changed`.
+
+- **Run** launches the persistent mapped profile.
+- **Delete** stops the profile, removes its local browser data, and deletes its
+  Account Keeper vault mapping.
+- **Import Info** exposes local metadata for 9Router or Cockpit. **Copy JSON**
+  copies the same payload.
+
+The import payload contains `schema_version`, `kind`, `profile_id`,
+`account_status`, `last_verified_at`, `api_base_url`, and an opaque `vault_ref`.
+It never contains the account identifier, password, TOTP secret, cookies,
+access tokens, refresh tokens, or browser-session data.
 
 ## Manual Intervention
 
@@ -404,11 +431,11 @@ normal BrProxies profile filenames remain unchanged. Cleanup removes the QA
 root and stops its child processes. Never substitute a production account or
 provider for this fixture.
 
-## Future 9router And Cockpit Integration
+## 9Router And Cockpit Import Boundary
 
-9router or Cockpit integration is a future adapter/API concern, not a session
-export feature. A future integration may use stable `profile_id` values,
-redacted account status, and an operator-approved opaque reference to the local
-encrypted vault. It must not require cookie export, browser-session export,
-access-token export, or refresh-token export. Provider OAuth or gateway-token
-support requires a separate design and authorization review.
+The section 04 import payload is a local profile reference, not a session
+export. Consumers may use the stable `profile_id`, redacted success metadata,
+local API base URL, and opaque vault reference. Cookie export, browser-session
+export, credential export, and token export remain outside this feature.
+Provider OAuth or gateway-token support requires a separate design and
+authorization review.

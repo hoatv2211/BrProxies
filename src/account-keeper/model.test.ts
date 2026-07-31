@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { activeInputSource, canResume, canStart, reduceProgress } from "./model";
-import type { AccountView, DraftState, JobView, ProgressEvent } from "./types";
+import {
+  activeInputSource,
+  canResume,
+  canStart,
+  isCleanableJob,
+  profileImportJson,
+  progressLogEntries,
+  reduceProgress,
+} from "./model";
+import type {
+  AccountView,
+  DraftState,
+  JobView,
+  ManagedProfileView,
+  ProgressEvent,
+} from "./types";
 
 const validDraft: DraftState = {
   inputMode: "inline",
@@ -222,5 +236,63 @@ describe("reduceProgress", () => {
 
     const cancelled = reduceProgress([runningJob], event({ ...runningJob, status: "cancelled" }));
     expect(cancelled[0]).toMatchObject({ status: "cancelled", batchBlocked: false });
+  });
+});
+
+describe("progress management", () => {
+  it("allows cleaning safe terminal jobs only", () => {
+    expect(isCleanableJob({ ...runningJob, status: "completed" })).toBe(true);
+    expect(isCleanableJob({ ...runningJob, status: "failed" })).toBe(true);
+    expect(isCleanableJob({ ...runningJob, status: "cancelled" })).toBe(true);
+    expect(isCleanableJob(runningJob)).toBe(false);
+    expect(isCleanableJob({ ...runningJob, status: "critical", batchBlocked: true })).toBe(false);
+  });
+
+  it("builds redacted progress log entries from the selected snapshot", () => {
+    const entries = progressLogEntries({
+      ...runningJob,
+      status: "failed",
+      accounts: [{
+        ...queuedAccount,
+        stage: "failed",
+        attempts: 1,
+        error_code: "flow_changed",
+        updated_at: "2026-07-31T03:03:40Z",
+      }],
+    });
+
+    expect(entries).toEqual([{
+      key: "account-1:2026-07-31T03:03:40Z:failed",
+      updated_at: "2026-07-31T03:03:40Z",
+      masked_account: "o***r@example.test",
+      stage: "failed",
+      attempts: 1,
+      error_code: "flow_changed",
+    }]);
+  });
+});
+
+describe("profileImportJson", () => {
+  it("exports only the approved 9Router/Cockpit profile reference", () => {
+    const profile: ManagedProfileView = {
+      profile_id: "profile-1",
+      masked_account: "o***r@example.test",
+      status: "success",
+      last_verified_at: "2026-07-31T03:00:00Z",
+      running: false,
+      import_payload: {
+        schema_version: 1,
+        kind: "brproxies-account-keeper-profile",
+        profile_id: "profile-1",
+        account_status: "success",
+        last_verified_at: "2026-07-31T03:00:00Z",
+        api_base_url: "http://127.0.0.1:40325",
+        vault_ref: "account-keeper://vault/account-key",
+      },
+    };
+
+    const exported = profileImportJson(profile);
+    expect(JSON.parse(exported)).toEqual(profile.import_payload);
+    expect(exported).not.toMatch(/password|totp|cookie|token/i);
   });
 });
