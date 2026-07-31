@@ -3,210 +3,300 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>BrProxies Guide</title>
+    <title>BrProxies — Anti-detect browsing at scale</title>
+    <meta name="description" content="One Windows-first desktop app for isolated browser profiles, real fingerprint spoofing, proxy infrastructure, SMS verification, and local automation + MCP." />
+    <meta property="og:title" content="BrProxies — Anti-detect browsing at scale" />
+    <meta property="og:description" content="Isolated profiles · real fingerprint spoofing · proxy infrastructure · SMS verification · automation + MCP — in a single native app." />
+    <meta property="og:image" content="screenshots/Browsers.png" />
     <style>
       :root {
         color-scheme: dark;
-        --bg: #0a0d12;
-        --band: #10151d;
-        --panel: #161b24;
-        --panel-2: #1c2430;
-        --line: #2b3340;
-        --text: #f3f5f8;
-        --muted: #a9b2c2;
-        --soft: #798497;
-        --green: #3ddc97;
-        --cyan: #42c7e8;
-        --amber: #f4b860;
+        --bg: #070a0f;
+        --bg-2: #0a0e15;
+        --band: #0c1119;
+        --panel: #121824;
+        --panel-2: #182130;
+        --line: #232d3d;
+        --line-2: #2e3a4d;
+        --text: #f4f7fb;
+        --muted: #a6b1c4;
+        --soft: #6f7c92;
+        --green: #46e2a0;
+        --cyan: #4cc9f0;
+        --violet: #9b8cff;
+        --amber: #f6bd60;
         --red: #ff6b6b;
+        --glow-a: #1ea97c;
+        --glow-b: #2a6df0;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
       }
       * { box-sizing: border-box; }
       html { scroll-behavior: smooth; }
-      body { margin: 0; background: var(--bg); color: var(--text); }
-      a { color: inherit; }
-      .wrap { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
-      header { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(18px); border-bottom: 1px solid var(--line); }
-      .nav { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
-      .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; }
-      .mark { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #66e3b255; border-radius: 8px; background: linear-gradient(135deg, #17382c, #0f2430); }
+      body {
+        margin: 0; background: var(--bg); color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        background-image:
+          radial-gradient(900px 480px at 78% -8%, #14603f33, transparent 60%),
+          radial-gradient(760px 460px at 8% 4%, #1c3f8a2e, transparent 62%);
+        background-attachment: fixed;
+      }
+      a { color: inherit; text-decoration: none; }
+      .wrap { width: min(1200px, calc(100% - 34px)); margin: 0 auto; }
+
+      /* header */
+      header { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(20px); border-bottom: 1px solid var(--line); }
+      .nav { min-height: 66px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+      .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; font-size: 17px; letter-spacing: 0.2px; }
+      .mark { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #57e6ac55; border-radius: 9px; background: linear-gradient(135deg, #123c2c, #0c2233); box-shadow: 0 0 22px #1fae7c33; }
       .mark::before { content: ""; width: 13px; height: 13px; border: 3px solid var(--green); transform: rotate(45deg); }
-      nav { display: flex; gap: 18px; color: var(--muted); font-size: 14px; }
-      nav a { text-decoration: none; }
-      nav a:hover { color: var(--text); }
-      .hero { padding: 64px 0 42px; display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(360px, 1.05fr); gap: 34px; align-items: center; }
-      .eyebrow { color: var(--green); font-weight: 800; letter-spacing: 0; margin: 0 0 12px; }
-      h1 { margin: 0; font-size: clamp(40px, 6vw, 78px); line-height: 0.98; letter-spacing: 0; max-width: 820px; }
-      .lead { margin: 22px 0 0; max-width: 690px; color: var(--muted); font-size: 18px; line-height: 1.65; }
-      .actions { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 10px; }
-      .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); text-decoration: none; font-size: 14px; font-weight: 750; }
-      .btn.primary { border-color: #4fe0a466; background: #1d6f52; }
-      .preview, .shot, .card, .terminal { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); overflow: hidden; }
-      .preview { box-shadow: 0 28px 72px #0008; }
-      .bar { display: flex; justify-content: space-between; gap: 12px; padding: 11px 13px; border-bottom: 1px solid var(--line); color: var(--soft); font-size: 12px; }
+      nav.links { display: flex; gap: 20px; color: var(--muted); font-size: 14px; align-items: center; }
+      nav.links a:hover { color: var(--text); }
+      .ghost { border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 13px; font-weight: 700; font-size: 13px; }
+      .ghost:hover { border-color: #57e6ac66; color: #fff; }
+
+      /* hero */
+      .hero { padding: 74px 0 46px; display: grid; grid-template-columns: minmax(0, 0.96fr) minmax(380px, 1.04fr); gap: 40px; align-items: center; }
+      .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid #57e6ac44; border-radius: 999px; background: #0f2c22; color: var(--green); font-weight: 700; font-size: 12.5px; letter-spacing: 0.3px; }
+      .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+      h1 { margin: 18px 0 0; font-size: clamp(42px, 5.8vw, 76px); line-height: 0.98; letter-spacing: -1.4px; font-weight: 850; }
+      h1 .grad { background: linear-gradient(100deg, #6ff0bd 0%, #4cc9f0 52%, #9b8cff 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+      .lead { margin: 22px 0 0; max-width: 640px; color: var(--muted); font-size: 18px; line-height: 1.66; }
+      .actions { margin-top: 30px; display: flex; flex-wrap: wrap; gap: 11px; }
+      .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 46px; padding: 0 20px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel); color: var(--text); font-size: 14.5px; font-weight: 750; transition: transform .12s ease, border-color .15s ease, background .15s ease; }
+      .btn:hover { transform: translateY(-2px); }
+      .btn.primary { border-color: #58e6ac66; background: linear-gradient(135deg, #1c8a63, #146a86); box-shadow: 0 12px 34px #12784f44; }
+      .btn.primary:hover { box-shadow: 0 16px 42px #12784f5c; }
+      .hero-meta { margin-top: 26px; display: flex; flex-wrap: wrap; gap: 22px; color: var(--soft); font-size: 13px; }
+      .hero-meta b { color: var(--text); font-size: 15px; display: block; font-weight: 800; }
+
+      .preview { position: relative; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; box-shadow: 0 40px 90px #000a, 0 0 0 1px #ffffff08 inset; }
+      .preview::after { content: ""; position: absolute; inset: -1px; border-radius: 14px; padding: 1px; background: linear-gradient(140deg, #57e6ac55, transparent 40%, #4cc9f04d); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
+      .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--line); color: var(--soft); font-size: 12px; }
+      .dots { display: flex; gap: 6px; }
+      .dots span { width: 10px; height: 10px; border-radius: 50%; background: #33405a; }
+      .dots span:nth-child(1){ background:#ff5f57; } .dots span:nth-child(2){ background:#febc2e; } .dots span:nth-child(3){ background:#28c840; }
       img { display: block; width: 100%; height: auto; }
-      section { padding: 44px 0; }
+
+      section { padding: 52px 0; }
       .band { background: var(--band); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-      .head { max-width: 800px; margin-bottom: 18px; }
-      h2 { margin: 0; font-size: clamp(26px, 3vw, 36px); letter-spacing: 0; }
-      .head p { margin: 12px 0 0; color: var(--muted); line-height: 1.65; }
-      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+      .head { max-width: 780px; margin-bottom: 26px; }
+      .kicker { color: var(--green); font-weight: 800; font-size: 13px; letter-spacing: 1.4px; text-transform: uppercase; margin: 0 0 10px; }
+      h2 { margin: 0; font-size: clamp(28px, 3.2vw, 40px); letter-spacing: -0.6px; font-weight: 820; }
+      .head p { margin: 12px 0 0; color: var(--muted); line-height: 1.66; font-size: 16px; }
+
+      /* metric strip */
+      .strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+      .metric { border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(180deg, var(--panel), var(--bg-2)); padding: 20px; position: relative; overflow: hidden; }
+      .metric .big { font-size: 34px; font-weight: 850; letter-spacing: -1px; }
+      .metric .lbl { color: var(--muted); margin-top: 4px; font-size: 14px; }
+      .metric::before { content:""; position:absolute; top:0; left:0; right:0; height:3px; }
+      .metric:nth-child(1)::before{ background:var(--green);} .metric:nth-child(1) .big{color:var(--green);}
+      .metric:nth-child(2)::before{ background:var(--cyan);} .metric:nth-child(2) .big{color:var(--cyan);}
+      .metric:nth-child(3)::before{ background:var(--violet);} .metric:nth-child(3) .big{color:var(--violet);}
+      .metric:nth-child(4)::before{ background:var(--amber);} .metric:nth-child(4) .big{color:var(--amber);}
+
+      /* feature grid */
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
       .grid.two { grid-template-columns: repeat(2, 1fr); }
-      .grid.four { grid-template-columns: repeat(4, 1fr); }
-      .card { padding: 18px; }
-      .card h3 { margin: 0 0 9px; font-size: 16px; }
-      .card p, .card li { color: var(--muted); line-height: 1.58; }
-      .card p { margin: 0; }
-      .card ul { margin: 10px 0 0; padding-left: 18px; }
-      .metric { border-top: 3px solid var(--cyan); }
-      .metric:nth-child(2) { border-top-color: var(--green); }
-      .metric:nth-child(3) { border-top-color: var(--amber); }
-      .metric:nth-child(4) { border-top-color: var(--red); }
-      .terminal { background: #080b10; }
-      pre { margin: 0; padding: 18px; overflow-x: auto; color: #e5e9f2; font-size: 13px; line-height: 1.7; }
+      .feat { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 20px; transition: transform .14s ease, border-color .15s ease; }
+      .feat:hover { transform: translateY(-3px); border-color: var(--line-2); }
+      .feat .ic { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 13px; background: #10202c; border: 1px solid #2b4050; }
+      .feat .ic svg { width: 21px; height: 21px; stroke: var(--green); fill: none; stroke-width: 1.9; }
+      .feat h3 { margin: 0 0 7px; font-size: 16.5px; }
+      .feat p { margin: 0; color: var(--muted); line-height: 1.6; font-size: 14.5px; }
+
+      /* screenshot cards */
+      .shot { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
+      .shot:hover { transform: translateY(-4px); border-color: #57e6ac55; box-shadow: 0 24px 54px #0009; }
+      .shot img { border-bottom: 1px solid var(--line); }
+      .shot figcaption { display: grid; gap: 4px; padding: 14px 16px; }
+      .shot strong { color: var(--text); font-size: 15px; }
+      .shot span { color: var(--muted); font-size: 13px; line-height: 1.5; }
+      .shot .tag { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: 0.4px; text-transform: uppercase; color: var(--green); }
+
+      /* quick start */
+      .terminal { border: 1px solid var(--line); border-radius: 12px; background: #05080d; overflow: hidden; box-shadow: 0 24px 60px #0008; }
+      pre { margin: 0; padding: 20px; overflow-x: auto; color: #dfe6f2; font-size: 13.5px; line-height: 1.75; }
       code { font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace; }
-      .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 14px; }
-      .step { display: grid; grid-template-columns: 34px 1fr; gap: 12px; }
-      .num { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: #123428; border: 1px solid #4fe0a455; color: var(--green); font-weight: 850; }
-      .shot figcaption { display: grid; gap: 4px; padding: 12px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
-      .shot strong { color: var(--text); font-size: 14px; }
-      .api { display: grid; gap: 0; padding: 0; }
-      .api-row { display: grid; grid-template-columns: 220px 1fr; gap: 14px; padding: 13px 16px; border-top: 1px solid var(--line); }
-      .api-row:first-child { border-top: 0; }
-      .method { color: var(--green); font-weight: 800; }
-      footer { padding: 34px 0 48px; color: var(--soft); border-top: 1px solid var(--line); }
-      @media (max-width: 900px) {
-        .nav { align-items: flex-start; flex-direction: column; padding: 16px 0; }
-        nav { flex-wrap: wrap; gap: 12px; }
-        .hero, .grid, .grid.two, .grid.four, .steps { grid-template-columns: 1fr; }
-        .hero { padding-top: 40px; }
-        .api-row { grid-template-columns: 1fr; }
+      .c-com { color: var(--soft); }
+      .c-cmd { color: var(--green); }
+      .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 18px; }
+      .step { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 18px; display: grid; grid-template-columns: 36px 1fr; gap: 13px; align-items: start; }
+      .num { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: #12342a; border: 1px solid #4fe0a455; color: var(--green); font-weight: 850; }
+      .step h3 { margin: 0 0 5px; font-size: 15.5px; }
+      .step p { margin: 0; color: var(--muted); line-height: 1.55; font-size: 14px; }
+
+      /* validation */
+      .vgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+      .vshot { border: 1px solid var(--line); border-radius: 11px; overflow: hidden; background: var(--panel); }
+      .vshot img { border-bottom: 1px solid var(--line); }
+      .vshot .cap { padding: 11px 13px; display: flex; align-items: center; gap: 8px; }
+      .vshot .cap strong { font-size: 13.5px; }
+      .check { width: 17px; height: 17px; border-radius: 50%; background: var(--green); display: grid; place-items: center; flex: none; }
+      .check svg { width: 11px; height: 11px; stroke: #05201a; stroke-width: 3; fill: none; }
+
+      /* callout */
+      .callout { border: 1px solid #f6bd6033; border-left: 3px solid var(--amber); border-radius: 10px; background: #1a160c; padding: 18px 20px; color: var(--muted); line-height: 1.62; font-size: 14.5px; }
+      .callout strong { color: var(--amber); }
+
+      footer { padding: 40px 0 54px; color: var(--soft); border-top: 1px solid var(--line); background: var(--bg-2); }
+      .foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
+      .foot a { color: var(--muted); } .foot a:hover { color: var(--text); }
+
+      @media (max-width: 940px) {
+        .nav { min-height: auto; padding: 14px 0; }
+        nav.links { display: none; }
+        .hero { grid-template-columns: 1fr; padding: 46px 0 30px; gap: 30px; }
+        .strip { grid-template-columns: repeat(2, 1fr); }
+        .grid, .grid.two, .steps, .vgrid { grid-template-columns: 1fr; }
       }
     </style>
   </head>
   <body>
     <header>
       <div class="wrap nav">
-        <div class="brand"><span class="mark" aria-hidden="true"></span><span>BrProxies</span></div>
-        <nav>
-          <a href="#screens">Screens</a>
-          <a href="#quick-start">Quick start</a>
-          <a href="#proxypool">ProxyPool</a>
-          <a href="#extension">Extension</a>
-          <a href="#api">API</a>
-          <a href="https://github.com/hoatv2211/BrProxies">GitHub</a>
+        <a class="brand" href="#top"><span class="mark" aria-hidden="true"></span><span>BrProxies</span></a>
+        <nav class="links">
+          <a href="#features">Features</a>
+          <a href="#screens">Workspace</a>
+          <a href="#start">Quick start</a>
+          <a href="#validation">Validation</a>
+          <a class="ghost" href="https://github.com/hoatv2211/BrProxies">GitHub ↗</a>
         </nav>
       </div>
     </header>
 
-    <main>
+    <main id="top">
       <div class="wrap hero">
         <div>
-          <p class="eyebrow">Local browser profile launcher</p>
-          <h1>Profiles, fingerprints, proxy checks, and crawler proxy pooling in one app.</h1>
-          <p class="lead">BrProxies is a personal fork of ProxyShard's BrProxies. It keeps the desktop profile workflow, local automation API, MCP/SDK surfaces, and adds a Redis-backed ProxyPool for collecting and rechecking public proxies.</p>
+          <span class="pill"><span class="dot"></span> Windows-first · single native app</span>
+          <h1>Anti-detect browsing<br /><span class="grad">at scale.</span></h1>
+          <p class="lead">Isolated browser profiles, real fingerprint spoofing, built-in proxy infrastructure, SMS verification, and full automation + MCP — folded into one desktop launcher instead of a stack of paid tools and glue scripts.</p>
           <div class="actions">
-            <a class="btn primary" href="#quick-start">Start setup</a>
-            <a class="btn" href="../README.md">Read README</a>
+            <a class="btn primary" href="#start">Get started</a>
+            <a class="btn" href="https://github.com/hoatv2211/BrProxies">View on GitHub</a>
+            <a class="btn" href="../README.md">Read the docs</a>
+          </div>
+          <div class="hero-meta">
+            <div><b>170</b> fingerprint profiles</div>
+            <div><b>1,271</b> SMS services</div>
+            <div><b>10</b> integrated panels</div>
+            <div><b>2</b> local automation surfaces</div>
           </div>
         </div>
         <figure class="preview">
-          <div class="bar"><span>Workspace preview</span><span>Browsers</span></div>
+          <div class="bar"><div class="dots"><span></span><span></span><span></span></div><span>BrProxies — Browsers</span></div>
           <img src="screenshots/Browsers.png" alt="BrProxies browser profile workspace" />
         </figure>
       </div>
 
       <section class="band">
         <div class="wrap">
-          <div class="grid four">
-            <div class="card metric"><h3>Profiles</h3><p>Isolated browser identities with folders, tags, clone, pin, and launch controls.</p></div>
-            <div class="card metric"><h3>Fingerprints</h3><p>Device, screen, WebGL/WebGPU, locale, timezone, WebRTC, media, and noise controls.</p></div>
-            <div class="card metric"><h3>Proxies</h3><p>HTTP, HTTPS, SOCKS5, geo lookup, TCP checks, UDP checks, and profile binding.</p></div>
-            <div class="card metric"><h3>ProxyPool</h3><p>Public proxy collection, Redis storage, scheduled rechecks, and promotion into Proxies.</p></div>
+          <div class="strip">
+            <div class="metric"><div class="big">170</div><div class="lbl">GPU / device fingerprints</div></div>
+            <div class="metric"><div class="big">1,271</div><div class="lbl">Live 5SIM services</div></div>
+            <div class="metric"><div class="big">100%</div><div class="lbl">Per-profile isolation</div></div>
+            <div class="metric"><div class="big">0</div><div class="lbl">Tokens leave the backend</div></div>
           </div>
         </div>
       </section>
 
-      <section id="screens">
+      <section id="features">
         <div class="wrap">
-          <div class="head"><h2>Main screens</h2><p>These screenshots were moved into <code>docs/screenshots</code> so README and this guide share one image location.</p></div>
+          <div class="head">
+            <p class="kicker">What's inside</p>
+            <h2>The whole identity stack, in one window.</h2>
+            <p>Every profile is a fully isolated Chromium instance with its own fingerprint, proxy, cookies, and storage — and every part is scriptable through a local API and MCP server.</p>
+          </div>
+          <div class="grid">
+            <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18"/></svg></div><h3>Browser profiles</h3><p>Create, clone, pin, tag, organize, and launch isolated Chromium profiles — each with its own <code>user-data-dir</code>, persistent cookies, and bound proxy.</p></div>
+            <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg></div><h3>Fingerprints</h3><p>A 170-profile library covering device, screen, WebGL/WebGPU, locale, timezone, WebRTC, media devices, geolocation, and canvas/audio noise.</p></div>
+            <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></div><h3>Proxies</h3><p>Add HTTP/HTTPS/SOCKS5, run TCP/UDP/geo checks, bind proxies to profiles, and see live country + latency per row.</p></div>
+            <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg></div><h3>ProxyPool</h3><p>Harvest public proxy candidates, live-test them, store working rows in Redis, recheck on a schedule, and promote the good ones.</p></div>
+            <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 18 0M3 12a9 9 0 0 0 18 0M12 3v18"/></svg></div><h3>ProxyShard</h3><p>Buy and manage residential proxy traffic — standard, premium, and unmetered — from inside the app.</p></div>
+            <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg></div><h3>SMS Verify (5SIM)</h3><p>Browse 1,271 services with live prices, rent a number, and pull the OTP — with a live countdown, order history, and cancel/ban.</p></div>
+            <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><h3>Account Keeper</h3><p>Rotate passwords for authorized accounts one at a time — persistent profiles, DPAPI-protected vault, secrets kept local, manual recovery.</p></div>
+            <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10 18h4"/></svg></div><h3>Android Manager</h3><p>Run real Android Studio AVD instances on Windows, open the screen with scrcpy, and import running ADB devices.</p></div>
+            <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m0 8v3a2 2 0 0 0 2 2h3m8-18h3a2 2 0 0 1 2 2v3m0 8v3a2 2 0 0 1-2 2h-3"/></svg></div><h3>Automation API + MCP</h3><p>A local HTTP API (<code>127.0.0.1:40325</code>, JWT Bearer) and MCP server expose profile launch, CDP handoff, and account operations to scripts and AI agents.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="screens" class="band">
+        <div class="wrap">
+          <div class="head">
+            <p class="kicker">The workspace</p>
+            <h2>Ten panels, one window.</h2>
+            <p>Every screen below is the live app — not a marketing mockup.</p>
+          </div>
           <div class="grid two">
-            <figure class="shot"><img src="screenshots/Browsers.png" alt="Browsers workspace" /><figcaption><strong>Browsers</strong><span>Profile table, launch controls, folders, tags, and quick actions.</span></figcaption></figure>
-            <figure class="shot"><img src="screenshots/fingerprints.png" alt="Fingerprint editor" /><figcaption><strong>Fingerprints</strong><span>Hardware, browser, screen, locale, WebRTC, and privacy settings.</span></figcaption></figure>
-            <figure class="shot"><img src="screenshots/proxies.png" alt="Proxy manager" /><figcaption><strong>Proxies</strong><span>Proxy table, import, country/city checks, TCP/UDP test status, and Test all.</span></figcaption></figure>
-            <figure class="shot"><img src="screenshots/proxypool.png" alt="ProxyPool workspace" /><figcaption><strong>ProxyPool</strong><span>Collector controls, source management, Redis status, and working proxy rows.</span></figcaption></figure>
+            <figure class="shot"><img src="screenshots/Browsers.png" alt="Browsers workspace" /><figcaption><span class="tag">Profiles</span><strong>Browsers</strong><span>Isolated Chromium profiles with per-row proxy, status, and one-click launch.</span></figcaption></figure>
+            <figure class="shot"><img src="screenshots/fingerprints.png" alt="Fingerprint library" /><figcaption><span class="tag">Identity</span><strong>Fingerprints</strong><span>170 GPU/device fingerprints, grouped by platform, ready to bind.</span></figcaption></figure>
+            <figure class="shot"><img src="screenshots/proxies.png" alt="Proxy manager" /><figcaption><span class="tag">Network</span><strong>Proxies</strong><span>SOCKS5/HTTP with UDP + geo checks and live country + latency.</span></figcaption></figure>
+            <figure class="shot"><img src="screenshots/proxypool.png" alt="ProxyPool workspace" /><figcaption><span class="tag">Network</span><strong>ProxyPool</strong><span>Redis-backed free-proxy harvesting, rechecks, and promotion.</span></figcaption></figure>
+            <figure class="shot"><img src="screenshots/proxyshard.png" alt="ProxyShard residential" /><figcaption><span class="tag">Network</span><strong>ProxyShard</strong><span>Residential traffic, bought and managed in-app.</span></figcaption></figure>
+            <figure class="shot"><img src="screenshots/sms-verify.png" alt="SMS Verify" /><figcaption><span class="tag">Verify</span><strong>SMS Verify (5SIM)</strong><span>1,271 services with live prices, flags, a live countdown, and cancel/ban.</span></figcaption></figure>
+            <figure class="shot"><img src="screenshots/account-keeper.png" alt="Account Keeper" /><figcaption><span class="tag">Operations</span><strong>Account Keeper</strong><span>Authorized password rotation, one profile at a time, secrets kept local.</span></figcaption></figure>
+            <figure class="shot"><img src="screenshots/android.png" alt="Android Manager" /><figcaption><span class="tag">Mobile</span><strong>Android Manager</strong><span>Real Android AVDs on Windows, controlled via scrcpy.</span></figcaption></figure>
+            <figure class="shot"><img src="screenshots/settings.png" alt="Settings" /><figcaption><span class="tag">System</span><strong>Settings</strong><span>Geo checker, screen mode, and the local Automation API + Bearer token.</span></figcaption></figure>
           </div>
         </div>
       </section>
 
-      <section class="band">
+      <section id="start">
         <div class="wrap">
-          <div class="head"><h2>Validation screenshots</h2></div>
-          <div class="grid two">
-            <figure class="shot"><img src="screenshots/03-fingerprint-com.jpg" alt="fingerprint.com validation" /><figcaption><strong>fingerprint.com</strong><span>Bot, VPN, devtools, and browser tampering checks.</span></figcaption></figure>
-            <figure class="shot"><img src="screenshots/04-twilio-webrtc.jpg" alt="Twilio WebRTC validation" /><figcaption><strong>Twilio WebRTC</strong><span>TURN UDP/TCP/TLS and voice connectivity checks.</span></figcaption></figure>
-            <figure class="shot"><img src="screenshots/05-browserscan.jpg" alt="Browserscan validation" /><figcaption><strong>Browserscan</strong><span>Browser authenticity and locale consistency.</span></figcaption></figure>
-            <figure class="shot"><img src="screenshots/06-pixelscan.jpg" alt="Pixelscan validation" /><figcaption><strong>Pixelscan</strong><span>Fingerprint consistency and automation/proxy signals.</span></figcaption></figure>
-            <figure class="shot"><img src="screenshots/07-haru-bot-detect.jpg" alt="Haru bot detection validation" /><figcaption><strong>Haru bot detection</strong><span>Bot-signal probe result.</span></figcaption></figure>
-            <figure class="shot"><img src="screenshots/08-recaptcha-score.jpg" alt="reCAPTCHA score validation" /><figcaption><strong>reCAPTCHA score</strong><span>Score detector output from upstream screenshot set.</span></figcaption></figure>
+          <div class="head">
+            <p class="kicker">Quick start</p>
+            <h2>Two commands on Windows.</h2>
+            <p>Helper scripts live in <code>smart launch/</code>. The run script starts bundled Windows Redis for ProxyPool persistence, cleans up stale sidecars, then opens the app.</p>
           </div>
-        </div>
-      </section>
-
-      <section id="quick-start">
-        <div class="wrap">
-          <div class="head"><h2>Quick start</h2><p>Use the bundled Windows scripts for the shortest path. The run script starts bundled Windows Redis for ProxyPool persistence.</p></div>
           <div class="terminal">
-            <div class="bar"><span>smart launch</span><span>Windows</span></div>
-            <pre><code>"smart launch\build.bat"
-"smart launch\run.bat"</code></pre>
+            <div class="bar"><div class="dots"><span></span><span></span><span></span></div><span>smart launch · Windows</span></div>
+<pre><code><span class="c-com">:: build web assets + desktop app</span>
+<span class="c-cmd">"smart launch\build.bat"</span>
+
+<span class="c-com">:: start Redis, cleanup ProxyPool, run launcher</span>
+<span class="c-cmd">"smart launch\run.bat"</span></code></pre>
           </div>
           <div class="steps">
-            <div class="card step"><div class="num">1</div><div><h3>Build</h3><p>Run <code>smart launch\build.bat</code> after cloning or after dependency changes.</p></div></div>
-            <div class="card step"><div class="num">2</div><div><h3>Run app</h3><p>Run <code>smart launch\run.bat</code>. It starts Redis, stops stale ProxyPool sidecars, then opens BrProxies.</p></div></div>
+            <div class="step"><div class="num">1</div><div><h3>Build</h3><p>Run <code>build.bat</code> after cloning or after dependency changes. Smart mode caches hashes and skips unchanged setup.</p></div></div>
+            <div class="step"><div class="num">2</div><div><h3>Run</h3><p>Run <code>run.bat</code>. It boots Redis on <code>127.0.0.1:6380</code>, stops stale sidecars, then opens BrProxies.</p></div></div>
+            <div class="step"><div class="num">3</div><div><h3>Automate</h3><p>Enable the Automation API in Settings, copy the Bearer token, and drive profiles from your scripts, SDKs, or an MCP client.</p></div></div>
           </div>
         </div>
       </section>
 
-      <section id="proxypool" class="band">
+      <section id="validation" class="band">
         <div class="wrap">
-          <div class="head"><h2>ProxyPool workflow</h2><p>ProxyPool is separate from the main Proxies tab. Collect and check candidates first, then promote only working proxies into profile use.</p></div>
-          <div class="grid two">
-            <div class="card"><h3>Collect and recheck</h3><ul><li>Open ProxyPool and click Connect.</li><li>Use Collect now to crawl enabled public sources.</li><li>Use Check now or Refresh to recheck stored proxies.</li><li>Use Clean to clear all cached ProxyPool IPs from Redis.</li></ul></div>
-            <div class="card"><h3>Promote proxies</h3><ul><li>Filter working rows by country or source.</li><li>Copy a working proxy string when you need raw output.</li><li>Select multiple rows, then use Copy selected, Add selected, or Delete selected for batch actions.</li><li>Use Add or Add selected to push rows into the main Proxies tab; promoted rows are removed from Redis.</li><li>Add custom sources with parser type <code>text</code>, <code>table</code>, or <code>geonode_json</code>.</li></ul></div>
+          <div class="head">
+            <p class="kicker">Validation</p>
+            <h2>Fingerprints that pass the checkers.</h2>
+            <p>Real results from a launched BrProxies profile against the public detection suites — not marketing mockups.</p>
           </div>
-        </div>
-      </section>
-
-      <section id="extension">
-        <div class="wrap">
-          <div class="head"><h2>Chrome extension</h2><p>The local Manifest V3 extension in <code>extension/</code> connects to ProxyPool at <code>http://127.0.0.1:40326</code>, lists working proxies, and applies one proxy to Chrome with the <code>chrome.proxy</code> API.</p></div>
-          <div class="grid two">
-            <div class="card"><h3>Load unpacked</h3><ul><li>Run <code>smart launch\run.bat</code>.</li><li>Open ProxyPool and collect/check working proxies.</li><li>Open <code>chrome://extensions</code>, enable Developer mode, then load the repo <code>extension</code> folder.</li></ul></div>
-            <div class="card"><h3>Use local pool</h3><ul><li>Keep Pool API URL as <code>http://127.0.0.1:40326</code>.</li><li>Click Connect to list working proxies.</li><li>Use Use, Rotate, or Direct to control Chrome proxy state.</li><li>Remote VPS URLs should add auth and narrower permissions before publishing.</li></ul></div>
+          <div class="vgrid">
+            <figure class="vshot"><img src="screenshots/03-fingerprint-com.jpg" alt="fingerprint.com result" /><div class="cap"><span class="check"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><strong>fingerprint.com</strong></div></figure>
+            <figure class="vshot"><img src="screenshots/04-twilio-webrtc.jpg" alt="Twilio WebRTC result" /><div class="cap"><span class="check"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><strong>Twilio WebRTC</strong></div></figure>
+            <figure class="vshot"><img src="screenshots/05-browserscan.jpg" alt="Browserscan result" /><div class="cap"><span class="check"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><strong>Browserscan</strong></div></figure>
+            <figure class="vshot"><img src="screenshots/06-pixelscan.jpg" alt="Pixelscan result" /><div class="cap"><span class="check"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><strong>Pixelscan</strong></div></figure>
+            <figure class="vshot"><img src="screenshots/07-haru-bot-detect.jpg" alt="Haru bot detection result" /><div class="cap"><span class="check"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><strong>Haru bot detection</strong></div></figure>
+            <figure class="vshot"><img src="screenshots/08-recaptcha-score.jpg" alt="reCAPTCHA score result" /><div class="cap"><span class="check"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><strong>reCAPTCHA score</strong></div></figure>
           </div>
-        </div>
-      </section>
-
-      <section id="api">
-        <div class="wrap">
-          <div class="head"><h2>Local APIs</h2><p>BrProxies has two local surfaces: launcher automation on <code>127.0.0.1:40325</code> and ProxyPool on <code>127.0.0.1:40326</code>.</p></div>
-          <div class="card api">
-            <div class="api-row"><code class="method">GET /health</code><span>ProxyPool service and Redis health.</span></div>
-            <div class="api-row"><code class="method">GET /proxy/random</code><span>Return one random working proxy, with optional HTTPS filter.</span></div>
-            <div class="api-row"><code class="method">GET /proxy/pop</code><span>Return and remove one working proxy.</span></div>
-            <div class="api-row"><code class="method">GET /proxies</code><span>List working proxies with country, source, HTTPS support, latency, and last check time.</span></div>
-            <div class="api-row"><code class="method">POST /clean</code><span>Clear all cached ProxyPool IPs.</span></div>
-            <div class="api-row"><code class="method">POST /jobs/collect</code><span>Queue a proxy collection job.</span></div>
-            <div class="api-row"><code class="method">POST /jobs/check</code><span>Queue a recheck job for stored proxies.</span></div>
-            <div class="api-row"><code class="method">POST /sources</code><span>Add a custom public proxy source.</span></div>
+          <div style="margin-top: 22px;">
+            <div class="callout"><strong>Account Keeper</strong> is a Windows 10/11 workflow for rotating passwords on operator-owned or explicitly authorized accounts only. It runs one account at a time, keeps secrets in a DPAPI-protected vault, and never puts credentials in job views or logs.</div>
           </div>
         </div>
       </section>
     </main>
 
     <footer>
-      <div class="wrap">Source originally taken from <a href="https://github.com/ProxyShard/BrProxies">ProxyShard/BrProxies</a>. Personal development continues at <a href="https://github.com/hoatv2211/BrProxies">hoatv2211/BrProxies</a>.</div>
+      <div class="wrap foot">
+        <div>Launcher source is MIT licensed. The bundled browser runtime may carry separate upstream terms.</div>
+        <div style="display:flex; gap:18px;">
+          <a href="https://github.com/hoatv2211/BrProxies">GitHub</a>
+          <a href="../README.md">README</a>
+          <a href="../README.vn.md">Tiếng Việt</a>
+        </div>
+      </div>
     </footer>
   </body>
 </html>

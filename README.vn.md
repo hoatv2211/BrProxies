@@ -1,58 +1,104 @@
+<div align="center">
+
 # BrProxies
 
-[English](README.md) | [Page](https://hoatv2211.github.io/BrProxies/)
+**Một app desktop cho anti-detect browsing ở quy mô lớn.**
 
-BrProxies la launcher desktop uu tien Windows de quan ly browser profile
-anti-detect, fingerprint, proxy, Automation API cuc bo, ProxyPool cho crawler,
-va Android instance thu nghiem.
+Browser profile cách ly · fingerprint spoofing thật · hạ tầng proxy · SMS verify
+· thao tác account được uỷ quyền · Automation API + MCP — gom trong một launcher
+ưu tiên Windows.
 
-Repo nay chua launcher, local services, SDKs, MCP server, Chrome extension va
-Windows helper scripts. Browser runtime duoc tai rieng khi chay.
+[English](README.md) · [Landing page](https://hoatv2211.github.io/BrProxies/) · [hoatv2211/BrProxies](https://github.com/hoatv2211/BrProxies)
 
-## Tinh nang
+![Browsers workspace](docs/screenshots/Browsers.png)
 
-- **Browser profiles** - tao, clone, pin, gan tag, sap xep, va chay Chromium
-  profile rieng biet.
-- **Account Keeper (Windows 10/11 MVP)** - doi password cho account duoc uy
-  quyen theo tung account, dung profile persistent, vault DPAPI va manual
-  recovery. [English guide](docs/account-keeper.md) |
-  [Huong dan tieng Viet](docs/account-keeper.vn.md).
-- **Fingerprints** - chinh device, screen, WebGL/WebGPU, locale, timezone,
-  WebRTC, media devices, geolocation, va noise settings.
-- **Proxies** - them HTTP, HTTPS, SOCKS5 proxy, test TCP/UDP/geo, va gan proxy
-  vao browser profile.
-- **ProxyPool** - cao proxy public, test proxy song, luu vao Redis, recheck, va
-  day proxy tot sang tab **Proxies**.
-- **Android Manager** - chay Android Studio AVD that tren Windows, mo man hinh
-  bang scrcpy, import device dang chay qua ADB.
-- **Automation API** - HTTP API cuc bo tren `127.0.0.1:40325`, dung Bearer token
-  de dieu khien browser profile tu code.
-- **MCP server** - cau noi cho AI client dieu khien profile/CDP.
-- **SDKs** - Python va Node SDK standalone trong `sdks/`.
+</div>
 
-## Hinh anh
+---
 
-| Browsers | Fingerprints |
-| -------- | ------------ |
-| ![Browsers workspace](docs/screenshots/Browsers.png) | ![Fingerprint editor](docs/screenshots/fingerprints.png) |
+## Vì sao BrProxies
 
-| Proxies | ProxyPool |
-| ------- | --------- |
-| ![Proxy manager](docs/screenshots/proxies.png) | ![ProxyPool workspace](docs/screenshots/proxypool.png) |
+Chạy nhiều identity online thường phải ghép: một anti-detect browser trả phí,
+một dashboard proxy riêng, một site SMS, và đống script keo dán. BrProxies gom
+cả stack đó vào một app native: mỗi profile là một Chromium cách ly hoàn toàn
+với fingerprint, proxy, cookie, storage riêng — và mọi phần đều điều khiển được
+qua Automation API cục bộ và MCP server.
 
-## Chay nhanh tren Windows
+- **Cách ly thật, không phải tab group.** Mỗi profile có `user-data-dir` riêng,
+  cookie persistent, proxy gắn riêng. Không rò rỉ giữa các identity.
+- **Fingerprint qua được checker.** 170 device profile phủ WebGL / WebGPU /
+  Canvas / audio / WebRTC / font — đã test với fingerprint.com, Pixelscan,
+  BrowserScan, Twilio WebRTC (xem [bằng chứng bên dưới](#validation)).
+- **Hạ tầng proxy tích hợp.** Thêm SOCKS5/HTTP của bạn với check TCP/UDP/geo,
+  lấy residential từ ProxyShard, hoặc cào proxy public qua ProxyPool nền Redis.
+- **Verify không cần SIM.** Thuê số, lấy mã OTP từ SMS, clear thử thách điện
+  thoại — token 5SIM không bao giờ rời khỏi backend Rust.
+- **Tự động hoá mọi thứ.** Automation API cục bộ + MCP server mở profile launch,
+  CDP handoff, và account operation cho script và AI agent.
 
-Script nam trong [`smart launch`](smart%20launch/):
+## Có gì bên trong
+
+| Tính năng | Bạn được gì |
+| --------- | ----------- |
+| **Browser profiles** | Tạo, clone, pin, gắn tag, sắp xếp, chạy Chromium profile cách ly với proxy + fingerprint riêng. |
+| **Fingerprints** | Thư viện 170 profile: device, screen, WebGL/WebGPU, locale, timezone, WebRTC, media devices, geolocation, noise. |
+| **Proxies** | Thêm HTTP/HTTPS/SOCKS5, check TCP/UDP/geo, gắn proxy vào profile, xem country + latency trực tiếp. |
+| **ProxyPool** | Cào proxy public, test live, lưu proxy sống vào Redis, recheck, đẩy proxy tốt sang tab chính. |
+| **ProxyShard** | Mua và quản lý residential proxy (standard/premium/unmetered) ngay trong app. |
+| **SMS Verify (5SIM)** | Duyệt 1.271 service với giá live, thuê số, lấy mã SMS — có countdown trực tiếp và lịch sử order/payment. |
+| **Account Keeper** | Đổi password cho account được uỷ quyền, từng account một, profile persistent, vault DPAPI, manual recovery. |
+| **Android Manager** | Chạy Android Studio AVD thật trên Windows, mở màn hình bằng scrcpy, import device ADB đang chạy. |
+| **Automation API + MCP** | HTTP API cục bộ (`127.0.0.1:40325`, JWT Bearer) và MCP server cho script, CDP handoff, điều khiển AI agent. |
+| **SDKs** | Python và Node SDK standalone để chạy runtime mà không cần app desktop. |
+
+## Màn hình làm việc
+
+Mười panel, một cửa sổ. Mỗi ảnh bên dưới là app thật đang chạy.
+
+### Browser profile & fingerprint
+
+| Browsers | Fingerprint library |
+| -------- | ------------------- |
+| ![Browsers workspace](docs/screenshots/Browsers.png) | ![Fingerprint library](docs/screenshots/fingerprints.png) |
+| Chromium profile cách ly, mỗi dòng có proxy, status, launch một chạm. | 170 fingerprint GPU/device, nhóm theo nền tảng, sẵn sàng gắn. |
+
+### Hạ tầng proxy
+
+| Proxies | ProxyPool | ProxyShard |
+| ------- | --------- | ---------- |
+| ![Proxy manager](docs/screenshots/proxies.png) | ![ProxyPool workspace](docs/screenshots/proxypool.png) | ![ProxyShard residential](docs/screenshots/proxyshard.png) |
+| SOCKS5/HTTP với check UDP + geo. | Cào & recheck proxy free nền Redis. | Residential traffic, mua & quản lý trong app. |
+
+### Verify & thao tác account
+
+| SMS Verify (5SIM) | Account Keeper |
+| ----------------- | -------------- |
+| ![SMS Verify](docs/screenshots/sms-verify.png) | ![Account Keeper](docs/screenshots/account-keeper.png) |
+| 1.271 service giá live, có cờ, countdown trực tiếp, cancel/ban. | Đổi password uỷ quyền, từng profile một, secret giữ cục bộ. |
+
+### Mobile & hệ thống
+
+| Android Manager | Settings |
+| --------------- | -------- |
+| ![Android Manager](docs/screenshots/android.png) | ![Settings](docs/screenshots/settings.png) |
+| AVD Android thật trên Windows, điều khiển qua scrcpy. | Geo checker, screen mode, Automation API + Bearer token. |
+
+Repo này chứa launcher, local services, SDKs, MCP server, Chrome extension và
+Windows helper scripts. Browser runtime được tải riêng khi chạy.
+
+## Chạy nhanh trên Windows
+
+Script nằm trong [`smart launch`](smart%20launch/):
 
 ```bat
 "smart launch\build.bat"        :: smart build web assets + desktop app
-"smart launch\build.bat" /full  :: build lai day du
+"smart launch\build.bat" /full  :: build lại đầy đủ
 "smart launch\build.bat" /deps  :: refresh npm + Android Manager deps
-"smart launch\run.bat"          :: chay Redis, cleanup ProxyPool, mo launcher
-"smart launch\run-redis.bat"    :: chi chay Redis Windows di kem
+"smart launch\run.bat"          :: chạy Redis, cleanup ProxyPool, mở launcher
+"smart launch\run-redis.bat"    :: chỉ chạy Redis Windows đi kèm
 ```
 
-Build va chay:
+Build và chạy:
 
 ```bat
 "smart launch\build.bat"
@@ -65,15 +111,15 @@ File exe release:
 src-tauri\target\release\brproxies.exe
 ```
 
-`build.bat` goi `smart-build.ps1`. Smart mode luu hash trong
-`.brproxies-build-cache`, bo qua npm/Python setup neu package khong doi, chay
-`npm.cmd run tauri build -- --no-bundle`, va tu dong dong `brproxies.exe` dang
-chay truoc khi build release.
+`build.bat` gọi `smart-build.ps1`. Smart mode lưu hash trong
+`.brproxies-build-cache`, bỏ qua npm/Python setup nếu package không đổi, chạy
+`npm.cmd run tauri build -- --no-bundle`, và tự động đóng `brproxies.exe` đang
+chạy trước khi build release.
 
-`run.bat` chay Redis Windows tren `127.0.0.1:6380`, goi
-`cleanup-proxypool.ps1` de tat Python ProxyPool sidecar cu, roi mo app.
+`run.bat` chạy Redis Windows trên `127.0.0.1:6380`, gọi
+`cleanup-proxypool.ps1` để tắt Python ProxyPool sidecar cũ, rồi mở app.
 
-## Build thu cong
+## Build thủ công
 
 ```bash
 npm install
@@ -82,27 +128,27 @@ npm run tauri dev
 npm run tauri build
 ```
 
-Tren Windows PowerShell, dung `npm.cmd` neu lenh `npm` bi loi.
+Trên Windows PowerShell, dùng `npm.cmd` nếu lệnh `npm` bị lỗi.
 
 ## Android Manager
 
-Android support dang dung duoc theo huong Windows AVD, nhung con moi hon browser
-workflow. Thu tu runtime hien tai:
+Android support đang dùng được theo hướng Windows AVD, nhưng còn mới hơn browser
+workflow. Thứ tự runtime hiện tại:
 
-1. `windows_avd` - Android Studio AVD that tren Windows. Day la huong local dang
-   ho tro.
-2. `external_adb` - se lam sau de attach/import LDPlayer, BlueStacks, MEmu, hoac
-   emulator nao da hien trong ADB.
-3. `redroid` - de sau khi co Linux host. ReDroid khong chay native tren Windows.
+1. `windows_avd` - Android Studio AVD thật trên Windows. Đây là hướng local đang
+   hỗ trợ.
+2. `external_adb` - sẽ làm sau để attach/import LDPlayer, BlueStacks, MEmu, hoặc
+   emulator nào đã hiện trong ADB.
+3. `redroid` - để sau khi có Linux host. ReDroid không chạy native trên Windows.
 
-Can cai tren Windows:
+Cần cài trên Windows:
 
 - Android Studio.
 - Android SDK Platform Tools, Emulator, Command-line Tools.
-- System image nhe: `system-images;android-35;google_apis;x86_64`.
-- Nen cai `scrcpy` de mo cua so dieu khien muot hon.
+- System image nhẹ: `system-images;android-35;google_apis;x86_64`.
+- Nên cài `scrcpy` để mở cửa sổ điều khiển mượt hơn.
 
-Cai image khuyen nghi:
+Cài image khuyến nghị:
 
 ```powershell
 $env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
@@ -122,73 +168,73 @@ scrcpy --version
 
 Flow trong app:
 
-1. Mo **Android**.
-2. Bam **Start manager**. Nut nay chi start Android Manager sidecar.
-3. Bam **Create device** de tao AVD do BrProxies quan ly.
-4. Bam **Start** de boot AVD va mo man hinh bang scrcpy neu co.
-5. Bam **Import devices** de import device dang chay va dang hien trong
-   `adb devices -l`. Import khong lay AVD dang stop.
+1. Mở **Android**.
+2. Bấm **Start manager**. Nút này chỉ start Android Manager sidecar.
+3. Bấm **Create device** để tạo AVD do BrProxies quản lý.
+4. Bấm **Start** để boot AVD và mở màn hình bằng scrcpy nếu có.
+5. Bấm **Import devices** để import device đang chạy và đang hiện trong
+   `adb devices -l`. Import không lấy AVD đang stop.
 
-AVD cold boot co the mat 30-70 giay. Quick Boot snapshot giup lan sau nhanh hon.
-Image `google_apis` nhe hon `google_apis_playstore`, it app rac hon, nhung AVD
-van nang hon browser profile va thuong khong muot bang LDPlayer khi choi game.
+AVD cold boot có thể mất 30-70 giây. Quick Boot snapshot giúp lần sau nhanh hơn.
+Image `google_apis` nhẹ hơn `google_apis_playstore`, ít app rác hơn, nhưng AVD
+vẫn nặng hơn browser profile và thường không mượt bằng LDPlayer khi chơi game.
 
 ## ProxyPool
 
-ProxyPool chay bang Python sidecar cuc bo. Service lay proxy tu cac nguon public
-dang bat, test proxy that, luu proxy pass vao Redis, va xoa proxy chet khi
+ProxyPool chạy bằng Python sidecar cục bộ. Service lấy proxy từ các nguồn public
+đang bật, test proxy thật, lưu proxy pass vào Redis, và xoá proxy chết khi
 recheck.
 
-Redis tu chay khi mo app bang `run.bat`. Neu chi muon bat Redis de debug:
+Redis tự chạy khi mở app bằng `run.bat`. Nếu chỉ muốn bật Redis để debug:
 
 ```bat
 "smart launch\run-redis.bat"
 ```
 
-Redis URL mac dinh cua helper desktop:
+Redis URL mặc định của helper desktop:
 
 ```text
 redis://:madpool@127.0.0.1:6380/0
 ```
 
-Nut trong UI:
+Nút trong UI:
 
-- **Connect** - start/connect ProxyPool service cuc bo.
-- **Collect now** - cao proxy moi va luu proxy pass.
-- **Check now / Refresh** - test lai proxy dang co va tai lai bang.
-- **Copy** - copy proxy song.
-- **Add** - them proxy song vao tab **Proxies**, roi xoa proxy do khoi Redis.
-- **Copy selected / Add selected / Delete selected** - thao tac nhieu dong.
-- **Country filter / Source filter** - loc bang theo quoc gia hoac nguon.
-- **Clean** - xoa tat ca IP ProxyPool dang cache trong Redis.
-- **Add source** - them nguon cao proxy tuy chinh.
+- **Connect** - start/connect ProxyPool service cục bộ.
+- **Collect now** - cào proxy mới và lưu proxy pass.
+- **Check now / Refresh** - test lại proxy đang có và tải lại bảng.
+- **Copy** - copy proxy sống.
+- **Add** - thêm proxy sống vào tab **Proxies**, rồi xoá proxy đó khỏi Redis.
+- **Copy selected / Add selected / Delete selected** - thao tác nhiều dòng.
+- **Country filter / Source filter** - lọc bảng theo quốc gia hoặc nguồn.
+- **Clean** - xoá tất cả IP ProxyPool đang cache trong Redis.
+- **Add source** - thêm nguồn cào proxy tuỳ chỉnh.
 
-Proxy mien phi rat that thuong. Bang trong co the do source bi chan, source dang
-loi, hoac tat ca proxy deu fail bai test.
+Proxy miễn phí rất thất thường. Bảng trống có thể do source bị chặn, source đang
+lỗi, hoặc tất cả proxy đều fail bài test.
 
 ## Chrome ProxyPool Extension
 
-Thu muc [`extension/`](extension/) co Chrome extension Manifest V3 de lay proxy
-tu ProxyPool local. Extension goi `http://127.0.0.1:40326`, hien proxy song,
-test live, va set proxy cho Chrome bang `chrome.proxy`.
+Thư mục [`extension/`](extension/) có Chrome extension Manifest V3 để lấy proxy
+từ ProxyPool local. Extension gọi `http://127.0.0.1:40326`, hiện proxy sống,
+test live, và set proxy cho Chrome bằng `chrome.proxy`.
 
-Cach load local:
+Cách load local:
 
-1. Chay `smart launch\run.bat`.
-2. Mo **ProxyPool**, bam **Connect**, roi collect/check den khi co proxy song.
-3. Mo Chrome `chrome://extensions`, bat **Developer mode**, bam **Load unpacked**.
-4. Chon thu muc `extension` trong repo.
-5. Mo popup extension, bam **Connect**, roi dung **Use**, **Rotate**, hoac
+1. Chạy `smart launch\run.bat`.
+2. Mở **ProxyPool**, bấm **Connect**, rồi collect/check đến khi có proxy sống.
+3. Mở Chrome `chrome://extensions`, bật **Developer mode**, bấm **Load unpacked**.
+4. Chọn thư mục `extension` trong repo.
+5. Mở popup extension, bấm **Connect**, rồi dùng **Use**, **Rotate**, hoặc
    **Direct**.
 
-## Automation API cuc bo
+## Automation API cục bộ
 
-Launcher co the mo browser Automation API tren `127.0.0.1:40325`. Bat trong
-Settings, copy Bearer token, roi goi tu crawler/tool.
+Launcher có thể mở browser Automation API trên `127.0.0.1:40325`. Bật trong
+Settings, copy Bearer token, rồi gọi từ crawler/tool.
 
 Schema: [openapi.yaml](openapi.yaml)
 
-## Cau truc repo
+## Cấu trúc repo
 
 ```text
 src/                  React/Vite UI
@@ -203,7 +249,31 @@ smart launch/         Windows build/run helpers
 docs/screenshots/     README screenshots
 ```
 
+<a id="validation"></a>
+
+## Kiểm chứng
+
+Fingerprint được test với các bộ detection public — kết quả thật từ một profile
+BrProxies đang chạy, không phải ảnh dựng sẵn.
+
+| fingerprint.com                                                    | Twilio WebRTC                                                  |
+| ------------------------------------------------------------------ | -------------------------------------------------------------- |
+| ![fingerprint.com result](docs/screenshots/03-fingerprint-com.jpg) | ![Twilio WebRTC result](docs/screenshots/04-twilio-webrtc.jpg) |
+
+| Browserscan                                                | Pixelscan                                              |
+| ---------------------------------------------------------- | ------------------------------------------------------ |
+| ![Browserscan result](docs/screenshots/05-browserscan.jpg) | ![Pixelscan result](docs/screenshots/06-pixelscan.jpg) |
+
+| Haru bot detection                                                    | reCAPTCHA score                                                    |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| ![Haru bot detection result](docs/screenshots/07-haru-bot-detect.jpg) | ![reCAPTCHA score result](docs/screenshots/08-recaptcha-score.jpg) |
+
+> **Account Keeper** là workflow Windows 10/11 chỉ để đổi password cho account
+> do operator sở hữu hoặc được uỷ quyền rõ ràng. Chạy từng account một, giữ
+> secret trong vault DPAPI, không bao giờ đưa credential vào job view hay log.
+> Xem [English guide](docs/account-keeper.md) · [Hướng dẫn tiếng Việt](docs/account-keeper.vn.md).
+
 ## License
 
-Launcher source dung MIT License. Browser runtime duoc tai/chay kem co the theo
-dieu khoan rieng tu upstream goc.
+Launcher source dùng MIT License. Browser runtime được tải/chạy kèm có thể theo
+điều khoản riêng từ upstream gốc.
