@@ -39,6 +39,16 @@ export async function runAccountFlow({
     );
 
   try {
+    if (request.operation === "verify_credentials") {
+      await verifyCredentials({
+        pageSource,
+        adapter,
+        request,
+        send,
+        control: commandControl,
+      });
+      return;
+    }
     commandControl.throwIfCancelled();
     await send({ type: "stage", stage: "logging_in" });
     await runPageAction({
@@ -127,6 +137,70 @@ export async function runAccountFlow({
   }
 }
 
+async function verifyCredentials({
+  pageSource,
+  adapter,
+  request,
+  send,
+  control,
+}) {
+  control.throwIfCancelled();
+  await send({ type: "stage", stage: "logging_in" });
+  await runPageAction({
+    pageSource,
+    adapter,
+    control,
+    assertOrigin: false,
+    action: (currentPage) =>
+      adapter.prepareCredentialVerification?.(currentPage, { control })
+      ?? adapter.openLogin(currentPage, { control }),
+  });
+  let credentialsSubmitted = await authenticate({
+    pageSource,
+    adapter,
+    request,
+    password: request.current_password,
+    send,
+    control,
+  });
+  if (!credentialsSubmitted) {
+    await runPageAction({
+      pageSource,
+      adapter,
+      control,
+      action: (currentPage) => adapter.logout(currentPage, { control }),
+    });
+    await runPageAction({
+      pageSource,
+      adapter,
+      control,
+      assertOrigin: false,
+      action: (currentPage) => adapter.openLogin(currentPage, { control }),
+    });
+    credentialsSubmitted = await authenticate({
+      pageSource,
+      adapter,
+      request,
+      password: request.current_password,
+      send,
+      control,
+    });
+  }
+  if (!credentialsSubmitted) {
+    throw flowError("verification_failed");
+  }
+  const signedIn = await runPageRead({
+    pageSource,
+    adapter,
+    control,
+    read: (currentPage) => adapter.verifySignedIn(currentPage, { control }),
+  });
+  if (!signedIn) {
+    throw flowError("verification_failed");
+  }
+  await send({ type: "verified" });
+}
+
 async function authenticate({
   pageSource,
   adapter,
@@ -136,12 +210,17 @@ async function authenticate({
   control,
 }) {
   let credentialsSubmitted = false;
+  let loginStepPending = false;
   let totpAttempts = 0;
   let totpPending = false;
   for (let step = 0; step < 16; step += 1) {
     let result = await classify({ pageSource, adapter, control });
+    if (loginStepPending && result.state === "flow_changed") {
+      result = await waitForLoginTransition({ pageSource, adapter, control });
+    }
+    loginStepPending = false;
     if (totpPending) {
-      if (result.state === "totp_required") {
+      if (result.state === "totp_required" || result.state === "flow_changed") {
         result = await waitForTotpTransition({ pageSource, adapter, control });
       }
       totpPending = false;
@@ -151,7 +230,7 @@ async function authenticate({
         if (credentialsSubmitted) {
           throw flowError("invalid_credentials");
         }
-        await runPageAction({
+        const submitted = await runPageAction({
           pageSource,
           adapter,
           control,
@@ -161,7 +240,12 @@ async function authenticate({
               password,
             }, { control }),
         });
+        if (submitted === false) {
+          loginStepPending = true;
+          break;
+        }
         credentialsSubmitted = true;
+        loginStepPending = true;
         break;
       case "totp_required":
       case "totp_rejected":
@@ -230,7 +314,7 @@ async function changePassword({
   for (let step = 0; step < 16; step += 1) {
     let result = await classifyPasswordChange({ pageSource, adapter, control });
     if (totpPending) {
-      if (result.state === "totp_required") {
+      if (result.state === "totp_required" || result.state === "flow_changed") {
         result = await waitForTotpTransition({
           pageSource,
           adapter,
@@ -429,7 +513,18 @@ async function waitForTotpTransition({
   for (let poll = 0; poll < 150; poll += 1) {
     await cancellableDelay(control, 100);
     const result = await classifyPage({ pageSource, adapter, control });
-    if (result.state !== "totp_required") {
+    if (result.state !== "totp_required" && result.state !== "flow_changed") {
+      return result;
+    }
+  }
+  throw flowError("navigation_failed");
+}
+
+async function waitForLoginTransition({ pageSource, adapter, control }) {
+  for (let poll = 0; poll < 150; poll += 1) {
+    await cancellableDelay(control, 100);
+    const result = await classify({ pageSource, adapter, control });
+    if (result.state !== "flow_changed") {
       return result;
     }
   }
@@ -473,6 +568,14 @@ async function runPageAction({
   }
   const result = await action(currentPage);
   control.throwIfCancelled();
+  if (
+    result
+    && typeof result.url === "function"
+    && typeof pageSource.adopt === "function"
+  ) {
+    pageSource.adopt(result);
+    control.throwIfCancelled();
+  }
   return result;
 }
 

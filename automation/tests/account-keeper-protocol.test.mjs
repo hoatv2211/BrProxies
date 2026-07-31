@@ -25,6 +25,22 @@ test("parses a valid start message", () => {
   assert.deepEqual(parsed, validStart());
 });
 
+test("parses credential verification operation without a new password", () => {
+  const message = parseInbound(JSON.stringify({
+    protocol_version: 1,
+    type: "start",
+    request_id: "req_recovery",
+    operation: "verify_credentials",
+    adapter_id: "openai-chatgpt-v1",
+    cdp_endpoint: "http://127.0.0.1:9222",
+    account: "synthetic@example.test",
+    current_password: "synthetic-current",
+    new_password: "",
+  }));
+
+  assert.equal(message.operation, "verify_credentials");
+});
+
 test("parses explicit password submit authorization", () => {
   const message = {
     protocol_version: 1,

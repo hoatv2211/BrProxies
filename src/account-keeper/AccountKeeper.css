@@ -98,7 +98,8 @@
 
 .account-keeper .account-keeper__setup,
 .account-keeper .account-keeper__jobs,
-.account-keeper .account-keeper__progress { padding: 18px; }
+.account-keeper .account-keeper__progress,
+.account-keeper .account-keeper__profiles { padding: 18px; }
 
 .account-keeper .account-keeper__panel-head {
   display: flex;
@@ -352,6 +353,48 @@
   font-size: 10.5px;
 }
 
+.account-keeper .account-keeper__progress-side {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+
+.account-keeper .account-keeper__progress-actions,
+.account-keeper .account-keeper__profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.account-keeper .account-keeper__logs {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--bd-1);
+  border-radius: 9px;
+  background: var(--bg-1);
+}
+
+.account-keeper .account-keeper__log {
+  display: grid;
+  grid-template-columns: minmax(145px, .7fr) minmax(150px, 1fr) auto auto minmax(100px, .7fr);
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: var(--bg-2);
+  color: var(--tx-3);
+  font-size: 10px;
+}
+
+.account-keeper .account-keeper__log time,
+.account-keeper .account-keeper__log code {
+  font-family: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+}
+
+.account-keeper .account-keeper__log code { color: #fda4af; }
+
 .account-keeper .account-keeper__manual {
   display: flex;
   align-items: center;
@@ -417,6 +460,51 @@
 .account-keeper .account-keeper__table-wrap code { color: #fda4af; }
 .account-keeper .account-keeper__muted { color: var(--tx-4); }
 
+.account-keeper .account-keeper__profiles { margin-top: 16px; }
+
+.account-keeper .account-keeper__profile-list { display: grid; gap: 9px; }
+
+.account-keeper .account-keeper__profile {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--bd-1);
+  border-radius: 9px;
+  background: var(--bg-1);
+}
+
+.account-keeper .account-keeper__profile-main { min-width: 0; display: grid; gap: 5px; }
+.account-keeper .account-keeper__profile-main > div { display: flex; align-items: center; gap: 8px; }
+.account-keeper .account-keeper__profile-main strong { color: var(--tx-1); font-size: 12px; }
+.account-keeper .account-keeper__profile-main small { color: var(--tx-4); font-size: 10px; }
+
+.account-keeper .account-keeper__import {
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #8b5cf655;
+  border-radius: 9px;
+  background: var(--accent-dim);
+}
+
+.account-keeper .account-keeper__import p { margin: 3px 0 0; color: var(--tx-3); font-size: 10px; }
+
+.account-keeper .account-keeper__import pre {
+  overflow-x: auto;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--bd-1);
+  border-radius: 7px;
+  background: var(--bg-1);
+  color: var(--tx-2);
+  font: 10px/1.55 "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+}
+
+.account-keeper .account-keeper__import .btn-sm { justify-self: start; }
+
 @media (max-width: 1120px) {
   .account-keeper .account-keeper__workspace { grid-template-columns: 1fr; }
   .account-keeper .account-keeper__jobs { order: -1; }
@@ -441,4 +529,8 @@
     flex-direction: column;
     gap: 5px;
   }
+
+  .account-keeper .account-keeper__progress-side { justify-items: stretch; }
+  .account-keeper .account-keeper__profile { align-items: stretch; flex-direction: column; }
+  .account-keeper .account-keeper__log { grid-template-columns: 1fr; }
 }

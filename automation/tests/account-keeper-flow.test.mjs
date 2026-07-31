@@ -127,6 +127,152 @@ test("runs direct login, password change, logout, and verified re-login", async 
   assert.equal(page.actions[6].password, "Synthetic-New-Password-123!");
 });
 
+test("continues login when the email step has not submitted the password", async () => {
+  const page = createFixturePage([
+    "login_ready",
+    "flow_changed",
+    "login_ready",
+    "signed_in",
+    "password_change_ready",
+    "password_changed",
+    "login_ready",
+    "signed_in",
+  ]);
+  const baseAdapter = getAdapter("fixture-v1");
+  let loginSubmissions = 0;
+  const adapter = {
+    ...baseAdapter,
+    async submitCredentials(...args) {
+      loginSubmissions += 1;
+      await baseAdapter.submitCredentials(...args);
+      return loginSubmissions === 1 ? false : true;
+    },
+  };
+  const events = [];
+
+  await runAccountFlow({
+    page,
+    adapter,
+    request: request(),
+    emit: (message) => events.push(message),
+    control: {
+      throwIfCancelled() {},
+      async waitFor(expectedType) {
+        if (expectedType === "submit_password") {
+          return {
+            protocol_version: 1,
+            type: "submit_password",
+            request_id: "req_1",
+          };
+        }
+        throw Object.assign(new Error("protocol_error"), { code: "protocol_error" });
+      },
+    },
+  });
+
+  assert.equal(events.at(-1).type, "verified");
+  assert.equal(loginSubmissions, 3);
+});
+
+test("waits through a transient state after submitting the login password", async () => {
+  const { events } = await execute([
+    "login_ready",
+    "flow_changed",
+    "signed_in",
+    "password_change_ready",
+    "password_changed",
+    "login_ready",
+    "signed_in",
+  ]);
+
+  assert.equal(events.at(-1).type, "verified");
+});
+
+test("verifies recovery credentials without changing the password", async () => {
+  const page = createFixturePage([
+    "signed_in",
+    "login_ready",
+    "signed_in",
+  ]);
+  const events = [];
+
+  await runAccountFlow({
+    page,
+    adapter: getAdapter("fixture-v1"),
+    request: { ...request(), operation: "verify_credentials" },
+    emit: (message) => events.push(message),
+    control: {
+      throwIfCancelled() {},
+      async waitFor() {
+        throw Object.assign(new Error("protocol_error"), { code: "protocol_error" });
+      },
+    },
+  });
+
+  assert.equal(events.at(-1).type, "verified");
+  assert.equal(events.some((event) => event.type === "password_changed"), false);
+  assert.deepEqual(
+    page.actions.map((action) => action.type),
+    [
+      "open_login",
+      "logout",
+      "open_login",
+      "submit_credentials",
+      "verify_signed_in",
+    ],
+  );
+});
+
+test("adopts the auth page returned by credential preparation", async () => {
+  const expiredPage = { url: () => "https://chatgpt.com/" };
+  const authPage = { url: () => "https://auth.openai.com/log-in/password" };
+  let currentPage = expiredPage;
+  const states = ["login_ready", "signed_in"];
+  const events = [];
+  const pageSession = {
+    async current() {
+      return currentPage;
+    },
+    adopt(page) {
+      currentPage = page;
+    },
+  };
+  const adapter = {
+    async prepareCredentialVerification(page) {
+      assert.equal(page, expiredPage);
+      return authPage;
+    },
+    async classify(page) {
+      assert.equal(page, authPage);
+      return states.shift();
+    },
+    async submitCredentials(page) {
+      assert.equal(page, authPage);
+      return true;
+    },
+    async verifySignedIn(page) {
+      assert.equal(page, authPage);
+      return true;
+    },
+  };
+
+  await runAccountFlow({
+    pageSession,
+    adapter,
+    request: { ...request(), operation: "verify_credentials" },
+    emit: (message) => events.push(message),
+    control: {
+      throwIfCancelled() {},
+      async waitFor() {
+        throw Object.assign(new Error("protocol_error"), { code: "protocol_error" });
+      },
+    },
+  });
+
+  assert.equal(events.at(-1).type, "verified");
+  assert.equal(currentPage, authPage);
+});
+
 test("submits a password-change identity challenge once before changing password", async () => {
   const { page, events } = await execute([
     "login_ready",
@@ -485,6 +631,28 @@ test("requests TOTP for both sign-ins without exposing secret", async () => {
   assert.equal(JSON.stringify(events).includes("JBSWY"), false);
 });
 
+test("waits through a transient verification state after submitting TOTP", async () => {
+  const { page, events } = await execute(
+    [
+      "login_ready",
+      "signed_in",
+      "password_change_ready",
+      "password_changed",
+      "login_ready",
+      "totp_required",
+      "flow_changed",
+      "signed_in",
+    ],
+    [{ type: "totp_code", code: "654321" }],
+  );
+
+  assert.equal(events.at(-1).type, "verified");
+  assert.deepEqual(
+    page.actions.filter((action) => action.type === "submit_totp").map((action) => action.code),
+    ["654321"],
+  );
+});
+
 test("requests at most two TOTP codes then pauses for manual recovery", async () => {
   const { events } = await execute(
     [
@@ -782,6 +950,33 @@ test("OpenAI openLogin preserves an existing signed-in session", async () => {
   await openaiChatgptAdapter.openLogin(page);
 });
 
+test("OpenAI adapter closes stale auth tabs before a new worker flow", async () => {
+  const closed = [];
+  const page = (url) => ({
+    url: () => url,
+    async close() {
+      closed.push(url);
+    },
+  });
+  const signedIn = page("https://chatgpt.com/");
+  const context = {
+    pages: () => [
+      page("https://auth.openai.com/log-in/password"),
+      page("https://chatgpt.com/auth/login"),
+      signedIn,
+      page("https://example.com/"),
+    ],
+  };
+
+  await openaiChatgptAdapter.prepareContext(context);
+
+  assert.deepEqual(closed, [
+    "https://auth.openai.com/log-in/password",
+    "https://chatgpt.com/auth/login",
+  ]);
+  assert.equal(context.pages().includes(signedIn), true);
+});
+
 test("OpenAI openLogin resumes from an expired-session dialog", async () => {
   let stage = "expired";
   const actions = [];
@@ -824,6 +1019,9 @@ test("OpenAI openLogin resumes from an expired-session dialog", async () => {
       throw new Error("must use the expired-session login action");
     },
     locator(selector) {
+      if (selector.includes("modal-expired-session")) {
+        return locator({ visible: () => stage === "expired" || stage === "transition" });
+      }
       if (selector.includes('autocomplete="username"')) {
         return locator({ visible: () => stage === "email" });
       }
@@ -838,7 +1036,7 @@ test("OpenAI openLogin resumes from an expired-session dialog", async () => {
         && options.name instanceof RegExp
         && options.name.test("Profile menu")
       ) {
-        return locator({ visible: () => stage === "expired" || stage === "transition" });
+        return locator({ visible: () => stage === "expired" });
       }
       return locator({ visible: () => false });
     },
@@ -849,6 +1047,7 @@ test("OpenAI openLogin resumes from an expired-session dialog", async () => {
     },
   };
 
+  assert.equal(await openaiChatgptAdapter.classify(page), "flow_changed");
   await openaiChatgptAdapter.openLogin(page);
 
   assert.deepEqual(actions, ["login"]);
@@ -866,6 +1065,24 @@ test("OpenAI adapter treats a post-login billing interstitial as signed in", asy
 test("OpenAI logout dismisses a blocking interstitial before opening the menu", async () => {
   const events = [];
   let dialogVisible = true;
+  let menuOpen = false;
+  const hiddenDialog = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return false;
+    },
+    getByRole() {
+      return this;
+    },
+    locator() {
+      return this;
+    },
+  };
   const dialogButton = {
     first() {
       return this;
@@ -899,6 +1116,7 @@ test("OpenAI logout dismisses a blocking interstitial before opening the menu", 
     },
     async click() {
       events.push("menu");
+      menuOpen = true;
     },
   };
   const logoutItem = {
@@ -909,7 +1127,7 @@ test("OpenAI logout dismisses a blocking interstitial before opening the menu", 
       return this;
     },
     async isVisible() {
-      return !dialogVisible;
+      return menuOpen;
     },
     async click() {
       events.push("logout");
@@ -1010,6 +1228,87 @@ test("OpenAI logout force-clicks the profile menu when its avatar intercepts cli
   await openaiChatgptAdapter.logout(page);
 
   assert.deepEqual(events, ["menu", "logout"]);
+});
+
+test("OpenAI logout uses an already-open account menu with duplicate profile buttons", async () => {
+  const events = [];
+  let menuOpen = true;
+  const hidden = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return false;
+    },
+    async count() {
+      return 0;
+    },
+  };
+  const profileButtons = {
+    first() {
+      return this.nth(0);
+    },
+    filter() {
+      return this;
+    },
+    async count() {
+      return 2;
+    },
+    nth(index) {
+      return {
+        first() {
+          return this;
+        },
+        async isVisible() {
+          return index === 1;
+        },
+        async click() {
+          events.push(`profile-${index}`);
+          menuOpen = !menuOpen;
+        },
+      };
+    },
+  };
+  const logoutItem = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return menuOpen;
+    },
+    async click() {
+      events.push("logout");
+      menuOpen = false;
+    },
+  };
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) {
+        return profileButtons;
+      }
+      if (selector.includes('data-testid="log-out-menu-item"')) {
+        return logoutItem;
+      }
+      return hidden;
+    },
+    getByRole(role, options = {}) {
+      if ((role === "menuitem" || role === "button") && options.name instanceof RegExp && options.name.test("Log out")) {
+        return logoutItem;
+      }
+      return hidden;
+    },
+  };
+
+  await openaiChatgptAdapter.logout(page);
+
+  assert.deepEqual(events, ["logout"]);
 });
 
 test("OpenAI logout waits for the delayed logout menu item", async () => {
@@ -1345,7 +1644,7 @@ test("OpenAI adapter checks cancellation between fill and click", async () => {
   assert.equal(clicks, 0);
 });
 
-test("OpenAI adapter submits localized login forms by semantic type", async () => {
+test("OpenAI adapter submits Vietnamese login forms without a submit type", async () => {
   let totpVisible = false;
   let submitClicks = 0;
   const locator = ({ visible = false, dynamicVisible, onClick, onFill } = {}) => ({
@@ -1371,13 +1670,7 @@ test("OpenAI adapter submits localized login forms by semantic type", async () =
         });
       }
       if (selector === 'button[type="submit"], input[type="submit"]') {
-        return locator({
-          visible: true,
-          onClick: () => {
-            submitClicks += 1;
-            totpVisible = true;
-          },
-        });
+        return locator();
       }
       if (selector.includes('autocomplete="one-time-code"')) {
         return locator({ dynamicVisible: () => totpVisible });
@@ -1387,6 +1680,10 @@ test("OpenAI adapter submits localized login forms by semantic type", async () =
     getByRole(_role, options = {}) {
       return locator({
         visible: options.name instanceof RegExp && options.name.test("Tiếp tục"),
+        onClick: () => {
+          submitClicks += 1;
+          totpVisible = true;
+        },
       });
     },
     async waitForTimeout() {},
@@ -1553,6 +1850,95 @@ test("OpenAI adapter opens the signed-in password setting without logging out", 
 
   assert.deepEqual(actions, ["profile", "settings", "security", "password"]);
   assert.equal(page.url(), "https://auth.openai.com/log-in/password");
+});
+
+test("OpenAI password change uses an already-open account menu", async () => {
+  let stage = "profile_menu";
+  const actions = [];
+  const locator = ({ visible, onClick } = {}) => ({
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    async isVisible() {
+      return Boolean(visible?.());
+    },
+    async count() {
+      return 0;
+    },
+    async click(options) {
+      onClick?.(options);
+    },
+  });
+  const hidden = () => locator({ visible: () => false });
+  const profileButton = locator({
+    visible: () => stage === "profile_menu",
+    onClick: () => {
+      actions.push("profile");
+      stage = "signed_in";
+    },
+  });
+  const page = {
+    url: () => stage === "identity"
+      ? "https://auth.openai.com/log-in/password"
+      : "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) {
+        return profileButton;
+      }
+      if (selector.includes('data-testid="settings-menu-item"')) {
+        return locator({
+          visible: () => stage === "profile_menu",
+          onClick: () => {
+            actions.push("settings");
+            stage = "settings";
+          },
+        });
+      }
+      if (selector.includes('data-testid="modal-settings"')) {
+        return locator({ visible: () => stage === "settings" || stage === "security" });
+      }
+      if (selector.includes('data-testid="security-tab"')) {
+        return locator({
+          visible: () => stage === "settings",
+          onClick: () => {
+            actions.push("security");
+            stage = "security";
+          },
+        });
+      }
+      if (selector.includes('data-testid="password-setting"')) {
+        return locator({
+          visible: () => stage === "security",
+          onClick: () => {
+            actions.push("password");
+            stage = "identity";
+          },
+        });
+      }
+      if (selector.includes('autocomplete="current-password"')) {
+        return locator({ visible: () => stage === "identity" });
+      }
+      return hidden();
+    },
+    getByRole(role, options = {}) {
+      if (
+        role === "button"
+        && options.name instanceof RegExp
+        && options.name.test("Open profile menu")
+      ) {
+        return profileButton;
+      }
+      return hidden();
+    },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.openPasswordChange(page);
+
+  assert.deepEqual(actions, ["settings", "security", "password"]);
 });
 
 test("emitted worker messages contain no credentials, tokens, HTML, or account", async () => {

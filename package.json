@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "test:extension": "node extension/tests/validate-extension.mjs",
     "build:account-keeper-worker": "node scripts/prepare-account-keeper-worker.mjs",
+    "account-keeper:agent": "cargo run --manifest-path src-tauri/Cargo.toml --bin account-keeper-agent --",
     "qa:account-keeper-tauri": "node automation/qa/account-keeper-tauri-qa.mjs",
     "build:windows": "tauri build"
   },

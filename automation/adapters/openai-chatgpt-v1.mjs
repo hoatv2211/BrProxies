@@ -1,10 +1,28 @@
 const ALLOWED_ORIGINS = new Set(["https://auth.openai.com", "https://chatgpt.com"]);
+const APP_URL = "https://chatgpt.com/";
 const LOGIN_URL = "https://chatgpt.com/auth/login";
 
 export const openaiChatgptAdapter = {
   id: "openai-chatgpt-v1",
   allowedOrigins: [...ALLOWED_ORIGINS],
   loginUrl: LOGIN_URL,
+
+  async prepareContext(context) {
+    for (const page of context.pages()) {
+      let url;
+      try {
+        url = new URL(page.url());
+      } catch {
+        continue;
+      }
+      const staleAuthPage =
+        url.origin === "https://auth.openai.com"
+        || (url.origin === "https://chatgpt.com" && url.pathname.startsWith("/auth"));
+      if (staleAuthPage) {
+        await page.close().catch(() => {});
+      }
+    }
+  },
 
   async assertAllowedOrigin(page) {
     const origin = new URL(page.url()).origin;
@@ -21,8 +39,7 @@ export const openaiChatgptAdapter = {
         expiredDialog.getByRole("button", { name: /log ?in|sign ?in|đăng nhập/i }),
         expiredDialog.getByRole("link", { name: /log ?in|sign ?in|đăng nhập/i }),
       ], control);
-      await waitForAny(page, authenticationSurfaceLocators(page), 15_000, control);
-      return;
+      return waitForAuthenticationSurface(page, 15_000, control);
     }
     try {
       const current = new URL(page.url());
@@ -30,7 +47,7 @@ export const openaiChatgptAdapter = {
         const state = await this.classify(page);
         checkControl(control);
         if (state === "signed_in") {
-          return;
+          return page;
         }
       }
     } catch {
@@ -39,17 +56,13 @@ export const openaiChatgptAdapter = {
     await browserSideEffect(control, () =>
       page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" }),
     );
+    return page;
     await this.assertAllowedOrigin(page);
     // ChatGPT auth is a client-rendered SPA: domcontentloaded fires before the
     // React login form mounts. Without waiting, the driver's first classify()
     // sees an empty page and throws flow_changed. Wait until an interactive
     // auth surface actually appears (or a challenge/error we still classify).
-    await waitForAny(
-      page,
-      loginSurfaceLocators(page),
-      15_000,
-      control,
-    );
+    await waitForAny(page, loginSurfaceLocators(page), 15_000, control);
   },
 
   async classify(page) {
@@ -126,6 +139,10 @@ export const openaiChatgptAdapter = {
       return "unsupported_login_method";
     }
 
+    if (await visible(sessionExpiredDialog(page))) {
+      return "flow_changed";
+    }
+
     const current = new URL(url);
     const onAppSurface =
       current.origin === "https://chatgpt.com" &&
@@ -165,27 +182,43 @@ export const openaiChatgptAdapter = {
     if (await visible(email)) {
       await browserSideEffect(control, () => email.fill(account));
       await clickFirstVisible([
-        page.getByRole("button", { name: /^(continue|next)$/i }),
-        page.getByRole("button", { name: /^(log in|sign in)$/i }),
+        page.getByRole("button", { name: /^(continue|next|tiếp tục)$/i }),
+        page.getByRole("button", { name: /^(log in|sign in|đăng nhập)$/i }),
         submitControl(page),
       ], control);
-      await waitForAny(
-        page,
-        [currentPassword(page), oneTimeCode(page)],
-        15_000,
-        control,
-      );
+      return false;
     }
 
     const passwordInput = currentPassword(page);
     if (await visible(passwordInput)) {
       await browserSideEffect(control, () => passwordInput.fill(password));
       await clickFirstVisible([
-        page.getByRole("button", { name: /^(continue|log in|sign in)$/i }),
+        page.getByRole("button", { name: /^(continue|log in|sign in|tiếp tục|đăng nhập)$/i }),
         submitControl(page),
       ], control);
       await waitUntilHidden(page, passwordInput, 15_000, control);
+      return true;
     }
+    throw adapterError("flow_changed");
+  },
+
+  async prepareCredentialVerification(page, { control } = {}) {
+    await browserSideEffect(control, () =>
+      page.goto(APP_URL, { waitUntil: "domcontentloaded" }),
+    );
+    for (let poll = 0; poll < 50; poll += 1) {
+      checkControl(control);
+      const state = await this.classify(page).catch(() => "flow_changed");
+      if (state === "signed_in") {
+        await this.logout(page, { control });
+        break;
+      }
+      if (state !== "flow_changed") {
+        break;
+      }
+      await page.waitForTimeout(100);
+    }
+    return this.openLogin(page, { control });
   },
 
   async submitTotp(page, code, { control } = {}) {
@@ -195,7 +228,7 @@ export const openaiChatgptAdapter = {
     }
     await browserSideEffect(control, () => input.fill(code));
     await clickFirstVisible([
-      page.getByRole("button", { name: /^(continue|verify|submit)$/i }),
+      page.getByRole("button", { name: /^(continue|verify|submit|tiếp tục|xác minh|gửi)$/i }),
       submitControl(page),
     ], control);
   },
@@ -207,7 +240,7 @@ export const openaiChatgptAdapter = {
     }
     await browserSideEffect(control, () => input.fill(password));
     await clickFirstVisible([
-      page.getByRole("button", { name: /^(continue|confirm|verify|submit)$/i }),
+      page.getByRole("button", { name: /^(continue|confirm|verify|submit|tiếp tục|xác nhận|xác minh|gửi)$/i }),
       submitControl(page),
     ], control);
     await waitUntilHidden(page, input, 15_000, control);
@@ -222,19 +255,25 @@ export const openaiChatgptAdapter = {
     }
     await dismissBlockingDialog(page, control);
 
-    const menu = await firstVisible(accountMenuLocators(page));
-    if (!menu) {
-      throw adapterError("flow_changed");
-    }
-    await browserSideEffect(control, () => menu.click({ force: true }));
-
     const settingsLocators = [
       page.locator('[data-testid="settings-menu-item"]'),
       page.getByRole("menuitem", { name: /^(settings|cài đặt)$/i }),
       page.getByRole("button", { name: /^(settings|cài đặt)$/i }),
     ];
-    await waitForAny(page, settingsLocators, 5_000, control);
-    await clickFirstVisible(settingsLocators, control);
+    let settings = await firstVisible(settingsLocators);
+    if (!settings) {
+      const menu = await firstVisible(accountMenuLocators(page));
+      if (!menu) {
+        throw adapterError("flow_changed");
+      }
+      await browserSideEffect(control, () => menu.click({ force: true }));
+      await waitForAny(page, settingsLocators, 5_000, control);
+      settings = await firstVisible(settingsLocators);
+    }
+    if (!settings) {
+      throw adapterError("flow_changed");
+    }
+    await browserSideEffect(control, () => settings.click());
 
     const securityTabLocators = [
       page.locator('[data-testid="security-tab"]'),
@@ -300,11 +339,6 @@ export const openaiChatgptAdapter = {
     // A post-login billing/renewal interstitial intercepts clicks on the
     // account menu. Dismiss it first so the menu is reachable.
     await dismissBlockingDialog(page, control);
-    const menu = await firstVisible(accountMenuLocators(page));
-    if (!menu) {
-      throw adapterError("flow_changed");
-    }
-    await browserSideEffect(control, () => menu.click({ force: true }));
     // Localized menu label (e.g. Vietnamese "Đăng xuất"). Unlike the submit
     // buttons there is no type="submit" fallback for a menu item, so the text
     // matcher must cover the localized rollouts we support.
@@ -314,8 +348,16 @@ export const openaiChatgptAdapter = {
       page.getByRole("menuitem", { name: logoutLabel }),
       page.getByRole("button", { name: logoutLabel }),
     ];
-    await waitForAny(page, logoutLocators, 5_000, control);
-    const logout = await firstVisible(logoutLocators);
+    let logout = await firstVisible(logoutLocators);
+    if (!logout) {
+      const menu = await firstVisible(accountMenuLocators(page));
+      if (!menu) {
+        throw adapterError("flow_changed");
+      }
+      await browserSideEffect(control, () => menu.click({ force: true }));
+      await waitForAny(page, logoutLocators, 5_000, control);
+      logout = await firstVisible(logoutLocators);
+    }
     if (!logout) {
       throw adapterError("flow_changed");
     }
@@ -374,9 +416,9 @@ function blockingDialog(page) {
 }
 
 function sessionExpiredDialog(page) {
-  return page.getByRole("dialog").filter({
-    hasText: /session (has )?expired|session is no longer valid|log in again|phiên.*hết hạn/i,
-  });
+  return page
+    .locator('#modal-expired-session, [data-testid="modal-expired-session"]')
+    .first();
 }
 
 function loginSurfaceLocators(page) {
@@ -481,8 +523,19 @@ async function anyVisible(locators) {
 
 async function firstVisible(locators) {
   for (const locator of locators) {
-    if (await visible(locator.first())) {
-      return locator.first();
+    const first = locator.first();
+    if (await visible(first)) {
+      return first;
+    }
+    if (typeof locator.count !== "function" || typeof locator.nth !== "function") {
+      continue;
+    }
+    const count = await locator.count().catch(() => 0);
+    for (let index = 1; index < count; index += 1) {
+      const candidate = locator.nth(index);
+      if (await visible(candidate)) {
+        return candidate;
+      }
     }
   }
   return null;
@@ -513,6 +566,35 @@ async function waitForAny(page, locators, timeout, control) {
   // Timing out here means the page never reached an expected surface. Returning
   // silently lets the caller skip its next step and the flow driver then
   // misreports the stall as invalid_credentials. Surface it as flow_changed.
+  throw adapterError("flow_changed");
+}
+
+async function waitForAuthenticationSurface(page, timeout, control) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    checkControl(control);
+    const pages = typeof page.context === "function"
+      ? page.context().pages()
+      : [page];
+    for (const candidate of pages) {
+      let origin;
+      try {
+        origin = new URL(candidate.url()).origin;
+      } catch {
+        continue;
+      }
+      if (
+        ALLOWED_ORIGINS.has(origin)
+        && await anyVisible(authenticationSurfaceLocators(candidate))
+      ) {
+        checkControl(control);
+        return candidate;
+      }
+    }
+    checkControl(control);
+    await page.waitForTimeout(100);
+    checkControl(control);
+  }
   throw adapterError("flow_changed");
 }
 

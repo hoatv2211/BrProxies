@@ -1,0 +1,8 @@
+interface:
+  display_name: "Account Keeper"
+  short_description: "Debug và vận hành Account Keeper an toàn"
+  brand_color: "#2563EB"
+  default_prompt: "Dùng $account-keeper để nhận file local account|current_password|totp_secret, chạy flow đổi mật khẩu an toàn và tự ghi output đã xác minh."
+
+policy:
+  allow_implicit_invocation: true

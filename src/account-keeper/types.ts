@@ -73,6 +73,34 @@ export interface ProgressEvent {
   job: JobView;
 }
 
+export interface ProgressLogEntry {
+  key: string;
+  updated_at: string;
+  masked_account: string;
+  stage: AccountStage;
+  attempts: number;
+  error_code: string | null;
+}
+
+export interface ProfileImportPayload {
+  schema_version: 1;
+  kind: "brproxies-account-keeper-profile";
+  profile_id: string;
+  account_status: "success";
+  last_verified_at: string | null;
+  api_base_url: string;
+  vault_ref: string;
+}
+
+export interface ManagedProfileView {
+  profile_id: string;
+  masked_account: string;
+  status: "success";
+  last_verified_at: string | null;
+  running: boolean;
+  import_payload: ProfileImportPayload;
+}
+
 export interface DraftState {
   inputMode: InputMode;
   inputText: string;

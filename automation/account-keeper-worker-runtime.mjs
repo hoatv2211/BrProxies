@@ -106,6 +106,25 @@ export async function createControlledPageSession(context, allowedOrigins) {
 
   return {
     async current() {
+      const pages = typeof context.pages === "function" ? context.pages() : [];
+      const dedicatedIndex = pages.indexOf(dedicatedPage);
+      for (let index = pages.length - 1; index > dedicatedIndex; index -= 1) {
+        const candidate = pages[index];
+        if (!candidate || candidate.isClosed?.()) {
+          continue;
+        }
+        let origin;
+        try {
+          origin = new URL(candidate.url()).origin;
+        } catch {
+          continue;
+        }
+        if (origins.has(origin)) {
+          track(candidate);
+          currentPage = candidate;
+          break;
+        }
+      }
       if (currentPage?.isClosed?.()) {
         currentPage = dedicatedPage;
       }
@@ -113,6 +132,22 @@ export async function createControlledPageSession(context, allowedOrigins) {
         throw codedError("browser_crashed");
       }
       return currentPage;
+    },
+    adopt(page) {
+      if (!page || page.isClosed?.()) {
+        throw codedError("browser_crashed");
+      }
+      let origin;
+      try {
+        origin = new URL(page.url()).origin;
+      } catch {
+        throw codedError("flow_changed");
+      }
+      if (!origins.has(origin)) {
+        throw codedError("flow_changed");
+      }
+      track(page);
+      currentPage = page;
     },
     dispose() {
       context.off?.("page", track);
