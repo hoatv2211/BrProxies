@@ -64,6 +64,7 @@ pub enum AccountEvent {
     ManualRequired,
     Resumed,
     Verified,
+    LoginVerified,
     Failed,
     VerificationFailed,
     CredentialStateUnknown,
@@ -113,6 +114,15 @@ impl AccountRunState {
                 }
                 self.stage = AccountStage::Success;
                 self.password_state = PasswordState::Changed;
+            }
+            AccountEvent::LoginVerified => {
+                if !is_verification_stage(self.stage) {
+                    bail!(
+                        "Account Keeper login verified event arrived outside verification state"
+                    );
+                }
+                self.stage = AccountStage::Success;
+                // Login mode does not rotate — password stays Original.
             }
             AccountEvent::VerificationFailed => {
                 if self.password_state == PasswordState::Unknown {
@@ -2445,7 +2455,11 @@ impl Coordinator {
     ) -> Result<()> {
         let mut checkpoint = crate::account_keeper_store::load_job(batch_id)?;
         let mut vault = crate::account_keeper_store::load_vault()?;
-        let template = PasswordTemplate::parse(&checkpoint.template)?;
+        let template = if checkpoint.operation == "login" {
+            None
+        } else {
+            Some(PasswordTemplate::parse(&checkpoint.template)?)
+        };
         let mut random = OsRandom;
         let mut used_passwords: HashSet<String> = vault
             .accounts
@@ -2499,7 +2513,14 @@ impl Coordinator {
                 }
             }
 
-            let pending_password = template.generate(&mut random, &mut used_passwords)?;
+            let pending_password = if checkpoint.operation == "login" {
+                String::new()
+            } else {
+                template
+                    .as_ref()
+                    .expect("change_password requires template")
+                    .generate(&mut random, &mut used_passwords)?
+            };
             let outcome = self
                 .process_account(
                     &mut checkpoint,
@@ -2629,9 +2650,14 @@ impl Coordinator {
             };
 
             let request_id = uuid::Uuid::new_v4().to_string();
+            let worker_operation = if checkpoint.operation == "login" {
+                "verify_credentials"
+            } else {
+                "change_password"
+            };
             let start = WorkerStart {
                 request_id,
-                operation: "change_password".to_string(),
+                operation: worker_operation.to_string(),
                 adapter_id: checkpoint.adapter_id.clone(),
                 cdp_endpoint,
                 account: vault.accounts[vault_index].account.clone(),
@@ -2807,13 +2833,21 @@ impl Coordinator {
                                 )?;
                             }
                             WorkerEvent::Verified => {
-                                apply_worker_event(
-                                    &mut state,
-                                    &mut vault.accounts[vault_index],
-                                    pending_password,
-                                    WorkerEvent::Verified,
-                                    &self.clock.now(),
-                                )?;
+                                if checkpoint.operation == "login" {
+                                    apply_login_verified(
+                                        &mut state,
+                                        &mut vault.accounts[vault_index],
+                                        &self.clock.now(),
+                                    )?;
+                                } else {
+                                    apply_worker_event(
+                                        &mut state,
+                                        &mut vault.accounts[vault_index],
+                                        pending_password,
+                                        WorkerEvent::Verified,
+                                        &self.clock.now(),
+                                    )?;
+                                }
                                 label_account_profile(
                                     self.profiles.as_ref(),
                                     &vault.accounts[vault_index],
@@ -3410,6 +3444,23 @@ fn managed_profile_views(
             .then_with(|| left.masked_account.cmp(&right.masked_account))
     });
     profiles
+}
+
+/// Login-only success: the account signed in with its existing credentials.
+/// Marks the profile a verified success WITHOUT rotating — password_state stays
+/// Original. Separate from the rotation `Verified` path, which asserts a pending
+/// password and moves to Changed.
+pub fn apply_login_verified(
+    state: &mut AccountRunState,
+    vault: &mut VaultAccount,
+    now: &str,
+) -> Result<()> {
+    state.transition(AccountEvent::LoginVerified)?;
+    vault.pending_password = None;
+    vault.password_state = PasswordState::Original;
+    vault.last_verified_at = Some(now.to_string());
+    vault.last_status = Some("success".to_string());
+    Ok(())
 }
 
 pub fn apply_worker_event(
@@ -4452,6 +4503,35 @@ mod tests {
         assert_eq!(state.stage, AccountStage::Success);
         assert_eq!(vault.current_password, "new-password");
         assert_eq!(vault.pending_password, None);
+    }
+
+    #[test]
+    fn login_verified_marks_success_without_rotating_password() {
+        let mut state = AccountRunState::new("account-key");
+        // Simulate a login flow that has reached the verification stage.
+        state.stage = AccountStage::VerifyingNewPassword;
+        let mut vault = VaultAccount {
+            account_key: "account-key".into(),
+            account: "owner@example.test".into(),
+            current_password: "current-password".into(),
+            pending_password: None,
+            totp_secret: None,
+            profile_id: "profile-login".into(),
+            password_state: PasswordState::Original,
+            last_verified_at: None,
+            last_job_id: Some("batch-login".into()),
+            last_status: Some("running".into()),
+        };
+        apply_login_verified(&mut state, &mut vault, "2026-08-01T00:00:00Z").unwrap();
+        assert_eq!(state.stage, AccountStage::Success);
+        assert_eq!(vault.password_state, PasswordState::Original);
+        assert_eq!(vault.current_password, "current-password");
+        assert!(vault.pending_password.is_none());
+        assert_eq!(vault.last_status.as_deref(), Some("success"));
+        assert_eq!(
+            vault.last_verified_at.as_deref(),
+            Some("2026-08-01T00:00:00Z")
+        );
     }
 
     #[test]
