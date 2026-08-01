@@ -2,7 +2,7 @@
 
 # BrProxies
 
-**One desktop app for anti-detect browsing at scale.**
+**One desktop app for isolated anti-detect browsing.**
 
 Isolated browser profiles · real fingerprint spoofing · proxy infrastructure ·
 SMS verification · authorized account operations · local automation & MCP — all

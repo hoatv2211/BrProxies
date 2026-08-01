@@ -2,7 +2,7 @@
 
 # BrProxies
 
-**Một app desktop cho anti-detect browsing ở quy mô lớn.**
+**Một app desktop cho anti-detect browsing với profile cách ly.**
 
 Browser profile cách ly · fingerprint spoofing thật · hạ tầng proxy · SMS verify
 · thao tác account được uỷ quyền · Automation API + MCP — gom trong một launcher
