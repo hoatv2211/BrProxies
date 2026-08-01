@@ -716,6 +716,7 @@ pub struct ManagedProfileView {
     pub profile_id: String,
     pub masked_account: String,
     pub status: String,
+    pub rotated: bool,
     pub last_verified_at: Option<String>,
     pub running: bool,
     pub import_payload: ManagedProfileImportPayload,
@@ -1086,10 +1087,10 @@ impl ProfileRuntime for HeadlessProfileRuntime {
     }
 }
 
-fn default_config_for(document_dir: &Path) -> Result<AccountKeeperDefaultsDto> {
+fn default_config_for(base_dir: &Path) -> Result<AccountKeeperDefaultsDto> {
     let template = "BrP@{random:16}!".to_string();
     validate_template_value(&template)?;
-    let output_path = document_dir.join("account-keeper-result.json");
+    let output_path = base_dir.join("output").join("account-keeper-result.json");
     let output_path = output_path
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Account Keeper output path is not valid Unicode"))?
@@ -1352,9 +1353,11 @@ fn ensure_worker_fields(
 
 #[tauri::command]
 pub fn account_keeper_defaults() -> std::result::Result<AccountKeeperDefaultsDto, String> {
-    let document_dir = dirs::document_dir()
-        .ok_or_else(|| "Account Keeper Documents directory is not available".to_string())?;
-    default_config_for(&document_dir).map_err(|error| error.to_string())
+    let base_dir = std::env::current_dir()
+        .ok()
+        .or_else(dirs::document_dir)
+        .ok_or_else(|| "Account Keeper base directory is not available".to_string())?;
+    default_config_for(&base_dir).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -3414,8 +3417,8 @@ fn managed_profile_views(
         .accounts
         .iter()
         .filter(|account| {
-            account.password_state == PasswordState::Changed
-                && account.last_status.as_deref() == Some("success")
+            account.last_status.as_deref() == Some("success")
+                && account.last_verified_at.is_some()
         })
         .map(|account| {
             let last_verified_at = account.last_verified_at.clone();
@@ -3423,6 +3426,7 @@ fn managed_profile_views(
                 profile_id: account.profile_id.clone(),
                 masked_account: mask_account(&account.account),
                 status: "success".to_string(),
+                rotated: account.password_state == PasswordState::Changed,
                 last_verified_at: last_verified_at.clone(),
                 running: running.contains(&account.profile_id),
                 import_payload: ManagedProfileImportPayload {
@@ -3586,7 +3590,7 @@ mod tests {
     #[test]
     fn defaults_use_valid_template_and_documents_output_path() {
         let document_dir = test_dir("defaults").join("Documents");
-        let expected_output_path = document_dir.join("account-keeper-result.json");
+        let expected_output_path = document_dir.join("output").join("account-keeper-result.json");
 
         let defaults = default_config_for(&document_dir).unwrap();
 
@@ -4041,6 +4045,66 @@ mod tests {
         ] {
             assert!(!serialized.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn managed_profiles_include_login_only_with_rotated_false() {
+        let vault = VaultFile {
+            schema_version: SCHEMA_VERSION,
+            accounts: vec![
+                VaultAccount {
+                    account_key: "rotated-key".into(),
+                    account: "rot@example.test".into(),
+                    current_password: "new".into(),
+                    pending_password: None,
+                    totp_secret: None,
+                    profile_id: "profile-rotated".into(),
+                    password_state: PasswordState::Changed,
+                    last_verified_at: Some("2026-08-01T02:00:00Z".into()),
+                    last_job_id: None,
+                    last_status: Some("success".into()),
+                },
+                VaultAccount {
+                    account_key: "login-key".into(),
+                    account: "log@example.test".into(),
+                    current_password: "current".into(),
+                    pending_password: None,
+                    totp_secret: None,
+                    profile_id: "profile-login".into(),
+                    password_state: PasswordState::Original,
+                    last_verified_at: Some("2026-08-01T01:00:00Z".into()),
+                    last_job_id: None,
+                    last_status: Some("success".into()),
+                },
+            ],
+        };
+        let running: HashSet<String> = HashSet::new();
+        let profiles =
+            managed_profile_views(&vault, &running, "http://127.0.0.1:40325/");
+        assert_eq!(profiles.len(), 2);
+        let login = profiles
+            .iter()
+            .find(|p| p.profile_id == "profile-login")
+            .unwrap();
+        assert!(!login.rotated);
+        let rotated = profiles
+            .iter()
+            .find(|p| p.profile_id == "profile-rotated")
+            .unwrap();
+        assert!(rotated.rotated);
+    }
+
+    #[test]
+    fn defaults_output_path_is_in_project_output_dir() {
+        let defaults = account_keeper_defaults().unwrap();
+        assert!(
+            defaults
+                .output_path
+                .replace('\\', "/")
+                .ends_with("/output/account-keeper-result.json"),
+            "unexpected output path: {}",
+            defaults.output_path
+        );
     }
 
     #[test]
