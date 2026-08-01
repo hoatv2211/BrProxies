@@ -51,6 +51,7 @@ const jobStatuses = new Set<JobStatus>([
 const terminalJobStatuses = new Set<JobStatus>(["completed", "cancelled", "abandoned", "failed"]);
 
 const initialDraft: DraftState = {
+  operation: "change_password",
   inputMode: "inline",
   inputText: "",
   inputPath: "",
@@ -229,6 +230,7 @@ function normalizeManagedProfile(value: unknown): ManagedProfileView | null {
     status: "success",
     last_verified_at: asNullableString(record?.last_verified_at),
     running: asBoolean(record?.running),
+    rotated: asBoolean(record?.rotated),
     import_payload: importPayload,
   };
 }

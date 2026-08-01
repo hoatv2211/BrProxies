@@ -17,6 +17,7 @@ import type {
 } from "./types";
 
 const validDraft: DraftState = {
+  operation: "change_password",
   inputMode: "inline",
   inputText: "owner@example.test|current-password|JBSWY3DPEHPK3PXP",
   inputPath: "C:\\fixtures\\batch.txt",
@@ -133,6 +134,34 @@ describe("canStart", () => {
     expect(canStart(validDraft, [{ ...runningJob, status: "waiting_manual" }])).toBe(false);
     expect(canStart(validDraft, [{ ...runningJob, status: "critical", batchBlocked: true }])).toBe(false);
     expect(canStart(validDraft, [{ ...runningJob, status: "completed" }])).toBe(true);
+  });
+});
+
+describe("canStart operation modes", () => {
+  const loginDraft: DraftState = {
+    ...validDraft,
+    operation: "login",
+    outputPath: "",
+    templateText: "",
+    templateValidation: null,
+  };
+
+  it("allows a login draft with no template or output", () => {
+    expect(canStart(loginDraft, [])).toBe(true);
+  });
+
+  it("still requires template and output for change_password", () => {
+    const changeDraft: DraftState = {
+      ...validDraft,
+      operation: "change_password",
+      outputPath: "",
+    };
+    expect(canStart(changeDraft, [])).toBe(false);
+  });
+
+  it("login draft still requires valid input and acknowledgement", () => {
+    expect(canStart({ ...loginDraft, plaintextAcknowledged: false }, [])).toBe(false);
+    expect(canStart({ ...loginDraft, inputValidation: null }, [])).toBe(false);
   });
 });
 
@@ -280,6 +309,7 @@ describe("profileImportJson", () => {
       status: "success",
       last_verified_at: "2026-07-31T03:00:00Z",
       running: false,
+      rotated: false,
       import_payload: {
         schema_version: 1,
         kind: "brproxies-account-keeper-profile",
