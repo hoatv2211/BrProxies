@@ -79,6 +79,13 @@ pub fn psapi_path() -> Result<PathBuf> {
     Ok(config_root()?.join("psapi.json"))
 }
 
+/// 5SIM SMS-verification API config (Bearer token). Kept in its own file so
+/// the Settings page (which round-trips the whole Settings struct) can never
+/// clobber the saved token.
+pub fn sms5sim_path() -> Result<PathBuf> {
+    Ok(config_root()?.join("sms5sim.json"))
+}
+
 pub fn proxypool_dir() -> Result<PathBuf> {
     let p = config_root()?.join("proxypool");
     std::fs::create_dir_all(&p)?;

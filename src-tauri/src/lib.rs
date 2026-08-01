@@ -21,6 +21,7 @@ mod proxypool;
 mod psapi;
 mod runtime;
 mod settings;
+mod sms5sim;
 mod store;
 
 use serde_json::Value;
@@ -1140,8 +1141,123 @@ async fn ps_set_tag(id: i64, tag: String) -> Result<Value, String> {
     .map_err(|e| e.to_string())
 }
 
+// ---- 5SIM SMS-verification API ----
+
+/// Whether a 5SIM token has been saved (never returns the token itself).
+#[tauri::command]
+fn sms5sim_has_token() -> bool {
+    sms5sim::has_token()
+}
+
+#[tauri::command]
+fn sms5sim_set_token(token: String) -> Result<(), String> {
+    sms5sim::set_token(token).map_err(|e| e.to_string())
+}
+
+/// Account balance — doubles as the "is the token valid?" probe.
+#[tauri::command]
+async fn sms5sim_balance() -> Result<f64, String> {
+    sms5sim::balance().await.map_err(|e| e.to_string())
+}
+
+/// Account profile summary (balance, rating, frozen, email).
+#[tauri::command]
+async fn sms5sim_profile() -> Result<sms5sim::Profile, String> {
+    sms5sim::profile().await.map_err(|e| e.to_string())
+}
+
+/// Order history, newest first.
+#[tauri::command]
+async fn sms5sim_orders(limit: Option<u32>) -> Result<Vec<sms5sim::OrderRow>, String> {
+    sms5sim::orders(limit.unwrap_or(50)).await.map_err(|e| e.to_string())
+}
+
+/// Payments history, newest first.
+#[tauri::command]
+async fn sms5sim_payments(limit: Option<u32>) -> Result<Vec<sms5sim::PaymentRow>, String> {
+    sms5sim::payments(limit.unwrap_or(50)).await.map_err(|e| e.to_string())
+}
+
+/// Guest price rows (no token needed), optionally filtered by product/country.
+#[tauri::command]
+async fn sms5sim_prices(
+    product: Option<String>,
+    country: Option<String>,
+) -> Result<Vec<sms5sim::PriceRow>, String> {
+    sms5sim::prices(product.as_deref(), country.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Full activation-service catalogue for the service picker (no token needed).
+#[tauri::command]
+async fn sms5sim_services() -> Result<Vec<sms5sim::Service>, String> {
+    sms5sim::service_list().await.map_err(|e| e.to_string())
+}
+
+/// Country catalogue (slug → ISO + name) for flags (no token needed).
+#[tauri::command]
+async fn sms5sim_countries() -> Result<Vec<sms5sim::Country>, String> {
+    sms5sim::country_list().await.map_err(|e| e.to_string())
+}
+
+/// Rent an activation number. Returns the order id + phone to type into a form.
+#[tauri::command]
+async fn sms5sim_buy_number(
+    country: String,
+    operator: String,
+    product: String,
+) -> Result<sms5sim::Order, String> {
+    sms5sim::buy_number(&country, &operator, &product)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Wait up to `timeout_secs` (poll every `interval_secs`) for the SMS code.
+#[tauri::command]
+async fn sms5sim_poll_code(
+    id: i64,
+    timeout_secs: Option<u64>,
+    interval_secs: Option<u64>,
+) -> Result<String, String> {
+    let timeout = std::time::Duration::from_secs(timeout_secs.unwrap_or(180));
+    let interval = std::time::Duration::from_secs(interval_secs.unwrap_or(5).max(1));
+    sms5sim::poll_code(id, timeout, interval)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sms5sim_finish_order(id: i64) -> Result<(), String> {
+    sms5sim::finish_order(id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sms5sim_cancel_order(id: i64) -> Result<(), String> {
+    sms5sim::cancel_order(id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sms5sim_ban_order(id: i64) -> Result<(), String> {
+    sms5sim::ban_order(id).await.map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Write any Rust panic to a file so a crash we can't watch live still
+    // leaves a stack trace. Chained after the default hook (which still prints).
+    {
+        let default = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if let Ok(dir) = store::config_root() {
+                let bt = std::backtrace::Backtrace::force_capture();
+                let line = format!("PANIC: {info}\n{bt}\n");
+                let _ = std::fs::write(dir.join("panic.log"), line);
+            }
+            default(info);
+        }));
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -1237,6 +1353,20 @@ pub fn run() {
             ps_regions,
             ps_cities,
             ps_signature_set,
+            sms5sim_has_token,
+            sms5sim_set_token,
+            sms5sim_balance,
+            sms5sim_profile,
+            sms5sim_orders,
+            sms5sim_payments,
+            sms5sim_prices,
+            sms5sim_services,
+            sms5sim_countries,
+            sms5sim_buy_number,
+            sms5sim_poll_code,
+            sms5sim_finish_order,
+            sms5sim_cancel_order,
+            sms5sim_ban_order,
             proxypool::proxypool_start,
             proxypool::proxypool_stop,
             proxypool::proxypool_status,
