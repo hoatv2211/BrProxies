@@ -76,6 +76,8 @@ pub struct JobCheckpoint {
     pub keep_profile_running: bool,
     #[serde(default)]
     pub pause_after_current: bool,
+    #[serde(default = "default_checkpoint_operation")]
+    pub operation: String,
     #[serde(default)]
     pub status: String,
     pub updated_at: String,
@@ -96,6 +98,10 @@ pub struct AccountCheckpoint {
 
 fn default_adapter_id() -> String {
     "openai-chatgpt-v1".to_string()
+}
+
+fn default_checkpoint_operation() -> String {
+    "change_password".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,6 +286,7 @@ mod tests {
             adapter_id: "fixture-v1".to_string(),
             keep_profile_running: false,
             pause_after_current: false,
+            operation: "change_password".to_string(),
             status: "waiting_manual".to_string(),
             updated_at: "2026-07-29T00:00:00Z".to_string(),
             accounts: vec![AccountCheckpoint {
@@ -294,6 +301,25 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_without_operation_defaults_to_change_password() {
+        // A checkpoint JSON persisted before the operation field existed.
+        let legacy = serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "batch_id": "legacy-batch",
+            "output_path": "C:/synthetic/result.json",
+            "template": "Local-{random:16}",
+            "adapter_id": "openai-chatgpt-v1",
+            "keep_profile_running": false,
+            "pause_after_current": false,
+            "status": "queued",
+            "updated_at": "@1",
+            "accounts": []
+        });
+        let checkpoint: JobCheckpoint = serde_json::from_value(legacy).unwrap();
+        assert_eq!(checkpoint.operation, "change_password");
+    }
+
+    #[test]
     fn atomic_json_write_replaces_destination() {
         let path = test_dir("output").join("result.json");
         crate::store::atomic_write_json(&path, &serde_json::json!({"version": 1})).unwrap();
@@ -305,7 +331,11 @@ mod tests {
 
     #[test]
     fn checkpoint_json_contains_no_password_or_totp_fields() {
-        let text = serde_json::to_string(&synthetic_checkpoint()).unwrap();
+        // `operation: "change_password"` is a benign enum token, not a credential;
+        // strip it so the broad substring guard still catches any real leak.
+        let text = serde_json::to_string(&synthetic_checkpoint())
+            .unwrap()
+            .replace("change_password", "");
         assert!(!text.contains("password"));
         assert!(!text.contains("totp_secret"));
         assert!(!text.contains("synthetic@example.test"));

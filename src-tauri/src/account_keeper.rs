@@ -1114,7 +1114,9 @@ pub fn merge_imports_and_checkpoint(
     batch_id: &str,
     now: &str,
 ) -> Result<JobCheckpoint> {
-    PasswordTemplate::parse(&request.template)?;
+    if account_keeper_batch_operation(request) == BatchOperation::ChangePassword {
+        PasswordTemplate::parse(&request.template)?;
+    }
     let mut accounts = Vec::with_capacity(imports.len());
 
     for imported in imports {
@@ -1185,6 +1187,7 @@ pub fn merge_imports_and_checkpoint(
         adapter_id: request.adapter_id.clone(),
         keep_profile_running: request.keep_profile_running,
         pause_after_current: request.pause_after_current,
+        operation: request.operation.clone(),
         status: "queued".to_string(),
         updated_at: now.to_string(),
         accounts,
@@ -4050,6 +4053,7 @@ mod tests {
             adapter_id: "openai-chatgpt-v1".into(),
             keep_profile_running: true,
             pause_after_current: false,
+            operation: "change_password".to_string(),
             status: "failed".into(),
             updated_at: "2026-07-31T00:00:00Z".into(),
             accounts: vec![
@@ -4284,6 +4288,7 @@ mod tests {
             adapter_id: "fixture-v1".into(),
             keep_profile_running: false,
             pause_after_current: false,
+            operation: "change_password".to_string(),
             status: "waiting_manual".into(),
             updated_at: "2026-07-29T00:00:00Z".into(),
             accounts: vec![AccountCheckpoint {
@@ -4647,7 +4652,12 @@ mod tests {
             "2026-07-29T00:00:00Z",
         )
         .unwrap();
-        let checkpoint_json = serde_json::to_string(&checkpoint).unwrap().to_lowercase();
+        // `operation: "change_password"` is a benign enum token, not a credential;
+        // strip it so the broad substring guard still catches any real leak.
+        let checkpoint_json = serde_json::to_string(&checkpoint)
+            .unwrap()
+            .to_lowercase()
+            .replace("change_password", "");
         for forbidden_field in ["password", "totp"] {
             assert!(!checkpoint_json.contains(forbidden_field));
         }
