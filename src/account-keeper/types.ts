@@ -98,10 +98,12 @@ export interface ManagedProfileView {
   status: "success";
   last_verified_at: string | null;
   running: boolean;
+  rotated: boolean;
   import_payload: ProfileImportPayload;
 }
 
 export interface DraftState {
+  operation: "login" | "change_password";
   inputMode: InputMode;
   inputText: string;
   inputPath: string;

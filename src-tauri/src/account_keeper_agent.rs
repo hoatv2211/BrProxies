@@ -148,6 +148,7 @@ pub async fn run_agent(args: AgentArgs) -> Result<AgentSummary> {
             output_path: output_path_string.clone(),
             template,
             adapter_id: "openai-chatgpt-v1".to_string(),
+            operation: "change_password".to_string(),
             keep_profile_running: args.keep_profile_running,
             pause_after_current: false,
         };

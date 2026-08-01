@@ -64,6 +64,7 @@ pub enum AccountEvent {
     ManualRequired,
     Resumed,
     Verified,
+    LoginVerified,
     Failed,
     VerificationFailed,
     CredentialStateUnknown,
@@ -114,6 +115,22 @@ impl AccountRunState {
                 self.stage = AccountStage::Success;
                 self.password_state = PasswordState::Changed;
             }
+            AccountEvent::LoginVerified => {
+                // Login (no rotation) reaches `verified` from the stages the login
+                // worker flow actually produces: LoggingIn (no-TOTP happy path),
+                // SubmittingTotp (TOTP path), or WaitingManual (manual completion
+                // that precedes sign-in confirmation). It never passes through
+                // VerifyingNewPassword — login has no new password to verify. A
+                // `verified` arriving at Queued/Launching is a protocol violation
+                // and still bails.
+                if !is_login_verifiable_stage(self.stage) {
+                    bail!(
+                        "Account Keeper login verified event arrived outside verification state"
+                    );
+                }
+                self.stage = AccountStage::Success;
+                // Login mode does not rotate — password stays Original.
+            }
             AccountEvent::VerificationFailed => {
                 if self.password_state == PasswordState::Unknown {
                     self.stage = AccountStage::Critical;
@@ -148,6 +165,21 @@ fn is_verification_stage(stage: AccountStage) -> bool {
     matches!(
         stage,
         AccountStage::VerifyingNewPassword
+            | AccountStage::SubmittingTotp
+            | AccountStage::WaitingManual
+    )
+}
+
+/// Stages a *login* (no-rotation) flow can legitimately be in when it emits
+/// `verified`. Distinct from `is_verification_stage` (which gates rotation's
+/// `Verified` arm): the login worker never reaches `VerifyingNewPassword`, and
+/// it does reach `verified` directly from `LoggingIn` for the common no-TOTP
+/// account. Kept separate so widening login acceptance can never let a rotation
+/// job reach `Changed` from `LoggingIn`.
+fn is_login_verifiable_stage(stage: AccountStage) -> bool {
+    matches!(
+        stage,
+        AccountStage::LoggingIn
             | AccountStage::SubmittingTotp
             | AccountStage::WaitingManual
     )
@@ -274,8 +306,27 @@ pub struct StartRequest {
     pub output_path: String,
     pub template: String,
     pub adapter_id: String,
+    #[serde(default = "default_batch_operation")]
+    pub operation: String,
     pub keep_profile_running: bool,
     pub pause_after_current: bool,
+}
+
+fn default_batch_operation() -> String {
+    "change_password".to_string()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchOperation {
+    Login,
+    ChangePassword,
+}
+
+pub(crate) fn account_keeper_batch_operation(request: &StartRequest) -> BatchOperation {
+    match request.operation.as_str() {
+        "login" => BatchOperation::Login,
+        _ => BatchOperation::ChangePassword,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -687,6 +738,7 @@ pub struct ManagedProfileView {
     pub profile_id: String,
     pub masked_account: String,
     pub status: String,
+    pub rotated: bool,
     pub last_verified_at: Option<String>,
     pub running: bool,
     pub import_payload: ManagedProfileImportPayload,
@@ -1057,10 +1109,10 @@ impl ProfileRuntime for HeadlessProfileRuntime {
     }
 }
 
-fn default_config_for(document_dir: &Path) -> Result<AccountKeeperDefaultsDto> {
+fn default_config_for(base_dir: &Path) -> Result<AccountKeeperDefaultsDto> {
     let template = "BrP@{random:16}!".to_string();
     validate_template_value(&template)?;
-    let output_path = document_dir.join("account-keeper-result.json");
+    let output_path = base_dir.join("output").join("account-keeper-result.json");
     let output_path = output_path
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Account Keeper output path is not valid Unicode"))?
@@ -1095,7 +1147,9 @@ pub fn merge_imports_and_checkpoint(
     batch_id: &str,
     now: &str,
 ) -> Result<JobCheckpoint> {
-    PasswordTemplate::parse(&request.template)?;
+    if account_keeper_batch_operation(request) == BatchOperation::ChangePassword {
+        PasswordTemplate::parse(&request.template)?;
+    }
     let mut accounts = Vec::with_capacity(imports.len());
 
     for imported in imports {
@@ -1166,6 +1220,7 @@ pub fn merge_imports_and_checkpoint(
         adapter_id: request.adapter_id.clone(),
         keep_profile_running: request.keep_profile_running,
         pause_after_current: request.pause_after_current,
+        operation: request.operation.clone(),
         status: "queued".to_string(),
         updated_at: now.to_string(),
         accounts,
@@ -1320,9 +1375,11 @@ fn ensure_worker_fields(
 
 #[tauri::command]
 pub fn account_keeper_defaults() -> std::result::Result<AccountKeeperDefaultsDto, String> {
-    let document_dir = dirs::document_dir()
-        .ok_or_else(|| "Account Keeper Documents directory is not available".to_string())?;
-    default_config_for(&document_dir).map_err(|error| error.to_string())
+    let base_dir = std::env::current_dir()
+        .ok()
+        .or_else(dirs::document_dir)
+        .ok_or_else(|| "Account Keeper base directory is not available".to_string())?;
+    default_config_for(&base_dir).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -2218,13 +2275,8 @@ fn ensure_account_keeper_supported() -> Result<()> {
 
 pub(crate) fn validate_start_request(request: &StartRequest) -> Result<()> {
     validate_input_source_shape(&request.source)?;
-    if request.output_path.trim().is_empty() {
-        bail!("Account Keeper output path is required");
-    }
-    if let InputSource::File { path } = &request.source {
-        if Path::new(path) == Path::new(&request.output_path) {
-            bail!("Account Keeper input and output paths must differ");
-        }
+    if !matches!(request.operation.as_str(), "login" | "change_password") {
+        bail!("unsupported Account Keeper operation");
     }
     if !matches!(
         request.adapter_id.as_str(),
@@ -2232,7 +2284,26 @@ pub(crate) fn validate_start_request(request: &StartRequest) -> Result<()> {
     ) {
         bail!("unsupported Account Keeper adapter");
     }
-    PasswordTemplate::parse(&request.template)?;
+    let operation = account_keeper_batch_operation(request);
+    if operation == BatchOperation::ChangePassword {
+        if request.output_path.trim().is_empty() {
+            bail!("Account Keeper output path is required");
+        }
+        if let InputSource::File { path } = &request.source {
+            if Path::new(path) == Path::new(&request.output_path) {
+                bail!("Account Keeper input and output paths must differ");
+            }
+        }
+        PasswordTemplate::parse(&request.template)?;
+    } else if let InputSource::File { path } = &request.source {
+        // Login mode may still specify an output path; if it does, guard the
+        // same input==output collision.
+        if !request.output_path.trim().is_empty()
+            && Path::new(path) == Path::new(&request.output_path)
+        {
+            bail!("Account Keeper input and output paths must differ");
+        }
+    }
     Ok(())
 }
 
@@ -2409,7 +2480,11 @@ impl Coordinator {
     ) -> Result<()> {
         let mut checkpoint = crate::account_keeper_store::load_job(batch_id)?;
         let mut vault = crate::account_keeper_store::load_vault()?;
-        let template = PasswordTemplate::parse(&checkpoint.template)?;
+        let template = if checkpoint.operation == "login" {
+            None
+        } else {
+            Some(PasswordTemplate::parse(&checkpoint.template)?)
+        };
         let mut random = OsRandom;
         let mut used_passwords: HashSet<String> = vault
             .accounts
@@ -2463,7 +2538,14 @@ impl Coordinator {
                 }
             }
 
-            let pending_password = template.generate(&mut random, &mut used_passwords)?;
+            let pending_password = if checkpoint.operation == "login" {
+                String::new()
+            } else {
+                template
+                    .as_ref()
+                    .expect("change_password requires template")
+                    .generate(&mut random, &mut used_passwords)?
+            };
             let outcome = self
                 .process_account(
                     &mut checkpoint,
@@ -2593,9 +2675,14 @@ impl Coordinator {
             };
 
             let request_id = uuid::Uuid::new_v4().to_string();
+            let worker_operation = if checkpoint.operation == "login" {
+                "verify_credentials"
+            } else {
+                "change_password"
+            };
             let start = WorkerStart {
                 request_id,
-                operation: "change_password".to_string(),
+                operation: worker_operation.to_string(),
                 adapter_id: checkpoint.adapter_id.clone(),
                 cdp_endpoint,
                 account: vault.accounts[vault_index].account.clone(),
@@ -2771,13 +2858,21 @@ impl Coordinator {
                                 )?;
                             }
                             WorkerEvent::Verified => {
-                                apply_worker_event(
-                                    &mut state,
-                                    &mut vault.accounts[vault_index],
-                                    pending_password,
-                                    WorkerEvent::Verified,
-                                    &self.clock.now(),
-                                )?;
+                                if checkpoint.operation == "login" {
+                                    apply_login_verified(
+                                        &mut state,
+                                        &mut vault.accounts[vault_index],
+                                        &self.clock.now(),
+                                    )?;
+                                } else {
+                                    apply_worker_event(
+                                        &mut state,
+                                        &mut vault.accounts[vault_index],
+                                        pending_password,
+                                        WorkerEvent::Verified,
+                                        &self.clock.now(),
+                                    )?;
+                                }
                                 label_account_profile(
                                     self.profiles.as_ref(),
                                     &vault.accounts[vault_index],
@@ -3344,8 +3439,8 @@ fn managed_profile_views(
         .accounts
         .iter()
         .filter(|account| {
-            account.password_state == PasswordState::Changed
-                && account.last_status.as_deref() == Some("success")
+            account.last_status.as_deref() == Some("success")
+                && account.last_verified_at.is_some()
         })
         .map(|account| {
             let last_verified_at = account.last_verified_at.clone();
@@ -3353,6 +3448,7 @@ fn managed_profile_views(
                 profile_id: account.profile_id.clone(),
                 masked_account: mask_account(&account.account),
                 status: "success".to_string(),
+                rotated: account.password_state == PasswordState::Changed,
                 last_verified_at: last_verified_at.clone(),
                 running: running.contains(&account.profile_id),
                 import_payload: ManagedProfileImportPayload {
@@ -3374,6 +3470,31 @@ fn managed_profile_views(
             .then_with(|| left.masked_account.cmp(&right.masked_account))
     });
     profiles
+}
+
+/// Login-only success: the account signed in with its existing credentials.
+/// Marks the profile a verified success WITHOUT rotating — password_state stays
+/// Original. Separate from the rotation `Verified` path, which asserts a pending
+/// password and moves to Changed.
+///
+/// Real coordinator stage sequence reaching here (from the login worker flow
+/// `verifyCredentials`, automation/account-keeper-flow.mjs): stage `logging_in`
+/// (AccountStage::LoggingIn) for a no-TOTP account, or `logging_in` ->
+/// `submitting_totp` (AccountStage::SubmittingTotp) for a TOTP account, then
+/// `verified`. The login flow never emits `verifying_new_password`, so the
+/// `LoginVerified` guard uses `is_login_verifiable_stage`, not the rotation
+/// helper `is_verification_stage`.
+pub fn apply_login_verified(
+    state: &mut AccountRunState,
+    vault: &mut VaultAccount,
+    now: &str,
+) -> Result<()> {
+    state.transition(AccountEvent::LoginVerified)?;
+    vault.pending_password = None;
+    vault.password_state = PasswordState::Original;
+    vault.last_verified_at = Some(now.to_string());
+    vault.last_status = Some("success".to_string());
+    Ok(())
 }
 
 pub fn apply_worker_event(
@@ -3499,7 +3620,7 @@ mod tests {
     #[test]
     fn defaults_use_valid_template_and_documents_output_path() {
         let document_dir = test_dir("defaults").join("Documents");
-        let expected_output_path = document_dir.join("account-keeper-result.json");
+        let expected_output_path = document_dir.join("output").join("account-keeper-result.json");
 
         let defaults = default_config_for(&document_dir).unwrap();
 
@@ -3689,6 +3810,7 @@ mod tests {
             output_path: String::new(),
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
+            operation: "change_password".into(),
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -3702,6 +3824,49 @@ mod tests {
             ..inline
         };
         assert!(validate_start_request(&file).is_err());
+    }
+
+    #[test]
+    fn start_request_rejects_unknown_operation() {
+        let request = StartRequest {
+            source: InputSource::Inline { text: "a@b.test|pw|".into() },
+            output_path: "C:/synthetic/result.json".into(),
+            template: "Local-{random:16}".into(),
+            adapter_id: "fixture-v1".into(),
+            operation: "delete_account".into(),
+            keep_profile_running: false,
+            pause_after_current: false,
+        };
+        assert!(validate_start_request(&request).is_err());
+    }
+
+    #[test]
+    fn start_request_login_operation_skips_template_and_output() {
+        let request = StartRequest {
+            source: InputSource::Inline { text: "a@b.test|pw|".into() },
+            output_path: String::new(),
+            template: String::new(),
+            adapter_id: "fixture-v1".into(),
+            operation: "login".into(),
+            keep_profile_running: false,
+            pause_after_current: false,
+        };
+        assert!(validate_start_request(&request).is_ok());
+        assert_eq!(account_keeper_batch_operation(&request), BatchOperation::Login);
+    }
+
+    #[test]
+    fn start_request_change_password_still_requires_template_and_output() {
+        let request = StartRequest {
+            source: InputSource::Inline { text: "a@b.test|pw|".into() },
+            output_path: String::new(),
+            template: "Local-{random:16}".into(),
+            adapter_id: "fixture-v1".into(),
+            operation: "change_password".into(),
+            keep_profile_running: false,
+            pause_after_current: false,
+        };
+        assert!(validate_start_request(&request).is_err());
     }
 
     #[test]
@@ -3723,6 +3888,7 @@ mod tests {
             output_path: "C:/synthetic/result.json".into(),
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
+            operation: "change_password".into(),
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -3773,6 +3939,7 @@ mod tests {
             output_path: "C:/synthetic/result.json".into(),
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
+            operation: "change_password".into(),
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -3911,6 +4078,66 @@ mod tests {
     }
 
     #[test]
+    fn managed_profiles_include_login_only_with_rotated_false() {
+        let vault = VaultFile {
+            schema_version: SCHEMA_VERSION,
+            accounts: vec![
+                VaultAccount {
+                    account_key: "rotated-key".into(),
+                    account: "rot@example.test".into(),
+                    current_password: "new".into(),
+                    pending_password: None,
+                    totp_secret: None,
+                    profile_id: "profile-rotated".into(),
+                    password_state: PasswordState::Changed,
+                    last_verified_at: Some("2026-08-01T02:00:00Z".into()),
+                    last_job_id: None,
+                    last_status: Some("success".into()),
+                },
+                VaultAccount {
+                    account_key: "login-key".into(),
+                    account: "log@example.test".into(),
+                    current_password: "current".into(),
+                    pending_password: None,
+                    totp_secret: None,
+                    profile_id: "profile-login".into(),
+                    password_state: PasswordState::Original,
+                    last_verified_at: Some("2026-08-01T01:00:00Z".into()),
+                    last_job_id: None,
+                    last_status: Some("success".into()),
+                },
+            ],
+        };
+        let running: HashSet<String> = HashSet::new();
+        let profiles =
+            managed_profile_views(&vault, &running, "http://127.0.0.1:40325/");
+        assert_eq!(profiles.len(), 2);
+        let login = profiles
+            .iter()
+            .find(|p| p.profile_id == "profile-login")
+            .unwrap();
+        assert!(!login.rotated);
+        let rotated = profiles
+            .iter()
+            .find(|p| p.profile_id == "profile-rotated")
+            .unwrap();
+        assert!(rotated.rotated);
+    }
+
+    #[test]
+    fn defaults_output_path_is_in_project_output_dir() {
+        let defaults = account_keeper_defaults().unwrap();
+        assert!(
+            defaults
+                .output_path
+                .replace('\\', "/")
+                .ends_with("/output/account-keeper-result.json"),
+            "unexpected output path: {}",
+            defaults.output_path
+        );
+    }
+
+    #[test]
     fn clean_progress_accepts_safe_terminal_statuses_only() {
         for status in ["completed", "failed", "cancelled", "abandoned"] {
             assert!(can_clean_checkpoint_status(status));
@@ -3971,6 +4198,7 @@ mod tests {
             adapter_id: "openai-chatgpt-v1".into(),
             keep_profile_running: true,
             pause_after_current: false,
+            operation: "change_password".to_string(),
             status: "failed".into(),
             updated_at: "2026-07-31T00:00:00Z".into(),
             accounts: vec![
@@ -4205,6 +4433,7 @@ mod tests {
             adapter_id: "fixture-v1".into(),
             keep_profile_running: false,
             pause_after_current: false,
+            operation: "change_password".to_string(),
             status: "waiting_manual".into(),
             updated_at: "2026-07-29T00:00:00Z".into(),
             accounts: vec![AccountCheckpoint {
@@ -4368,6 +4597,109 @@ mod tests {
         assert_eq!(state.stage, AccountStage::Success);
         assert_eq!(vault.current_password, "new-password");
         assert_eq!(vault.pending_password, None);
+    }
+
+    #[test]
+    fn login_verified_marks_success_without_rotating_password() {
+        let mut state = AccountRunState::new("account-key");
+        // Real no-TOTP login path: the worker emits stage `logging_in`
+        // (AccountStage::LoggingIn) then `verified`. The login flow never
+        // reaches VerifyingNewPassword.
+        state.stage = AccountStage::LoggingIn;
+        let mut vault = VaultAccount {
+            account_key: "account-key".into(),
+            account: "owner@example.test".into(),
+            current_password: "current-password".into(),
+            pending_password: None,
+            totp_secret: None,
+            profile_id: "profile-login".into(),
+            password_state: PasswordState::Original,
+            last_verified_at: None,
+            last_job_id: Some("batch-login".into()),
+            last_status: Some("running".into()),
+        };
+        apply_login_verified(&mut state, &mut vault, "2026-08-01T00:00:00Z").unwrap();
+        assert_eq!(state.stage, AccountStage::Success);
+        assert_eq!(vault.password_state, PasswordState::Original);
+        assert_eq!(vault.current_password, "current-password");
+        assert!(vault.pending_password.is_none());
+        assert_eq!(vault.last_status.as_deref(), Some("success"));
+        assert_eq!(
+            vault.last_verified_at.as_deref(),
+            Some("2026-08-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn login_verified_succeeds_through_real_no_totp_stage_sequence() {
+        // End-to-end-ish state path the coordinator produces for a no-TOTP
+        // account: LoginStarted -> stage LoggingIn -> LoginVerified.
+        let mut state = AccountRunState::new("account-key");
+        state.transition(AccountEvent::LoginStarted).unwrap();
+        assert_eq!(state.stage, AccountStage::LoggingIn);
+        let mut vault = VaultAccount {
+            account_key: "account-key".into(),
+            account: "owner@example.test".into(),
+            current_password: "current-password".into(),
+            pending_password: None,
+            totp_secret: None,
+            profile_id: "profile-login".into(),
+            password_state: PasswordState::Original,
+            last_verified_at: None,
+            last_job_id: Some("batch-login".into()),
+            last_status: Some("running".into()),
+        };
+        apply_login_verified(&mut state, &mut vault, "2026-08-01T00:00:00Z").unwrap();
+        assert_eq!(state.stage, AccountStage::Success);
+        assert_eq!(vault.password_state, PasswordState::Original);
+        assert_eq!(vault.current_password, "current-password");
+        assert!(vault.pending_password.is_none());
+        assert_eq!(vault.last_status.as_deref(), Some("success"));
+    }
+
+    #[test]
+    fn login_verified_succeeds_through_totp_stage() {
+        // TOTP login path: worker emits `submitting_totp` before `verified`.
+        let mut state = AccountRunState::new("account-key");
+        state.stage = AccountStage::SubmittingTotp;
+        let mut vault = VaultAccount {
+            account_key: "account-key".into(),
+            account: "owner@example.test".into(),
+            current_password: "current-password".into(),
+            pending_password: None,
+            totp_secret: Some("JBSWY3DPEHPK3PXP".into()),
+            profile_id: "profile-login".into(),
+            password_state: PasswordState::Original,
+            last_verified_at: None,
+            last_job_id: Some("batch-login".into()),
+            last_status: Some("running".into()),
+        };
+        apply_login_verified(&mut state, &mut vault, "2026-08-01T00:00:00Z").unwrap();
+        assert_eq!(state.stage, AccountStage::Success);
+        assert_eq!(vault.password_state, PasswordState::Original);
+    }
+
+    #[test]
+    fn login_verified_before_any_login_stage_bails() {
+        // A `verified` arriving at Queued (before any login stage) is a
+        // protocol violation and must bail.
+        let mut state = AccountRunState::new("account-key");
+        assert_eq!(state.stage, AccountStage::Queued);
+        let mut vault = VaultAccount {
+            account_key: "account-key".into(),
+            account: "owner@example.test".into(),
+            current_password: "current-password".into(),
+            pending_password: None,
+            totp_secret: None,
+            profile_id: "profile-login".into(),
+            password_state: PasswordState::Original,
+            last_verified_at: None,
+            last_job_id: Some("batch-login".into()),
+            last_status: Some("running".into()),
+        };
+        let error = apply_login_verified(&mut state, &mut vault, "2026-08-01T00:00:00Z");
+        assert!(error.is_err());
+        assert_eq!(vault.password_state, PasswordState::Original);
     }
 
     #[test]
@@ -4560,6 +4892,7 @@ mod tests {
                 output_path: "C:/synthetic/output.json".into(),
                 template: "Local-{random:16}".into(),
                 adapter_id: "fixture-v1".into(),
+                operation: "change_password".into(),
                 keep_profile_running: false,
                 pause_after_current: false,
             },
@@ -4567,7 +4900,12 @@ mod tests {
             "2026-07-29T00:00:00Z",
         )
         .unwrap();
-        let checkpoint_json = serde_json::to_string(&checkpoint).unwrap().to_lowercase();
+        // `operation: "change_password"` is a benign enum token, not a credential;
+        // strip it so the broad substring guard still catches any real leak.
+        let checkpoint_json = serde_json::to_string(&checkpoint)
+            .unwrap()
+            .to_lowercase()
+            .replace("change_password", "");
         for forbidden_field in ["password", "totp"] {
             assert!(!checkpoint_json.contains(forbidden_field));
         }
@@ -4601,6 +4939,7 @@ mod tests {
                 output_path: "C:/synthetic/output.json".into(),
                 template: "Local-{random:16}".into(),
                 adapter_id: "fixture-v1".into(),
+                operation: "change_password".into(),
                 keep_profile_running: false,
                 pause_after_current: false,
             },
