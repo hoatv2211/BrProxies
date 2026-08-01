@@ -116,7 +116,14 @@ impl AccountRunState {
                 self.password_state = PasswordState::Changed;
             }
             AccountEvent::LoginVerified => {
-                if !is_verification_stage(self.stage) {
+                // Login (no rotation) reaches `verified` from the stages the login
+                // worker flow actually produces: LoggingIn (no-TOTP happy path),
+                // SubmittingTotp (TOTP path), or WaitingManual (manual completion
+                // that precedes sign-in confirmation). It never passes through
+                // VerifyingNewPassword — login has no new password to verify. A
+                // `verified` arriving at Queued/Launching is a protocol violation
+                // and still bails.
+                if !is_login_verifiable_stage(self.stage) {
                     bail!(
                         "Account Keeper login verified event arrived outside verification state"
                     );
@@ -158,6 +165,21 @@ fn is_verification_stage(stage: AccountStage) -> bool {
     matches!(
         stage,
         AccountStage::VerifyingNewPassword
+            | AccountStage::SubmittingTotp
+            | AccountStage::WaitingManual
+    )
+}
+
+/// Stages a *login* (no-rotation) flow can legitimately be in when it emits
+/// `verified`. Distinct from `is_verification_stage` (which gates rotation's
+/// `Verified` arm): the login worker never reaches `VerifyingNewPassword`, and
+/// it does reach `verified` directly from `LoggingIn` for the common no-TOTP
+/// account. Kept separate so widening login acceptance can never let a rotation
+/// job reach `Changed` from `LoggingIn`.
+fn is_login_verifiable_stage(stage: AccountStage) -> bool {
+    matches!(
+        stage,
+        AccountStage::LoggingIn
             | AccountStage::SubmittingTotp
             | AccountStage::WaitingManual
     )
@@ -3454,6 +3476,14 @@ fn managed_profile_views(
 /// Marks the profile a verified success WITHOUT rotating — password_state stays
 /// Original. Separate from the rotation `Verified` path, which asserts a pending
 /// password and moves to Changed.
+///
+/// Real coordinator stage sequence reaching here (from the login worker flow
+/// `verifyCredentials`, automation/account-keeper-flow.mjs): stage `logging_in`
+/// (AccountStage::LoggingIn) for a no-TOTP account, or `logging_in` ->
+/// `submitting_totp` (AccountStage::SubmittingTotp) for a TOTP account, then
+/// `verified`. The login flow never emits `verifying_new_password`, so the
+/// `LoginVerified` guard uses `is_login_verifiable_stage`, not the rotation
+/// helper `is_verification_stage`.
 pub fn apply_login_verified(
     state: &mut AccountRunState,
     vault: &mut VaultAccount,
@@ -4572,8 +4602,10 @@ mod tests {
     #[test]
     fn login_verified_marks_success_without_rotating_password() {
         let mut state = AccountRunState::new("account-key");
-        // Simulate a login flow that has reached the verification stage.
-        state.stage = AccountStage::VerifyingNewPassword;
+        // Real no-TOTP login path: the worker emits stage `logging_in`
+        // (AccountStage::LoggingIn) then `verified`. The login flow never
+        // reaches VerifyingNewPassword.
+        state.stage = AccountStage::LoggingIn;
         let mut vault = VaultAccount {
             account_key: "account-key".into(),
             account: "owner@example.test".into(),
@@ -4596,6 +4628,78 @@ mod tests {
             vault.last_verified_at.as_deref(),
             Some("2026-08-01T00:00:00Z")
         );
+    }
+
+    #[test]
+    fn login_verified_succeeds_through_real_no_totp_stage_sequence() {
+        // End-to-end-ish state path the coordinator produces for a no-TOTP
+        // account: LoginStarted -> stage LoggingIn -> LoginVerified.
+        let mut state = AccountRunState::new("account-key");
+        state.transition(AccountEvent::LoginStarted).unwrap();
+        assert_eq!(state.stage, AccountStage::LoggingIn);
+        let mut vault = VaultAccount {
+            account_key: "account-key".into(),
+            account: "owner@example.test".into(),
+            current_password: "current-password".into(),
+            pending_password: None,
+            totp_secret: None,
+            profile_id: "profile-login".into(),
+            password_state: PasswordState::Original,
+            last_verified_at: None,
+            last_job_id: Some("batch-login".into()),
+            last_status: Some("running".into()),
+        };
+        apply_login_verified(&mut state, &mut vault, "2026-08-01T00:00:00Z").unwrap();
+        assert_eq!(state.stage, AccountStage::Success);
+        assert_eq!(vault.password_state, PasswordState::Original);
+        assert_eq!(vault.current_password, "current-password");
+        assert!(vault.pending_password.is_none());
+        assert_eq!(vault.last_status.as_deref(), Some("success"));
+    }
+
+    #[test]
+    fn login_verified_succeeds_through_totp_stage() {
+        // TOTP login path: worker emits `submitting_totp` before `verified`.
+        let mut state = AccountRunState::new("account-key");
+        state.stage = AccountStage::SubmittingTotp;
+        let mut vault = VaultAccount {
+            account_key: "account-key".into(),
+            account: "owner@example.test".into(),
+            current_password: "current-password".into(),
+            pending_password: None,
+            totp_secret: Some("JBSWY3DPEHPK3PXP".into()),
+            profile_id: "profile-login".into(),
+            password_state: PasswordState::Original,
+            last_verified_at: None,
+            last_job_id: Some("batch-login".into()),
+            last_status: Some("running".into()),
+        };
+        apply_login_verified(&mut state, &mut vault, "2026-08-01T00:00:00Z").unwrap();
+        assert_eq!(state.stage, AccountStage::Success);
+        assert_eq!(vault.password_state, PasswordState::Original);
+    }
+
+    #[test]
+    fn login_verified_before_any_login_stage_bails() {
+        // A `verified` arriving at Queued (before any login stage) is a
+        // protocol violation and must bail.
+        let mut state = AccountRunState::new("account-key");
+        assert_eq!(state.stage, AccountStage::Queued);
+        let mut vault = VaultAccount {
+            account_key: "account-key".into(),
+            account: "owner@example.test".into(),
+            current_password: "current-password".into(),
+            pending_password: None,
+            totp_secret: None,
+            profile_id: "profile-login".into(),
+            password_state: PasswordState::Original,
+            last_verified_at: None,
+            last_job_id: Some("batch-login".into()),
+            last_status: Some("running".into()),
+        };
+        let error = apply_login_verified(&mut state, &mut vault, "2026-08-01T00:00:00Z");
+        assert!(error.is_err());
+        assert_eq!(vault.password_state, PasswordState::Original);
     }
 
     #[test]
