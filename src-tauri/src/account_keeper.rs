@@ -404,8 +404,31 @@ impl WorkerTransport for NodeWorkerTransport {
                 .current_dir(working_dir)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::null())
                 .kill_on_drop(true);
+            // When BRPROXIES_AK_DEBUG points at a log file, route the worker's
+            // stderr to a sibling `.stderr` file so patchright crashes/timeouts
+            // are visible. Off by default: without the env var, stderr stays
+            // discarded exactly as before.
+            match std::env::var("BRPROXIES_AK_DEBUG").ok().filter(|value| !value.is_empty()) {
+                Some(debug_path) => {
+                    let stderr_path = format!("{debug_path}.stderr");
+                    match std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&stderr_path)
+                    {
+                        Ok(file) => {
+                            command.stderr(Stdio::from(file));
+                        }
+                        Err(_) => {
+                            command.stderr(Stdio::null());
+                        }
+                    }
+                }
+                None => {
+                    command.stderr(Stdio::null());
+                }
+            }
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
@@ -1117,6 +1140,13 @@ pub fn merge_imports_and_checkpoint(
         account.password_state = PasswordState::Original;
         account.last_job_id = Some(batch_id.to_string());
         account.last_status = Some("queued".to_string());
+
+        // Label the profile at import time so operators can identify it from the
+        // browser list before the rotation runs. SECURITY: writes the plaintext
+        // credential line into unencrypted profile JSON immediately on import, by
+        // operator request. Best-effort — a labeling failure must not abort the
+        // import.
+        label_account_profile(runtime, account);
 
         accounts.push(AccountCheckpoint {
             account_key,
@@ -2015,7 +2045,7 @@ pub async fn resolve_critical(request: ManualControlRequest) -> Result<JobView> 
     checkpoint_account.updated_at = now.clone();
     checkpoint.status = final_job_status(&checkpoint).to_string();
 
-    label_verified_profile(&runtime, &vault.accounts[vault_index]);
+    label_account_profile(&runtime, &vault.accounts[vault_index]);
     persist_snapshot(&mut checkpoint, &vault, &SystemClock, &NullEventSink)?;
     Ok(job_view_from_checkpoint(&checkpoint, &vault))
 }
@@ -2301,12 +2331,13 @@ fn build_output(checkpoint: &JobCheckpoint, vault: &VaultFile, now: &str) -> Res
     })
 }
 
-/// Label a profile for a verified account: visible name = the account, Notes =
+/// Label a profile: visible name = the account, Notes =
 /// `account|password|totp_secret`. Best-effort — a labeling failure must not
-/// undo a successful rotation, so errors are swallowed. SECURITY: writes the
-/// plaintext credential line into the unencrypted profile JSON by operator
-/// request; only call after the rotation is verified and persisted.
-fn label_verified_profile(runtime: &dyn ProfileRuntime, vault_account: &VaultAccount) {
+/// abort import or undo a successful rotation, so errors are swallowed.
+/// SECURITY: writes the plaintext credential line into the unencrypted profile
+/// JSON by operator request. Called at import time (original credentials) and
+/// again after a verified rotation (rotated credentials).
+fn label_account_profile(runtime: &dyn ProfileRuntime, vault_account: &VaultAccount) {
     let notes = account_keeper_profile_notes(vault_account);
     let _ = runtime.set_label(&vault_account.profile_id, &vault_account.account, &notes);
 }
@@ -2747,7 +2778,7 @@ impl Coordinator {
                                     WorkerEvent::Verified,
                                     &self.clock.now(),
                                 )?;
-                                label_verified_profile(
+                                label_account_profile(
                                     self.profiles.as_ref(),
                                     &vault.accounts[vault_index],
                                 );
@@ -3724,6 +3755,49 @@ mod tests {
     }
 
     #[test]
+    fn import_labels_new_profile_with_account_name_and_credential_notes() {
+        let source_text = "owner@example.test|current-password|JBSWY3DPEHPK3PXP";
+        let imports = read_input_accounts(&InputSource::Inline {
+            text: source_text.into(),
+        })
+        .unwrap();
+        let runtime = FakeProfileRuntime {
+            fingerprints: vec![FingerprintCandidate::new("windows-a", "Alpha", "Windows")],
+            ..Default::default()
+        };
+        let mut vault = VaultFile::default();
+        let request = StartRequest {
+            source: InputSource::Inline {
+                text: source_text.into(),
+            },
+            output_path: "C:/synthetic/result.json".into(),
+            template: "Local-{random:16}".into(),
+            adapter_id: "fixture-v1".into(),
+            keep_profile_running: false,
+            pause_after_current: false,
+        };
+        merge_imports_and_checkpoint(
+            &runtime,
+            &mut vault,
+            &imports,
+            &request,
+            "batch-label",
+            "2026-07-30T00:00:00Z",
+        )
+        .unwrap();
+
+        let labels = runtime.labels.into_inner().unwrap();
+        assert_eq!(
+            labels,
+            vec![(
+                "profile-created".to_string(),
+                "owner@example.test".to_string(),
+                "owner@example.test|current-password|JBSWY3DPEHPK3PXP".to_string(),
+            )]
+        );
+    }
+
+    #[test]
     fn password_submission_then_failed_verification_becomes_critical() {
         let mut state = AccountRunState::new("account-key");
         state.transition(AccountEvent::PasswordAccepted).unwrap();
@@ -3969,6 +4043,7 @@ mod tests {
         existing_profiles: HashSet<String>,
         created: StdMutex<Vec<(String, String)>>,
         folders: StdMutex<Vec<(String, String)>>,
+        labels: StdMutex<Vec<(String, String, String)>>,
     }
 
     impl ProfileRuntime for FakeProfileRuntime {
@@ -3993,6 +4068,15 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((profile_id.to_string(), folder.to_string()));
+            Ok(())
+        }
+
+        fn set_label(&self, profile_id: &str, name: &str, notes: &str) -> Result<()> {
+            self.labels.lock().unwrap().push((
+                profile_id.to_string(),
+                name.to_string(),
+                notes.to_string(),
+            ));
             Ok(())
         }
     }

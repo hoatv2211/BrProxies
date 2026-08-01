@@ -1,6 +1,65 @@
+import { appendFileSync } from "node:fs";
+
 const ALLOWED_ORIGINS = new Set(["https://auth.openai.com", "https://chatgpt.com"]);
 const APP_URL = "https://chatgpt.com/";
 const LOGIN_URL = "https://chatgpt.com/auth/login";
+
+// Diagnostic tracing gated behind an env var. Off by default so production runs
+// are unaffected. Logs metadata only (element visibility/enabled flags, error
+// names/messages) — never account, password, TOTP, or field values.
+function akDebugEnabled() {
+  return Boolean(process.env.BRPROXIES_AK_DEBUG);
+}
+
+function akDebug(event, data) {
+  const target = process.env.BRPROXIES_AK_DEBUG;
+  if (!target) {
+    return;
+  }
+  try {
+    appendFileSync(
+      target,
+      `${JSON.stringify({ t: Date.now(), event, ...data })}\n`,
+    );
+  } catch {
+    // Diagnostics must never break the flow.
+  }
+}
+
+// Probe an input's actionability for the diagnostic log. Only runs when tracing
+// is enabled — off by default so production and tests skip the DOM reads.
+async function akDebugInput(event, locator) {
+  if (!akDebugEnabled()) {
+    return;
+  }
+  akDebug(event, await akInputDiag(locator));
+}
+
+function akTruncate(message) {
+  if (typeof message !== "string") {
+    return null;
+  }
+  return message.replace(/[\r\n]+/g, " ").slice(0, 200);
+}
+
+async function akProbe(locator, method) {
+  if (typeof locator?.[method] !== "function") {
+    return null;
+  }
+  try {
+    return await locator[method]();
+  } catch {
+    return null;
+  }
+}
+
+async function akInputDiag(locator) {
+  return {
+    visible: await akProbe(locator, "isVisible"),
+    enabled: await akProbe(locator, "isEnabled"),
+    editable: await akProbe(locator, "isEditable"),
+  };
+}
 
 export const openaiChatgptAdapter = {
   id: "openai-chatgpt-v1",
@@ -205,18 +264,47 @@ export const openaiChatgptAdapter = {
   async submitCredentials(page, { account, password }, { control } = {}) {
     const email = emailInput(page);
     if (await visible(email)) {
+      await akDebugInput("login_email_field", email);
       await browserSideEffect(control, () => email.fill(account));
       await clickFirstVisible([
         page.getByRole("button", { name: /^(continue|next|tiếp tục)$/i }),
         page.getByRole("button", { name: /^(log in|sign in|đăng nhập)$/i }),
         submitControl(page),
-      ], control);
+      ], control, undefined, { noWaitAfter: true });
+      // ChatGPT login is a two-step SPA: email first, then password on a fresh
+      // surface. The flow driver re-enters submitCredentials until credentials
+      // are fully submitted, but it cannot tell the email-entry login_ready from
+      // the password-entry one. Without settling here it re-classifies mid-
+      // transition, still sees the email field, and re-fills in a tight loop —
+      // the visible "flashing" re-type. Wait for the email field to go away so
+      // the next classify lands on the password step.
+      await waitUntilHidden(page, email, 15_000, control);
+      const emailStillVisible = await visible(email);
+      const nextFieldVisible = await visible(currentPassword(page));
+      if (emailStillVisible && !nextFieldVisible) {
+        // Email step never advanced (bounce back to the chooser, silent bot
+        // block, or a rejected address). Surface a bounded failure instead of
+        // hammering the field 16 more times.
+        akDebug("login_email_stuck", {});
+        throw adapterError("flow_changed");
+      }
+      akDebug("login_email_submitted", { next_field_visible: nextFieldVisible });
       return false;
     }
 
     const passwordInput = currentPassword(page);
     if (await visible(passwordInput)) {
-      await browserSideEffect(control, () => passwordInput.fill(password));
+      await akDebugInput("login_password_field", passwordInput);
+      try {
+        await browserSideEffect(control, () => passwordInput.fill(password));
+      } catch (error) {
+        akDebug("login_password_fill_error", {
+          name: error?.name ?? null,
+          message: akTruncate(error?.message),
+        });
+        throw error;
+      }
+      akDebug("login_password_filled", {});
       await clickFirstVisible([
         page.getByRole("button", { name: /^(continue|log in|sign in|tiếp tục|đăng nhập)$/i }),
         submitControl(page),
@@ -336,18 +424,39 @@ export const openaiChatgptAdapter = {
     checkControl(control);
     const count = await inputs.count();
     checkControl(control);
+    akDebug("password_change_inputs", { count });
     if (count === 0) {
       throw adapterError("flow_changed");
     }
-    await browserSideEffect(control, () => inputs.nth(0).fill(value));
-    if (count > 1) {
-      await browserSideEffect(control, () => inputs.nth(1).fill(value));
+    await akDebugInput("password_change_field0", inputs.nth(0));
+    try {
+      await browserSideEffect(control, () => inputs.nth(0).fill(value));
+    } catch (error) {
+      akDebug("password_change_field0_fill_error", {
+        name: error?.name ?? null,
+        message: akTruncate(error?.message),
+      });
+      throw error;
     }
+    if (count > 1) {
+      await akDebugInput("password_change_field1", inputs.nth(1));
+      try {
+        await browserSideEffect(control, () => inputs.nth(1).fill(value));
+      } catch (error) {
+        akDebug("password_change_field1_fill_error", {
+          name: error?.name ?? null,
+          message: akTruncate(error?.message),
+        });
+        throw error;
+      }
+    }
+    akDebug("password_change_filled", {});
     await clickFirstVisible([
       page.getByRole("button", { name: /^(continue|reset password|update password|save)$/i }),
       submitControl(page),
     ], control, onBeforeSubmit);
     await waitUntilHidden(page, newPassword(page), 15_000, control);
+    akDebug("password_change_submitted", {});
   },
 
   async logout(page, { control } = {}) {
@@ -387,7 +496,14 @@ export const openaiChatgptAdapter = {
       throw adapterError("flow_changed");
     }
     await browserSideEffect(control, () => logout.click());
-    await waitForSignedOutSurface(page, 15_000, control);
+    // Newer ChatGPT rollouts interpose a confirmation dialog ("Are you sure you
+    // want to log out?") between the menu item and the actual sign-out. Without
+    // clicking its confirm button the session never ends and the sign-out wait
+    // times out. Fold the confirm into the sign-out poll so a late-mounting
+    // dialog is still caught and a legacy no-dialog logout adds no latency.
+    await waitForSignedOutSurface(page, 15_000, control, () =>
+      confirmLogoutDialog(page, control),
+    );
   },
 
   async verifySignedIn(page, { control } = {}) {
@@ -634,7 +750,7 @@ async function waitForAuthenticationSurface(page, timeout, control) {
   throw adapterError("flow_changed");
 }
 
-async function waitForSignedOutSurface(page, timeout, control) {
+async function waitForSignedOutSurface(page, timeout, control, onPoll) {
   if (
     typeof page.waitForTimeout !== "function"
     || typeof page.context !== "function"
@@ -644,6 +760,10 @@ async function waitForSignedOutSurface(page, timeout, control) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     checkControl(control);
+    if (onPoll) {
+      await onPoll();
+      checkControl(control);
+    }
     const pages = page.context().pages();
     for (const candidate of pages) {
       let origin;
@@ -669,6 +789,39 @@ async function waitForSignedOutSurface(page, timeout, control) {
     checkControl(control);
   }
   throw adapterError("flow_changed");
+}
+
+// The logout confirmation dialog carries its own "Log out" button (localized,
+// e.g. Vietnamese "Đăng xuất"). Scope the match to a dialog/alertdialog so it
+// cannot collide with the account-menu item that opened it, and best-effort
+// click it. Never throws — the dialog is absent on legacy rollouts.
+async function confirmLogoutDialog(page, control) {
+  if (typeof page.getByRole !== "function") {
+    return;
+  }
+  const label = /^(log ?out|sign ?out|đăng xuất|thoát)$/i;
+  const hasText = /log ?out|sign ?out|đăng xuất|thoát/i;
+  const candidates = [];
+  for (const role of ["dialog", "alertdialog"]) {
+    const dialog = page.getByRole(role);
+    if (typeof dialog?.getByRole !== "function") {
+      continue;
+    }
+    const scoped =
+      typeof dialog.filter === "function" ? dialog.filter({ hasText }) : dialog;
+    const button = scoped.getByRole("button", { name: label });
+    if (button) {
+      candidates.push(button);
+    }
+  }
+  if (candidates.length === 0) {
+    return;
+  }
+  const confirm = await firstVisible(candidates);
+  if (!confirm) {
+    return;
+  }
+  await browserSideEffect(control, () => confirm.click());
 }
 
 async function waitUntilHidden(page, locator, timeout, control) {

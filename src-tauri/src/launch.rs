@@ -189,6 +189,16 @@ pub async fn launch_profile(
         let _ = std::fs::remove_file(udd.join("DevToolsActivePort"));
         cmd.arg("--remote-debugging-port=0");
         cmd.arg("--remote-allow-origins=*");
+
+        // Automation runs (Account Keeper) never use browser extensions, and on
+        // Windows the engine picks up externally-registered extensions from the
+        // registry (e.g. "Application Launcher For Drive"). Those inject content
+        // scripts into every page — breaking fingerprint isolation and stalling
+        // SPA renders the flow waits on (surfaced as navigation_failed). Block
+        // all extension loading for the automation session. This is session-only
+        // (no policy/registry writes) and does not touch interactive launches,
+        // where the user may deliberately install extensions into the profile.
+        cmd.arg("--disable-extensions");
     }
 
     if headless {

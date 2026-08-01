@@ -1581,6 +1581,132 @@ test("OpenAI logout waits until a signed-out surface replaces the stale shell", 
   assert.equal(waitTicks, 2);
 });
 
+test("OpenAI logout confirms a logout dialog before waiting for sign-out", async () => {
+  const events = [];
+  let menuOpen = false;
+  let dialogOpen = false;
+  let dialogConfirmed = false;
+  const hidden = {
+    first() {
+      return this;
+    },
+    filter() {
+      return this;
+    },
+    getByRole() {
+      return hidden;
+    },
+    async isVisible() {
+      return false;
+    },
+    async count() {
+      return 0;
+    },
+  };
+  const profileButton = {
+    ...hidden,
+    async isVisible() {
+      return !dialogConfirmed;
+    },
+    async click() {
+      menuOpen = true;
+    },
+  };
+  const logoutItem = {
+    ...hidden,
+    async isVisible() {
+      return menuOpen;
+    },
+    async click() {
+      events.push("menu-logout");
+      dialogOpen = true;
+    },
+  };
+  const confirmButton = {
+    ...hidden,
+    async isVisible() {
+      return dialogOpen;
+    },
+    async click() {
+      events.push("confirm");
+      dialogConfirmed = true;
+    },
+  };
+  const logoutDialog = {
+    ...hidden,
+    filter() {
+      return logoutDialog;
+    },
+    getByRole(role, options = {}) {
+      if (
+        role === "button"
+        && options.name instanceof RegExp
+        && options.name.test("Đăng xuất")
+      ) {
+        return confirmButton;
+      }
+      return hidden;
+    },
+  };
+  const loginButton = {
+    ...hidden,
+    async isVisible() {
+      return dialogConfirmed;
+    },
+  };
+  const page = {
+    url: () => "https://chatgpt.com/",
+    context() {
+      return { pages: () => [page] };
+    },
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) {
+        return profileButton;
+      }
+      if (selector.includes('data-testid="log-out-menu-item"')) {
+        return logoutItem;
+      }
+      if (selector.includes('data-testid="login-button"')) {
+        return loginButton;
+      }
+      return hidden;
+    },
+    getByRole(role, options = {}) {
+      if (role === "dialog" || role === "alertdialog") {
+        return logoutDialog;
+      }
+      if (
+        role === "button"
+        && options.name instanceof RegExp
+        && options.name.test("Open profile menu")
+      ) {
+        return profileButton;
+      }
+      if (
+        (role === "menuitem" || role === "button")
+        && options.name instanceof RegExp
+        && options.name.test("Đăng xuất")
+      ) {
+        return logoutItem;
+      }
+      if (
+        (role === "button" || role === "link")
+        && options.name instanceof RegExp
+        && options.name.test("Đăng nhập")
+      ) {
+        return loginButton;
+      }
+      return hidden;
+    },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.logout(page);
+
+  assert.deepEqual(events, ["menu-logout", "confirm"]);
+  assert.equal(dialogConfirmed, true);
+});
+
 test("OpenAI adapter reports an explicit rejected TOTP state", async () => {
   const page = fakeOpenAiPage({
     url: "https://auth.openai.com/u/mfa-otp-challenge",
@@ -1864,8 +1990,11 @@ test("OpenAI adapter submits Vietnamese login forms without a submit type", asyn
   const page = {
     locator(selector) {
       if (selector.includes('autocomplete="username"')) {
+        // ChatGPT's email step swaps the email field out for the next surface
+        // once Continue is clicked; model that so submitCredentials' settle
+        // (waitUntilHidden) can observe the transition instead of timing out.
         return locator({
-          visible: true,
+          dynamicVisible: () => submitClicks === 0,
           onFill: (value) => assert.equal(value, "synthetic@example.test"),
         });
       }
