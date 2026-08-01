@@ -356,6 +356,41 @@ describe("AccountKeeper", () => {
     expect(mocks.invoke).not.toHaveBeenCalledWith("read_text_file", expect.anything());
   });
 
+  it("hides template and output in Login GPT mode and starts a login batch", async () => {
+    mocks.save.mockResolvedValue("C:\\fixtures\\result.json");
+    const confirm = vi.fn().mockResolvedValue(true);
+    render(<AccountKeeper confirm={confirm} />);
+
+    const { start } = await prepareInlineBatch();
+    fireEvent.click(screen.getByRole("button", { name: "Login GPT" }));
+
+    expect(screen.queryByLabelText("Template")).toBeNull();
+    expect(screen.queryByLabelText("Output file")).toBeNull();
+    expect(screen.queryByText("Template")).not.toBeInTheDocument();
+    expect(screen.queryByText("Output file")).not.toBeInTheDocument();
+
+    const loginStart = screen.getByRole("button", { name: "Login & Save Profile" });
+    expect(loginStart).toBe(start);
+    await waitFor(() => expect(loginStart).toBeEnabled());
+    fireEvent.click(loginStart);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_start_batch",
+      {
+        request: {
+          source: { kind: "inline", text: inlineRecord },
+          outputPath: "",
+          template: "",
+          adapterId: "openai-chatgpt-v1",
+          operation: "login",
+          keepProfileRunning: false,
+          pauseAfterCurrent: false,
+        },
+      },
+    ));
+    expect(confirm).toHaveBeenCalled();
+  });
+
   it("keeps pasted input when starting fails", async () => {
     mocks.save.mockResolvedValue("C:\\fixtures\\result.json");
     render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
