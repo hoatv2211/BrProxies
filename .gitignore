@@ -57,6 +57,9 @@ proxypool_service/.venv/
 proxypool_service/logs/
 android_manager/.venv/
 android_manager/data/
+# Redis snapshot generated at runtime by the bundled Windows Redis
+dump.rdb
+*.rdb
 
 # ===== MCP server local install (downloaded by the user post-install) =====
 mcp/node_modules/
