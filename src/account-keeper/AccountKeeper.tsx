@@ -649,9 +649,10 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
       {
         request: {
           source: activeInputSource(draft),
-          outputPath: draft.outputPath,
-          template: draft.templateText,
+          outputPath: draft.operation === "login" ? "" : draft.outputPath,
+          template: draft.operation === "login" ? "" : draft.templateText,
           adapterId: qaAdapterId.current,
+          operation: draft.operation,
           keepProfileRunning: draft.keepProfileRunning,
           pauseAfterCurrent: false,
         },
@@ -971,6 +972,28 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           </div>
 
           <div className="account-keeper__field">
+            <span className="account-keeper__field-label">Operation</span>
+            <div className="account-keeper__source-modes" role="group" aria-label="Operation">
+              {([
+                ["change_password", "Change pass"],
+                ["login", "Login GPT"],
+              ] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={draft.operation === mode}
+                  onClick={() => setDraft((current) => current.operation === mode
+                    ? current
+                    : { ...current, operation: mode })}
+                  disabled={busyAction !== null}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="account-keeper__field">
             <span className="account-keeper__field-label">Input source</span>
             <div className="account-keeper__source-modes" role="group" aria-label="Input source">
               {(["inline", "file"] as const).map((mode) => (
@@ -1067,6 +1090,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
             )}
           </div>
 
+          {draft.operation === "change_password" && (
           <div className="account-keeper__field">
             <label htmlFor="account-keeper-template">Template</label>
             <div className="account-keeper__picker">
@@ -1110,7 +1134,9 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
               </div>
             )}
           </div>
+          )}
 
+          {draft.operation === "change_password" && (
           <div className="account-keeper__field">
             <label htmlFor="account-keeper-output">Output file</label>
             <div className="account-keeper__picker">
@@ -1134,6 +1160,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
               </button>
             </div>
           </div>
+          )}
 
           <label className="account-keeper__toggle">
             <input
@@ -1168,7 +1195,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
 
           <div className="account-keeper__primary-actions">
             <button type="button" className="btn-primary" onClick={() => void startBatch()} disabled={!startEnabled}>
-              Start Batch
+              {draft.operation === "login" ? "Login & Save Profile" : "Start Batch"}
             </button>
             <button
               type="button"
@@ -1368,6 +1395,9 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
                   <div>
                     <strong>{profile.masked_account}</strong>
                     <span className={`account-keeper__status is-${profile.status}`}>{labelFor(profile.status)}</span>
+                    <span className={`account-keeper__badge ${profile.rotated ? "is-rotated" : "is-login"}`}>
+                      {profile.rotated ? "Rotated" : "Logged in"}
+                    </span>
                   </div>
                   <span className="account-keeper__mono">{profile.profile_id}</span>
                   <small>
