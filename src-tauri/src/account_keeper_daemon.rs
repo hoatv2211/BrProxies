@@ -168,6 +168,7 @@ pub async fn create_job(request: CreateJobRequest) -> std::result::Result<Daemon
         output_path: output_path.clone(),
         template: template.clone(),
         adapter_id: "openai-chatgpt-v1".into(),
+        operation: "change_password".into(),
         keep_profile_running: request.keep_profile_running,
         pause_after_current: false,
     })
@@ -319,6 +320,7 @@ async fn start_queued_job(id: &str) -> Result<()> {
         output_path: job.output_path,
         template: job.template,
         adapter_id: "openai-chatgpt-v1".into(),
+        operation: "change_password".into(),
         keep_profile_running: job.keep_profile_running,
         pause_after_current: false,
     };

@@ -274,8 +274,27 @@ pub struct StartRequest {
     pub output_path: String,
     pub template: String,
     pub adapter_id: String,
+    #[serde(default = "default_batch_operation")]
+    pub operation: String,
     pub keep_profile_running: bool,
     pub pause_after_current: bool,
+}
+
+fn default_batch_operation() -> String {
+    "change_password".to_string()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchOperation {
+    Login,
+    ChangePassword,
+}
+
+pub(crate) fn account_keeper_batch_operation(request: &StartRequest) -> BatchOperation {
+    match request.operation.as_str() {
+        "login" => BatchOperation::Login,
+        _ => BatchOperation::ChangePassword,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2218,13 +2237,8 @@ fn ensure_account_keeper_supported() -> Result<()> {
 
 pub(crate) fn validate_start_request(request: &StartRequest) -> Result<()> {
     validate_input_source_shape(&request.source)?;
-    if request.output_path.trim().is_empty() {
-        bail!("Account Keeper output path is required");
-    }
-    if let InputSource::File { path } = &request.source {
-        if Path::new(path) == Path::new(&request.output_path) {
-            bail!("Account Keeper input and output paths must differ");
-        }
+    if !matches!(request.operation.as_str(), "login" | "change_password") {
+        bail!("unsupported Account Keeper operation");
     }
     if !matches!(
         request.adapter_id.as_str(),
@@ -2232,7 +2246,26 @@ pub(crate) fn validate_start_request(request: &StartRequest) -> Result<()> {
     ) {
         bail!("unsupported Account Keeper adapter");
     }
-    PasswordTemplate::parse(&request.template)?;
+    let operation = account_keeper_batch_operation(request);
+    if operation == BatchOperation::ChangePassword {
+        if request.output_path.trim().is_empty() {
+            bail!("Account Keeper output path is required");
+        }
+        if let InputSource::File { path } = &request.source {
+            if Path::new(path) == Path::new(&request.output_path) {
+                bail!("Account Keeper input and output paths must differ");
+            }
+        }
+        PasswordTemplate::parse(&request.template)?;
+    } else if let InputSource::File { path } = &request.source {
+        // Login mode may still specify an output path; if it does, guard the
+        // same input==output collision.
+        if !request.output_path.trim().is_empty()
+            && Path::new(path) == Path::new(&request.output_path)
+        {
+            bail!("Account Keeper input and output paths must differ");
+        }
+    }
     Ok(())
 }
 
@@ -3689,6 +3722,7 @@ mod tests {
             output_path: String::new(),
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
+            operation: "change_password".into(),
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -3702,6 +3736,49 @@ mod tests {
             ..inline
         };
         assert!(validate_start_request(&file).is_err());
+    }
+
+    #[test]
+    fn start_request_rejects_unknown_operation() {
+        let request = StartRequest {
+            source: InputSource::Inline { text: "a@b.test|pw|".into() },
+            output_path: "C:/synthetic/result.json".into(),
+            template: "Local-{random:16}".into(),
+            adapter_id: "fixture-v1".into(),
+            operation: "delete_account".into(),
+            keep_profile_running: false,
+            pause_after_current: false,
+        };
+        assert!(validate_start_request(&request).is_err());
+    }
+
+    #[test]
+    fn start_request_login_operation_skips_template_and_output() {
+        let request = StartRequest {
+            source: InputSource::Inline { text: "a@b.test|pw|".into() },
+            output_path: String::new(),
+            template: String::new(),
+            adapter_id: "fixture-v1".into(),
+            operation: "login".into(),
+            keep_profile_running: false,
+            pause_after_current: false,
+        };
+        assert!(validate_start_request(&request).is_ok());
+        assert_eq!(account_keeper_batch_operation(&request), BatchOperation::Login);
+    }
+
+    #[test]
+    fn start_request_change_password_still_requires_template_and_output() {
+        let request = StartRequest {
+            source: InputSource::Inline { text: "a@b.test|pw|".into() },
+            output_path: String::new(),
+            template: "Local-{random:16}".into(),
+            adapter_id: "fixture-v1".into(),
+            operation: "change_password".into(),
+            keep_profile_running: false,
+            pause_after_current: false,
+        };
+        assert!(validate_start_request(&request).is_err());
     }
 
     #[test]
@@ -3723,6 +3800,7 @@ mod tests {
             output_path: "C:/synthetic/result.json".into(),
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
+            operation: "change_password".into(),
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -3773,6 +3851,7 @@ mod tests {
             output_path: "C:/synthetic/result.json".into(),
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
+            operation: "change_password".into(),
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -4560,6 +4639,7 @@ mod tests {
                 output_path: "C:/synthetic/output.json".into(),
                 template: "Local-{random:16}".into(),
                 adapter_id: "fixture-v1".into(),
+                operation: "change_password".into(),
                 keep_profile_running: false,
                 pause_after_current: false,
             },
@@ -4601,6 +4681,7 @@ mod tests {
                 output_path: "C:/synthetic/output.json".into(),
                 template: "Local-{random:16}".into(),
                 adapter_id: "fixture-v1".into(),
+                operation: "change_password".into(),
                 keep_profile_running: false,
                 pause_after_current: false,
             },
