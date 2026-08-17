@@ -87,16 +87,6 @@ export interface ProgressLogEntry {
   error_code: string | null;
 }
 
-export interface ProfileImportPayload {
-  schema_version: 1;
-  kind: "brproxies-account-keeper-profile";
-  profile_id: string;
-  account_status: "success";
-  last_verified_at: string | null;
-  api_base_url: string;
-  vault_ref: string;
-}
-
 export interface ManagedProfileView {
   profile_id: string;
   masked_account: string;
@@ -104,7 +94,11 @@ export interface ManagedProfileView {
   last_verified_at: string | null;
   running: boolean;
   rotated: boolean;
-  import_payload: ProfileImportPayload;
+  codex_auth: {
+    status: "missing" | "ready" | "reconnect_required";
+    expires_at: string | null;
+    has_account_id: boolean;
+  };
 }
 
 export interface DraftState {

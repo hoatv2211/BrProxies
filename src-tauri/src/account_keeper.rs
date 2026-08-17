@@ -389,6 +389,7 @@ pub enum WorkerEvent {
     TotpChanged,
     EmailVerificationRequired,
     EmailChanged,
+    OAuthOpened,
     Verified,
     Failed { code: String },
 }
@@ -403,6 +404,7 @@ pub struct WorkerStart {
     pub current_password: String,
     pub new_password: String,
     pub new_email: String,
+    pub oauth_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -640,6 +642,17 @@ fn worker_command_value(request_id: &str, command: WorkerCommand) -> serde_json:
 }
 
 fn worker_start_value(start: &WorkerStart) -> serde_json::Value {
+    if start.operation == "codex_oauth" {
+        return serde_json::json!({
+            "protocol_version": 1,
+            "type": "start",
+            "request_id": start.request_id,
+            "operation": start.operation,
+            "adapter_id": start.adapter_id,
+            "cdp_endpoint": start.cdp_endpoint,
+            "oauth_url": start.oauth_url,
+        });
+    }
     let mut value = serde_json::json!({
         "protocol_version": 1,
         "type": "start",
@@ -779,17 +792,6 @@ impl EventSink for NullEventSink {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ManagedProfileImportPayload {
-    pub schema_version: u32,
-    pub kind: String,
-    pub profile_id: String,
-    pub account_status: String,
-    pub last_verified_at: Option<String>,
-    pub api_base_url: String,
-    pub vault_ref: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagedProfileView {
     pub profile_id: String,
     pub masked_account: String,
@@ -797,7 +799,38 @@ pub struct ManagedProfileView {
     pub rotated: bool,
     pub last_verified_at: Option<String>,
     pub running: bool,
-    pub import_payload: ManagedProfileImportPayload,
+    pub codex_auth: ManagedProfileCodexAuth,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManagedProfileCodexAuth {
+    pub status: String,
+    pub expires_at: Option<String>,
+    pub has_account_id: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexExportRequest {
+    #[serde(default)]
+    pub profile_ids: Vec<String>,
+    pub format: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexSaveExportRequest {
+    #[serde(flatten)]
+    pub export: CodexExportRequest,
+    pub output_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexExportResult {
+    pub exported_count: usize,
+    pub skipped_count: usize,
+    pub refreshed_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1441,6 +1474,10 @@ pub fn parse_worker_line(line: &str) -> Result<WorkerEvent> {
             ensure_worker_fields(object, &["protocol_version", "type", "request_id"])?;
             Ok(WorkerEvent::EmailChanged)
         }
+        "oauth_opened" => {
+            ensure_worker_fields(object, &["protocol_version", "type", "request_id"])?;
+            Ok(WorkerEvent::OAuthOpened)
+        }
         "verified" => {
             ensure_worker_fields(object, &["protocol_version", "type", "request_id"])?;
             Ok(WorkerEvent::Verified)
@@ -1877,6 +1914,7 @@ async fn verify_headless_password(
             current_password: candidate_password.to_string(),
             new_password: String::new(),
             new_email: String::new(),
+            oauth_url: None,
         })
         .await?;
 
@@ -1890,6 +1928,7 @@ async fn verify_headless_password(
                         .await?;
                 }
                 Some(WorkerEvent::Verified) => return Ok(()),
+                Some(WorkerEvent::OAuthOpened) => bail!("Account Keeper recovery worker entered OAuth mode"),
                 Some(WorkerEvent::ManualRequired { .. }) => {
                     let _ = session.send(WorkerCommand::Cancel).await;
                     bail!("Account Keeper credential recovery requires manual action");
@@ -1952,12 +1991,111 @@ pub fn account_keeper_list_profiles() -> std::result::Result<Vec<ManagedProfileV
         .into_iter()
         .map(|profile| profile.profile_id)
         .collect::<HashSet<_>>();
-    let settings = crate::settings::load().map_err(|error| error.to_string())?;
-    Ok(managed_profile_views(
-        &vault,
-        &running,
-        &format!("http://127.0.0.1:{}", settings.api_port),
-    ))
+    Ok(managed_profile_views(&vault, &running))
+}
+
+#[tauri::command]
+pub async fn account_keeper_connect_codex(
+    request: OpenProfileRequest,
+) -> std::result::Result<ManagedProfileCodexAuth, String> {
+    connect_codex(request).await.map_err(|_| "codex_oauth_failed".to_string())
+}
+
+async fn connect_codex(request: OpenProfileRequest) -> Result<ManagedProfileCodexAuth> {
+    ensure_account_keeper_supported()?;
+    let mut vault = crate::account_keeper_store::load_vault()?;
+    let account = vault.accounts.iter().find(|account| {
+        account.profile_id == request.profile_id && is_verified_managed_account(account)
+    }).cloned().ok_or_else(|| anyhow::anyhow!("codex_oauth_failed"))?;
+    let (listener, port) = crate::account_keeper_codex::bind_callback().await?;
+    let pending = crate::account_keeper_codex::create_pending_oauth(port)?;
+    let runtime = HeadlessProfileRuntime;
+    let cdp_endpoint = prepare_profile_cdp(&runtime, &request.profile_id).await?;
+    let transport = NodeWorkerTransport { resource_root: headless_worker_resource_root() };
+    let mut session = transport.spawn(WorkerStart {
+        request_id: uuid::Uuid::new_v4().to_string(),
+        operation: "codex_oauth".to_string(),
+        adapter_id: "openai-chatgpt-v1".to_string(),
+        cdp_endpoint,
+        account: String::new(), current_password: String::new(), new_password: String::new(), new_email: String::new(),
+        oauth_url: Some(pending.authorize_url.to_string()),
+    }).await?;
+    match tokio::time::timeout(Duration::from_secs(30), session.next_event()).await {
+        Ok(Ok(Some(WorkerEvent::OAuthOpened))) => {}
+        _ => bail!("codex_oauth_failed"),
+    }
+    let callback = crate::account_keeper_codex::wait_for_callback(listener, &pending.state).await?;
+    let (email, credential) = crate::account_keeper_codex::exchange_code(&pending, &callback.code).await?;
+    let auth = persist_codex_credential(&mut vault, &account, &email, credential)?;
+    crate::account_keeper_store::save_vault(&vault)?;
+    let _ = session.finish().await;
+    Ok(auth)
+}
+
+fn persist_codex_credential(
+    vault: &mut VaultFile,
+    account: &VaultAccount,
+    token_email: &str,
+    credential: crate::account_keeper_store::CodexOAuthCredential,
+) -> Result<ManagedProfileCodexAuth> {
+    if normalize_account(token_email) != normalize_account(&account.account) {
+        bail!("codex_oauth_failed");
+    }
+    let auth = ManagedProfileCodexAuth {
+        status: "ready".to_string(),
+        expires_at: Some(credential.expires_at.clone()),
+        has_account_id: !credential.account_id.is_empty(),
+    };
+    vault.codex_oauth.insert(account.account_key.clone(), credential);
+    Ok(auth)
+}
+
+async fn codex_export_json(request: &CodexExportRequest) -> Result<(String, CodexExportResult)> {
+    let mut vault = crate::account_keeper_store::load_vault()?;
+    let now = crate::account_keeper_codex::now_rfc3339();
+    let mut selected = Vec::new();
+    let mut refreshed_count = 0;
+    let requested = request.profile_ids.iter().collect::<HashSet<_>>();
+    for account in &vault.accounts {
+        if !requested.is_empty() && !requested.contains(&account.profile_id) { continue; }
+        if !is_verified_managed_account(account) { continue; }
+        let Some(mut credential) = vault.codex_oauth.get(&account.account_key).cloned() else { continue; };
+        if crate::account_keeper_codex::needs_refresh(&credential.expires_at, &now) {
+            let (email, refreshed) = crate::account_keeper_codex::refresh_credential(&credential).await
+                .map_err(|_| anyhow::anyhow!("codex_reconnect_required"))?;
+            if normalize_account(&email) != normalize_account(&account.account) { bail!("codex_reconnect_required"); }
+            credential = refreshed;
+            vault.codex_oauth.insert(account.account_key.clone(), credential.clone());
+            refreshed_count += 1;
+        }
+        selected.push((account.account.clone(), credential));
+    }
+    if selected.is_empty() { bail!("codex_reconnect_required"); }
+    if refreshed_count > 0 { crate::account_keeper_store::save_vault(&vault)?; }
+    let refs = selected.iter().map(|(email, credential)| (email.as_str(), credential)).collect::<Vec<_>>();
+    let value = match request.format.as_str() {
+        "nine_router" => crate::account_keeper_codex::nine_router_accounts(&refs),
+        "cockpit" => crate::account_keeper_codex::cockpit_accounts(&refs),
+        _ => bail!("invalid Codex export format"),
+    };
+    let json = serde_json::to_string_pretty(&value)?;
+    let requested_count = if request.profile_ids.is_empty() { vault.accounts.len() } else { request.profile_ids.len() };
+    Ok((json, CodexExportResult { exported_count: selected.len(), skipped_count: requested_count.saturating_sub(selected.len()), refreshed_count }))
+}
+
+#[tauri::command]
+pub async fn account_keeper_copy_codex_export(app: tauri::AppHandle, request: CodexExportRequest) -> std::result::Result<CodexExportResult, String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let (json, result) = codex_export_json(&request).await.map_err(|error| error.to_string())?;
+    app.clipboard().write_text(json).map_err(|error| error.to_string())?;
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn account_keeper_save_codex_export(request: CodexSaveExportRequest) -> std::result::Result<CodexExportResult, String> {
+    let (json, result) = codex_export_json(&request.export).await.map_err(|error| error.to_string())?;
+    crate::store::atomic_write_bytes(Path::new(&request.output_path), json.as_bytes()).map_err(|error| error.to_string())?;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2368,12 +2506,18 @@ pub async fn account_keeper_delete_profile(
     }
 
     crate::profile::delete(&request.profile_id).map_err(|error| error.to_string())?;
-    vault.accounts.remove(index);
+    remove_managed_account(&mut vault, index);
     crate::account_keeper_store::save_vault(&vault).map_err(|error| error.to_string())?;
     Ok(DeleteManagedProfileResult {
         profile_id: request.profile_id,
         deleted: true,
     })
+}
+
+fn remove_managed_account(vault: &mut VaultFile, index: usize) -> VaultAccount {
+    let removed = vault.accounts.remove(index);
+    vault.codex_oauth.remove(&removed.account_key);
+    removed
 }
 
 fn ensure_account_keeper_supported() -> Result<()> {
@@ -2821,6 +2965,7 @@ impl Coordinator {
                 current_password: vault.accounts[vault_index].current_password.clone(),
                 new_password: pending_password.to_string(),
                 new_email,
+                oauth_url: None,
             };
             let mut session = match self.workers.spawn(start).await {
                 Ok(session) => session,
@@ -2870,6 +3015,9 @@ impl Coordinator {
                             },
                         };
                         match event {
+                            WorkerEvent::OAuthOpened => {
+                                return Err(anyhow::anyhow!("Account Keeper worker entered OAuth mode"));
+                            }
                             WorkerEvent::Stage(stage) => {
                                 state.stage = stage;
                                 record_account_state(
@@ -3687,17 +3835,15 @@ pub fn job_view_from_checkpoint(checkpoint: &JobCheckpoint, vault: &VaultFile) -
     }
 }
 
-fn managed_profile_views(
-    vault: &VaultFile,
-    running: &HashSet<String>,
-    api_base_url: &str,
-) -> Vec<ManagedProfileView> {
+fn is_verified_managed_account(account: &VaultAccount) -> bool {
+    account.last_status.as_deref() == Some("success") && account.last_verified_at.is_some()
+}
+
+fn managed_profile_views(vault: &VaultFile, running: &HashSet<String>) -> Vec<ManagedProfileView> {
     let mut profiles = vault
         .accounts
         .iter()
-        .filter(|account| {
-            account.last_status.as_deref() == Some("success") && account.last_verified_at.is_some()
-        })
+        .filter(|account| is_verified_managed_account(account))
         .map(|account| {
             let last_verified_at = account.last_verified_at.clone();
             ManagedProfileView {
@@ -3707,14 +3853,13 @@ fn managed_profile_views(
                 rotated: account.password_state == PasswordState::Changed,
                 last_verified_at: last_verified_at.clone(),
                 running: running.contains(&account.profile_id),
-                import_payload: ManagedProfileImportPayload {
-                    schema_version: SCHEMA_VERSION,
-                    kind: "brproxies-account-keeper-profile".to_string(),
-                    profile_id: account.profile_id.clone(),
-                    account_status: "success".to_string(),
-                    last_verified_at,
-                    api_base_url: api_base_url.to_string(),
-                    vault_ref: format!("account-keeper://vault/{}", account.account_key),
+                codex_auth: match vault.codex_oauth.get(&account.account_key) {
+                    Some(credential) => ManagedProfileCodexAuth {
+                        status: if crate::account_keeper_codex::needs_refresh(&credential.expires_at, &crate::account_keeper_codex::now_rfc3339()) { "reconnect_required" } else { "ready" }.to_string(),
+                        expires_at: Some(credential.expires_at.clone()),
+                        has_account_id: !credential.account_id.is_empty(),
+                    },
+                    None => ManagedProfileCodexAuth { status: "missing".to_string(), expires_at: None, has_account_id: false },
                 },
             }
         })
@@ -3761,6 +3906,9 @@ pub fn apply_worker_event(
     now: &str,
 ) -> Result<()> {
     match event {
+        WorkerEvent::OAuthOpened => {
+            bail!("Account Keeper OAuth event requires Codex coordinator handling");
+        }
         WorkerEvent::Stage(stage) => {
             state.stage = stage;
         }
@@ -4301,6 +4449,7 @@ mod tests {
         let vault = VaultFile {
             schema_version: crate::account_keeper_store::SCHEMA_VERSION,
             pending_security_changes: Default::default(),
+            codex_oauth: Default::default(),
             accounts: vec![
                 VaultAccount {
                     account_key: "success-key".into(),
@@ -4330,12 +4479,11 @@ mod tests {
         };
         let running = std::collections::HashSet::from(["profile-success".to_string()]);
 
-        let profiles = managed_profile_views(&vault, &running, "http://127.0.0.1:40325");
+        let profiles = managed_profile_views(&vault, &running);
 
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].profile_id, "profile-success");
         assert!(profiles[0].running);
-        assert_eq!(profiles[0].import_payload.account_status, "success");
         let serialized = serde_json::to_string(&profiles).unwrap().to_lowercase();
         for forbidden in [
             "owner@example.test",
@@ -4348,10 +4496,84 @@ mod tests {
     }
 
     #[test]
+    fn codex_credential_replacement_rejects_account_mismatch_without_overwrite() {
+        let account = VaultAccount {
+            account_key: "account-key".into(),
+            account: "owner@example.test".into(),
+            current_password: "synthetic-current".into(),
+            pending_password: None,
+            totp_secret: None,
+            profile_id: "profile-1".into(),
+            password_state: PasswordState::Changed,
+            last_verified_at: Some("2026-08-17T03:00:00Z".into()),
+            last_job_id: Some("job-1".into()),
+            last_status: Some("success".into()),
+        };
+        let mut vault = VaultFile::single(account.clone());
+        let original = crate::account_keeper_store::CodexOAuthCredential {
+            access_token: "original-access".into(),
+            refresh_token: "original-refresh".into(),
+            id_token: "original-id".into(),
+            account_id: "original-account".into(),
+            plan_type: None,
+            last_refresh_at: "2026-08-17T03:00:00Z".into(),
+            expires_at: "2026-08-27T03:00:00Z".into(),
+            expires_in: 864_000,
+        };
+        vault.codex_oauth.insert(account.account_key.clone(), original.clone());
+        let replacement = crate::account_keeper_store::CodexOAuthCredential {
+            access_token: "replacement-access".into(),
+            ..original.clone()
+        };
+
+        assert!(persist_codex_credential(
+            &mut vault,
+            &account,
+            "other@example.test",
+            replacement,
+        ).is_err());
+        assert_eq!(vault.codex_oauth.get(&account.account_key), Some(&original));
+    }
+
+    #[test]
+    fn removing_managed_account_removes_its_codex_credential() {
+        let account = VaultAccount {
+            account_key: "account-key".into(),
+            account: "owner@example.test".into(),
+            current_password: "synthetic-current".into(),
+            pending_password: None,
+            totp_secret: None,
+            profile_id: "profile-1".into(),
+            password_state: PasswordState::Changed,
+            last_verified_at: Some("2026-08-17T03:00:00Z".into()),
+            last_job_id: Some("job-1".into()),
+            last_status: Some("success".into()),
+        };
+        let mut vault = VaultFile::single(account.clone());
+        vault.codex_oauth.insert(account.account_key.clone(), crate::account_keeper_store::CodexOAuthCredential {
+            access_token: "synthetic-access".into(),
+            refresh_token: "synthetic-refresh".into(),
+            id_token: "synthetic-id".into(),
+            account_id: "synthetic-account".into(),
+            plan_type: None,
+            last_refresh_at: "2026-08-17T03:00:00Z".into(),
+            expires_at: "2026-08-27T03:00:00Z".into(),
+            expires_in: 864_000,
+        });
+
+        let removed = remove_managed_account(&mut vault, 0);
+
+        assert_eq!(removed.account_key, account.account_key);
+        assert!(vault.accounts.is_empty());
+        assert!(vault.codex_oauth.is_empty());
+    }
+
+    #[test]
     fn managed_profiles_include_login_only_with_rotated_false() {
         let vault = VaultFile {
             schema_version: SCHEMA_VERSION,
             pending_security_changes: Default::default(),
+            codex_oauth: Default::default(),
             accounts: vec![
                 VaultAccount {
                     account_key: "rotated-key".into(),
@@ -4380,7 +4602,7 @@ mod tests {
             ],
         };
         let running: HashSet<String> = HashSet::new();
-        let profiles = managed_profile_views(&vault, &running, "http://127.0.0.1:40325/");
+        let profiles = managed_profile_views(&vault, &running);
         assert_eq!(profiles.len(), 2);
         let login = profiles
             .iter()
@@ -4422,6 +4644,7 @@ mod tests {
         let mut vault = VaultFile {
             schema_version: 1,
             pending_security_changes: Default::default(),
+            codex_oauth: Default::default(),
             accounts: vec![
                 VaultAccount {
                     account_key: "unknown-key".into(),
@@ -5160,6 +5383,7 @@ mod tests {
             current_password: "current-password".into(),
             new_password: String::new(),
             new_email: String::new(),
+            oauth_url: None,
         });
 
         assert_eq!(

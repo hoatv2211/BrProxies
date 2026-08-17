@@ -4,7 +4,6 @@ import type {
   InputSource,
   JobStatus,
   JobView,
-  ManagedProfileView,
   ProgressLogEntry,
   ProgressEvent,
 } from "./types";
@@ -42,7 +41,6 @@ export function activeInputSource(draft: DraftState): InputSource {
     }
   }
 }
-
 export function canStart(draft: DraftState, jobs: readonly JobView[]): boolean {
   const source = activeInputSource(draft);
   const hasActiveInput = source.kind === "inline"
@@ -102,8 +100,4 @@ export function progressLogEntries(job: JobView | null): ProgressLogEntry[] {
       error_code: account.error_code,
     }))
     .sort((left, right) => left.updated_at.localeCompare(right.updated_at));
-}
-
-export function profileImportJson(profile: ManagedProfileView): string {
-  return JSON.stringify(profile.import_payload, null, 2);
 }

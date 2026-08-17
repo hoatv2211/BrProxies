@@ -6,6 +6,7 @@ import {
   CommandControl,
   createControlledPageSession,
   validateCdpEndpoint,
+  validateCodexOAuthUrl,
 } from "../account-keeper-worker-runtime.mjs";
 import * as protocol from "../account-keeper-protocol.mjs";
 
@@ -20,6 +21,16 @@ test("accepts only exact loopback HTTP CDP endpoints", () => {
   ]) {
     assert.throws(() => validateCdpEndpoint(endpoint), /protocol_error/);
   }
+});
+
+test("accepts only exact Codex OAuth authorization URLs", () => {
+  const valid = "https://auth.openai.com/oauth/authorize?client_id=synthetic&state=synthetic";
+  assert.equal(validateCodexOAuthUrl(valid), valid);
+  for (const value of [
+    "https://example.test/oauth/authorize?client_id=x&state=y",
+    "http://auth.openai.com/oauth/authorize?client_id=x&state=y",
+    "https://auth.openai.com/other?client_id=x&state=y",
+  ]) assert.throws(() => validateCodexOAuthUrl(value), /protocol_error/);
 });
 
 test("command control rejects early and duplicate phase commands", async () => {

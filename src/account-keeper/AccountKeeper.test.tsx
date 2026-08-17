@@ -48,14 +48,10 @@ const managedProfile = {
   status: "success",
   last_verified_at: "2026-07-31T03:00:00Z",
   running: false,
-  import_payload: {
-    schema_version: 1,
-    kind: "brproxies-account-keeper-profile",
-    profile_id: "profile-1",
-    account_status: "success",
-    last_verified_at: "2026-07-31T03:00:00Z",
-    api_base_url: "http://127.0.0.1:40325",
-    vault_ref: "account-keeper://vault/account-key",
+  codex_auth: {
+    status: "ready",
+    expires_at: "2026-08-27T03:00:00Z",
+    has_account_id: true,
   },
 };
 
@@ -596,10 +592,11 @@ describe("AccountKeeper", () => {
     expect(screen.getByText("Progress cleaned. Unknown recovery state forgotten; browser profile was preserved.")).toBeInTheDocument();
   });
 
-  it("lists successful profiles with run, delete, and import actions", async () => {
+  it("lists successful profiles with run, delete, and Codex export actions", async () => {
     mocks.invoke.mockImplementation(async (command: string) => {
       if (command === "account_keeper_list_profiles") return [managedProfile];
       if (command === "account_keeper_open_profile") return { launched: true, already_running: false };
+      if (command === "account_keeper_copy_codex_export") return { exportedCount: 1, skippedCount: 0, refreshedCount: 0 };
       if (command === "account_keeper_delete_profile") return { profile_id: "profile-1", deleted: true };
       return defaultInvoke(command);
     });
@@ -608,18 +605,27 @@ describe("AccountKeeper", () => {
     expect(await screen.findByRole("heading", { name: "Profiles" })).toBeInTheDocument();
     expect(screen.getByText("o***r@example.test")).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "Copy all ready accounts for 9Router" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_copy_codex_export",
+      { request: { profileIds: ["profile-1"], format: "nine_router" } },
+    ));
+
     fireEvent.click(screen.getByRole("button", { name: "Run profile o***r@example.test" }));
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
       "account_keeper_open_profile",
       { request: { profileId: "profile-1" } },
     ));
 
-    fireEvent.click(screen.getByRole("button", { name: "Import info o***r@example.test" }));
-    const importInfo = await screen.findByRole("region", { name: "9Router/Cockpit import info" });
-    const importPayload = importInfo.querySelector("pre")?.textContent ?? "";
-    expect(importPayload).toContain("brproxies-account-keeper-profile");
-    expect(importPayload).not.toContain("password");
-    expect(importPayload).not.toContain("totp");
+    fireEvent.click(screen.getByRole("button", { name: "Export o***r@example.test" }));
+    const exportInfo = await screen.findByRole("region", { name: "9Router/Cockpit Codex export" });
+    expect(exportInfo).toHaveTextContent("Tokens stay hidden");
+    expect(exportInfo).not.toHaveTextContent("synthetic-access");
+    fireEvent.click(screen.getByRole("button", { name: "Copy 9Router JSON" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_copy_codex_export",
+      { request: { profileIds: ["profile-1"], format: "nine_router" } },
+    ));
 
     fireEvent.click(screen.getByRole("button", { name: "Delete profile o***r@example.test" }));
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
