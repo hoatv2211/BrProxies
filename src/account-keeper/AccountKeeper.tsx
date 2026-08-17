@@ -40,7 +40,9 @@ type AccountKeeperProps = {
 
 const accountStages = new Set<AccountStage>([
   "queued", "launching", "logging_in", "submitting_totp", "changing_password",
-  "verifying_new_password", "waiting_manual", "success", "failed", "critical", "cancelled",
+  "verifying_new_password", "changing_totp", "verifying_new_totp", "changing_email",
+  "waiting_email_verification", "verifying_new_email", "waiting_manual", "success",
+  "failed", "critical", "cancelled",
 ]);
 
 const jobStatuses = new Set<JobStatus>([
@@ -556,7 +558,10 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     try {
       const validation = normalizeInputValidation(
         await invoke<unknown>("account_keeper_validate_input", {
-          request: { source: { kind: "file", path } },
+          request: {
+            source: { kind: "file", path },
+            ...(draft.operation === "change_password" ? {} : { operation: draft.operation }),
+          },
         }),
       );
       setDraft((current) => current.inputMode === "file"
@@ -583,7 +588,10 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     try {
       const validation = normalizeInputValidation(
         await invoke<unknown>("account_keeper_validate_input", {
-          request: { source },
+          request: {
+            source,
+            ...(draft.operation === "change_password" ? {} : { operation: draft.operation }),
+          },
         }),
       );
       setDraft((current) => current.inputRevision === inputRevision
@@ -650,7 +658,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
         request: {
           source: activeInputSource(draft),
           outputPath: draft.operation === "login" ? "" : draft.outputPath,
-          template: draft.operation === "login" ? "" : draft.templateText,
+          template: draft.operation === "change_password" ? draft.templateText : "",
           adapterId: qaAdapterId.current,
           operation: draft.operation,
           keepProfileRunning: draft.keepProfileRunning,
@@ -913,10 +921,10 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     <section className="account-keeper page" aria-labelledby="account-keeper-title">
       <div className="account-keeper__header">
         <div>
-          <p className="account-keeper__eyebrow">Windows account operations</p>
+          <p className="account-keeper__eyebrow">GPT ACCOUNT MANAGEMENT</p>
           <h1 id="account-keeper-title">Account Keeper</h1>
           <p className="account-keeper__subtitle">
-            Validate local input, run one profile at a time, and keep secrets out of job views and logs.
+            Manage and update GPT accounts in one place — log in, change passwords, rotate 2FA, and update account emails with isolated browser profiles.
           </p>
         </div>
         <div className="account-keeper__header-status" aria-live="polite">
@@ -977,6 +985,8 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
               {([
                 ["change_password", "Change pass"],
                 ["login", "Login GPT"],
+                ["change_totp", "Change 2FA"],
+                ["change_email", "Change email"],
               ] as const).map(([mode, label]) => (
                 <button
                   key={mode}
@@ -984,7 +994,14 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
                   aria-pressed={draft.operation === mode}
                   onClick={() => setDraft((current) => current.operation === mode
                     ? current
-                    : { ...current, operation: mode })}
+                    : {
+                      ...current,
+                      operation: mode,
+                      inputRevision: current.inputRevision + 1,
+                      inputValidation: null,
+                      inputValidationRevision: null,
+                      plaintextAcknowledged: false,
+                    })}
                   disabled={busyAction !== null}
                 >
                   {label}
@@ -1040,7 +1057,9 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
                   }))}
                 />
                 <small id="account-keeper-input-help">
-                  One account per line: account|current_password|totp_secret
+                  {draft.operation === "change_email"
+                    ? "current_email|current_password|totp_secret|new_email"
+                    : "One account per line: account|current_password|totp_secret"}
                 </small>
                 <div className="account-keeper__input-actions">
                   <button
@@ -1136,7 +1155,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           </div>
           )}
 
-          {draft.operation === "change_password" && (
+          {draft.operation !== "login" && (
           <div className="account-keeper__field">
             <label htmlFor="account-keeper-output">Output file</label>
             <div className="account-keeper__picker">

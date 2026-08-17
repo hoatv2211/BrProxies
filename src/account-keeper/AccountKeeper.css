@@ -309,7 +309,11 @@
 .account-keeper .account-keeper__stage.is-logging_in,
 .account-keeper .account-keeper__stage.is-submitting_totp,
 .account-keeper .account-keeper__stage.is-changing_password,
-.account-keeper .account-keeper__stage.is-verifying_new_password {
+.account-keeper .account-keeper__stage.is-verifying_new_password,
+.account-keeper .account-keeper__stage.is-changing_totp,
+.account-keeper .account-keeper__stage.is-verifying_new_totp,
+.account-keeper .account-keeper__stage.is-changing_email,
+.account-keeper .account-keeper__stage.is-verifying_new_email {
   border-color: #60a5fa55;
   background: #2563eb1a;
   color: #93c5fd;
@@ -317,7 +321,8 @@
 
 .account-keeper .account-keeper__status.is-waiting_manual,
 .account-keeper .account-keeper__status.is-paused,
-.account-keeper .account-keeper__stage.is-waiting_manual {
+.account-keeper .account-keeper__stage.is-waiting_manual,
+.account-keeper .account-keeper__stage.is-waiting_email_verification {
   border-color: #f59e0b55;
   background: #b4530918;
   color: #fcd34d;

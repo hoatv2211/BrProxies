@@ -44,6 +44,17 @@ test("cancellation has priority over expected commands", async () => {
   assert.throws(() => control.throwIfCancelled(), /cancelled/);
 });
 
+test("command control accepts email code or manual resume", async () => {
+  const control = new CommandControl("req_1");
+  const waiting = control.waitForAny(["email_verification_code", "resume"]);
+  assert.equal(control.push({
+    request_id: "req_1",
+    type: "email_verification_code",
+    code: "123456",
+  }), true);
+  assert.equal((await waiting).code, "123456");
+});
+
 test("extends worker control with explicit password submit authorization", async () => {
   assert.equal(typeof protocol.withPasswordSubmitAuthorization, "function");
   const control = protocol.withPasswordSubmitAuthorization(
@@ -56,6 +67,15 @@ test("extends worker control with explicit password submit authorization", async
     true,
   );
   assert.equal((await waiting).type, "submit_password");
+});
+
+test("password authorization wrapper preserves multi-command waits", async () => {
+  const control = protocol.withPasswordSubmitAuthorization(
+    new CommandControl("req_1"),
+  );
+  const waiting = control.waitForAny(["email_verification_code", "resume"]);
+  assert.equal(control.push({ request_id: "req_1", type: "resume" }), true);
+  assert.equal((await waiting).type, "resume");
 });
 
 test("creates dedicated page and switches to allowed-origin popup", async () => {

@@ -143,6 +143,17 @@ describe("AccountKeeper", () => {
     return { accountInput, start };
   }
 
+  it("describes GPT account management operations", async () => {
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    await screen.findByText("0 resumable jobs");
+    expect(screen.getByText("GPT ACCOUNT MANAGEMENT")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Account Keeper" })).toBeInTheDocument();
+    expect(screen.getByText(
+      "Manage and update GPT accounts in one place — log in, change passwords, rotate 2FA, and update account emails with isolated browser profiles.",
+    )).toBeInTheDocument();
+  });
+
   it("subscribes before loading and cleans up under Strict Mode", async () => {
     const view = render(
       <StrictMode>
@@ -363,6 +374,11 @@ describe("AccountKeeper", () => {
 
     const { start } = await prepareInlineBatch();
     fireEvent.click(screen.getByRole("button", { name: "Login GPT" }));
+    fireEvent.click(screen.getByRole("button", { name: "Validate Input" }));
+    await screen.findByText("Input valid");
+    fireEvent.click(screen.getByLabelText(
+      "I understand pasted input and the output file contain plaintext secrets",
+    ));
 
     expect(screen.queryByLabelText("Template")).toBeNull();
     expect(screen.queryByLabelText("Output file")).toBeNull();
@@ -389,6 +405,57 @@ describe("AccountKeeper", () => {
       },
     ));
     expect(confirm).toHaveBeenCalled();
+  });
+
+  it("starts a Change 2FA batch without a password template", async () => {
+    const confirm = vi.fn().mockResolvedValue(true);
+    render(<AccountKeeper confirm={confirm} />);
+
+    const { start } = await prepareInlineBatch();
+    fireEvent.click(screen.getByRole("button", { name: "Change 2FA" }));
+    fireEvent.click(screen.getByRole("button", { name: "Validate Input" }));
+    await screen.findByText("Input valid");
+    fireEvent.click(screen.getByLabelText(
+      "I understand pasted input and the output file contain plaintext secrets",
+    ));
+
+    expect(screen.queryByLabelText("Template")).toBeNull();
+    expect(screen.getByLabelText("Output file")).toBeInTheDocument();
+    await waitFor(() => expect(start).toBeEnabled());
+    fireEvent.click(start);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_start_batch",
+      { request: expect.objectContaining({ operation: "change_totp", template: "" }) },
+    ));
+  });
+
+  it("shows four-field guidance and starts a Change email batch", async () => {
+    const confirm = vi.fn().mockResolvedValue(true);
+    render(<AccountKeeper confirm={confirm} />);
+
+    const { start } = await prepareInlineBatch();
+    fireEvent.click(screen.getByRole("button", { name: "Change email" }));
+    fireEvent.change(screen.getByLabelText("Account input"), {
+      target: { value: "owner@example.test|current-password|JBSWY3DPEHPK3PXP|new@example.test" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Validate Input" }));
+    await screen.findByText("Input valid");
+    fireEvent.click(screen.getByLabelText(
+      "I understand pasted input and the output file contain plaintext secrets",
+    ));
+
+    expect(screen.getByText("current_email|current_password|totp_secret|new_email"))
+      .toBeInTheDocument();
+    expect(screen.queryByLabelText("Template")).toBeNull();
+    expect(screen.getByLabelText("Output file")).toBeInTheDocument();
+    await waitFor(() => expect(start).toBeEnabled());
+    fireEvent.click(start);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_start_batch",
+      { request: expect.objectContaining({ operation: "change_email", template: "" }) },
+    ));
   });
 
   it("keeps pasted input when starting fails", async () => {

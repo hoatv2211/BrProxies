@@ -1,10 +1,10 @@
 use crate::account_keeper_format::{
-    mask_account, normalize_account, parse_input, totp_now, ImportedAccount, OsRandom,
-    PasswordTemplate,
+    mask_account, normalize_account, parse_input_for_operation, totp_now, ImportedAccount,
+    OsRandom, PasswordTemplate,
 };
 use crate::account_keeper_store::{
-    AccountCheckpoint, BatchOutput, JobCheckpoint, OutputAccount, PasswordState, VaultAccount,
-    VaultFile, SCHEMA_VERSION,
+    AccountCheckpoint, BatchOutput, JobCheckpoint, OutputAccount, PasswordState,
+    PendingSecurityChange, VaultAccount, VaultFile, SCHEMA_VERSION,
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,11 @@ pub enum AccountStage {
     SubmittingTotp,
     ChangingPassword,
     VerifyingNewPassword,
+    ChangingTotp,
+    VerifyingNewTotp,
+    ChangingEmail,
+    WaitingEmailVerification,
+    VerifyingNewEmail,
     WaitingManual,
     Success,
     Failed,
@@ -65,6 +70,7 @@ pub enum AccountEvent {
     Resumed,
     Verified,
     LoginVerified,
+    SecurityVerified,
     Failed,
     VerificationFailed,
     CredentialStateUnknown,
@@ -124,12 +130,26 @@ impl AccountRunState {
                 // `verified` arriving at Queued/Launching is a protocol violation
                 // and still bails.
                 if !is_login_verifiable_stage(self.stage) {
-                    bail!(
-                        "Account Keeper login verified event arrived outside verification state"
-                    );
+                    bail!("Account Keeper login verified event arrived outside verification state");
                 }
                 self.stage = AccountStage::Success;
                 // Login mode does not rotate — password stays Original.
+            }
+            AccountEvent::SecurityVerified => {
+                if !matches!(
+                    self.stage,
+                    AccountStage::ChangingTotp
+                        | AccountStage::VerifyingNewTotp
+                        | AccountStage::ChangingEmail
+                        | AccountStage::WaitingEmailVerification
+                        | AccountStage::VerifyingNewEmail
+                        | AccountStage::WaitingManual
+                ) {
+                    bail!(
+                        "Account Keeper security verified event arrived outside verification state"
+                    );
+                }
+                self.stage = AccountStage::Success;
             }
             AccountEvent::VerificationFailed => {
                 if self.password_state == PasswordState::Unknown {
@@ -179,9 +199,7 @@ fn is_verification_stage(stage: AccountStage) -> bool {
 fn is_login_verifiable_stage(stage: AccountStage) -> bool {
     matches!(
         stage,
-        AccountStage::LoggingIn
-            | AccountStage::SubmittingTotp
-            | AccountStage::WaitingManual
+        AccountStage::LoggingIn | AccountStage::SubmittingTotp | AccountStage::WaitingManual
     )
 }
 
@@ -291,6 +309,8 @@ pub enum InputSource {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PreviewRequest {
     pub source: InputSource,
+    #[serde(default = "default_batch_operation")]
+    pub operation: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -320,11 +340,15 @@ fn default_batch_operation() -> String {
 pub enum BatchOperation {
     Login,
     ChangePassword,
+    ChangeTotp,
+    ChangeEmail,
 }
 
 pub(crate) fn account_keeper_batch_operation(request: &StartRequest) -> BatchOperation {
     match request.operation.as_str() {
         "login" => BatchOperation::Login,
+        "change_totp" => BatchOperation::ChangeTotp,
+        "change_email" => BatchOperation::ChangeEmail,
         _ => BatchOperation::ChangePassword,
     }
 }
@@ -361,6 +385,10 @@ pub enum WorkerEvent {
     ManualRequired { reason: String },
     PasswordSubmitRequired,
     PasswordChanged,
+    TotpEnrollmentSecret(String),
+    TotpChanged,
+    EmailVerificationRequired,
+    EmailChanged,
     Verified,
     Failed { code: String },
 }
@@ -374,12 +402,15 @@ pub struct WorkerStart {
     pub account: String,
     pub current_password: String,
     pub new_password: String,
+    pub new_email: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerCommand {
     TotpCode(String),
     SubmitPassword,
+    TotpEnrollmentCode(String),
+    EmailVerificationCode(String),
     Resume,
     Cancel,
 }
@@ -460,7 +491,10 @@ impl WorkerTransport for NodeWorkerTransport {
             // stderr to a sibling `.stderr` file so patchright crashes/timeouts
             // are visible. Off by default: without the env var, stderr stays
             // discarded exactly as before.
-            match std::env::var("BRPROXIES_AK_DEBUG").ok().filter(|value| !value.is_empty()) {
+            match std::env::var("BRPROXIES_AK_DEBUG")
+                .ok()
+                .filter(|value| !value.is_empty())
+            {
                 Some(debug_path) => {
                     let stderr_path = format!("{debug_path}.stderr");
                     match std::fs::OpenOptions::new()
@@ -494,21 +528,7 @@ impl WorkerTransport for NodeWorkerTransport {
                 .stdout
                 .take()
                 .ok_or_else(|| anyhow::anyhow!("Account Keeper worker stdout unavailable"))?;
-            write_worker_value(
-                &mut stdin,
-                &serde_json::json!({
-                    "protocol_version": 1,
-                    "type": "start",
-                    "request_id": start.request_id,
-                    "operation": start.operation,
-                    "adapter_id": start.adapter_id,
-                    "cdp_endpoint": start.cdp_endpoint,
-                    "account": start.account,
-                    "current_password": start.current_password,
-                    "new_password": start.new_password,
-                }),
-            )
-            .await?;
+            write_worker_value(&mut stdin, &worker_start_value(&start)).await?;
             let session: Box<dyn WorkerSession> = Box::new(NodeWorkerSession {
                 child,
                 stdin,
@@ -594,6 +614,18 @@ fn worker_command_value(request_id: &str, command: WorkerCommand) -> serde_json:
             "type": "submit_password",
             "request_id": request_id,
         }),
+        WorkerCommand::TotpEnrollmentCode(code) => serde_json::json!({
+            "protocol_version": 1,
+            "type": "totp_enrollment_code",
+            "request_id": request_id,
+            "code": code,
+        }),
+        WorkerCommand::EmailVerificationCode(code) => serde_json::json!({
+            "protocol_version": 1,
+            "type": "email_verification_code",
+            "request_id": request_id,
+            "code": code,
+        }),
         WorkerCommand::Resume => serde_json::json!({
             "protocol_version": 1,
             "type": "resume",
@@ -605,6 +637,30 @@ fn worker_command_value(request_id: &str, command: WorkerCommand) -> serde_json:
             "request_id": request_id,
         }),
     }
+}
+
+fn worker_start_value(start: &WorkerStart) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "protocol_version": 1,
+        "type": "start",
+        "request_id": start.request_id,
+        "operation": start.operation,
+        "adapter_id": start.adapter_id,
+        "cdp_endpoint": start.cdp_endpoint,
+        "account": start.account,
+        "current_password": start.current_password,
+        "new_password": start.new_password,
+    });
+    if start.operation == "change_email" {
+        value
+            .as_object_mut()
+            .expect("worker start message is an object")
+            .insert(
+                "new_email".to_string(),
+                serde_json::Value::String(start.new_email.clone()),
+            );
+    }
+    value
 }
 
 async fn write_worker_value(stdin: &mut ChildStdin, value: &serde_json::Value) -> Result<()> {
@@ -905,8 +961,8 @@ fn create_local_profile(
     fingerprint_id: &str,
     name: &str,
 ) -> Result<String> {
-    let mut payload = crate::merge_library_fingerprint(fingerprint_id)
-        .map_err(anyhow::Error::msg)?;
+    let mut payload =
+        crate::merge_library_fingerprint(fingerprint_id).map_err(anyhow::Error::msg)?;
     payload.insert(
         "name".to_string(),
         serde_json::Value::String(name.to_string()),
@@ -1017,9 +1073,16 @@ fn validate_input_source_shape(source: &InputSource) -> Result<()> {
 }
 
 fn read_input_accounts(source: &InputSource) -> Result<Vec<ImportedAccount>> {
+    read_input_accounts_for_operation(source, "change_password")
+}
+
+fn read_input_accounts_for_operation(
+    source: &InputSource,
+    operation: &str,
+) -> Result<Vec<ImportedAccount>> {
     validate_input_source_shape(source)?;
     match source {
-        InputSource::Inline { text } => parse_input(text),
+        InputSource::Inline { text } => parse_input_for_operation(text, operation),
         InputSource::File { path } => {
             let file = std::fs::File::open(Path::new(path))
                 .map_err(|_| anyhow::anyhow!("Account Keeper input file could not be opened"))?;
@@ -1040,13 +1103,27 @@ fn read_input_accounts(source: &InputSource) -> Result<Vec<ImportedAccount>> {
 
             let text = String::from_utf8(bytes)
                 .map_err(|_| anyhow::anyhow!("Account Keeper input is not valid UTF-8"))?;
-            parse_input(&text)
+            parse_input_for_operation(&text, operation)
         }
     }
 }
 
 pub fn validate_input_source(source: &InputSource) -> Result<InputValidationDto> {
     let accounts = read_input_accounts(source)?;
+    Ok(InputValidationDto {
+        valid_count: accounts.len(),
+        masked_accounts: accounts
+            .iter()
+            .map(|account| mask_account(&account.account))
+            .collect(),
+    })
+}
+
+pub fn validate_input_source_for_operation(
+    source: &InputSource,
+    operation: &str,
+) -> Result<InputValidationDto> {
+    let accounts = read_input_accounts_for_operation(source, operation)?;
     Ok(InputValidationDto {
         valid_count: accounts.len(),
         masked_accounts: accounts
@@ -1194,6 +1271,21 @@ pub fn merge_imports_and_checkpoint(
         account.password_state = PasswordState::Original;
         account.last_job_id = Some(batch_id.to_string());
         account.last_status = Some("queued".to_string());
+        if let Some(new_email) = imported.new_email.clone() {
+            vault.pending_security_changes.insert(
+                account_key.clone(),
+                PendingSecurityChange {
+                    new_email: Some(new_email),
+                    new_totp_secret: None,
+                },
+            );
+        } else if request.operation == "change_totp" {
+            vault
+                .pending_security_changes
+                .insert(account_key.clone(), PendingSecurityChange::default());
+        } else {
+            vault.pending_security_changes.remove(&account_key);
+        }
 
         // Label the profile at import time so operators can identify it from the
         // browser list before the rotation runs. SECURITY: writes the plaintext
@@ -1269,6 +1361,11 @@ pub fn parse_worker_line(line: &str) -> Result<WorkerEvent> {
                 Some("submitting_totp") => AccountStage::SubmittingTotp,
                 Some("changing_password") => AccountStage::ChangingPassword,
                 Some("verifying_new_password") => AccountStage::VerifyingNewPassword,
+                Some("changing_totp") => AccountStage::ChangingTotp,
+                Some("verifying_new_totp") => AccountStage::VerifyingNewTotp,
+                Some("changing_email") => AccountStage::ChangingEmail,
+                Some("waiting_email_verification") => AccountStage::WaitingEmailVerification,
+                Some("verifying_new_email") => AccountStage::VerifyingNewEmail,
                 Some("waiting_manual") => AccountStage::WaitingManual,
                 _ => bail!("invalid Account Keeper worker stage"),
             };
@@ -1321,6 +1418,28 @@ pub fn parse_worker_line(line: &str) -> Result<WorkerEvent> {
         "password_changed" => {
             ensure_worker_fields(object, &["protocol_version", "type", "request_id"])?;
             Ok(WorkerEvent::PasswordChanged)
+        }
+        "totp_enrollment_secret" => {
+            ensure_worker_fields(object, &["protocol_version", "type", "request_id", "value"])?;
+            let value = object
+                .get("value")
+                .and_then(|value| value.as_str())
+                .filter(|value| (16..=256).contains(&value.len()))
+                .ok_or_else(|| anyhow::anyhow!("invalid Account Keeper TOTP enrollment"))?;
+            crate::account_keeper_format::decode_base32(value)?;
+            Ok(WorkerEvent::TotpEnrollmentSecret(value.to_string()))
+        }
+        "totp_changed" => {
+            ensure_worker_fields(object, &["protocol_version", "type", "request_id"])?;
+            Ok(WorkerEvent::TotpChanged)
+        }
+        "email_verification_required" => {
+            ensure_worker_fields(object, &["protocol_version", "type", "request_id"])?;
+            Ok(WorkerEvent::EmailVerificationRequired)
+        }
+        "email_changed" => {
+            ensure_worker_fields(object, &["protocol_version", "type", "request_id"])?;
+            Ok(WorkerEvent::EmailChanged)
         }
         "verified" => {
             ensure_worker_fields(object, &["protocol_version", "type", "request_id"])?;
@@ -1386,7 +1505,8 @@ pub fn account_keeper_defaults() -> std::result::Result<AccountKeeperDefaultsDto
 pub fn account_keeper_validate_input(
     request: PreviewRequest,
 ) -> std::result::Result<InputValidationDto, String> {
-    validate_input_source(&request.source).map_err(|error| error.to_string())
+    validate_input_source_for_operation(&request.source, &request.operation)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1438,20 +1558,14 @@ fn prepare_new_batch(
     request: &StartRequest,
     batch_id: &str,
 ) -> Result<(JobCheckpoint, VaultFile)> {
-    let imports = read_input_accounts(&request.source)?;
+    let imports = read_input_accounts_for_operation(&request.source, &request.operation)?;
     if imports.is_empty() {
         bail!("Account Keeper input contains no accounts");
     }
     let mut vault = crate::account_keeper_store::load_vault()?;
     let now = SystemClock.now();
-    let checkpoint = merge_imports_and_checkpoint(
-        runtime,
-        &mut vault,
-        &imports,
-        request,
-        batch_id,
-        &now,
-    )?;
+    let checkpoint =
+        merge_imports_and_checkpoint(runtime, &mut vault, &imports, request, batch_id, &now)?;
     crate::account_keeper_store::save_vault(&vault)?;
     crate::account_keeper_store::save_job(&checkpoint)?;
     Ok((checkpoint, vault))
@@ -1496,11 +1610,11 @@ pub fn inspect_headless_recovery(source: &InputSource) -> Result<Option<Headless
             .iter()
             .find(|candidate| candidate.account_key == account_key)
         {
-            let replace = latest
-                .as_ref()
-                .is_none_or(|(updated_at, _, _): &(String, String, Option<String>)| {
+            let replace = latest.as_ref().is_none_or(
+                |(updated_at, _, _): &(String, String, Option<String>)| {
                     checkpoint.updated_at > *updated_at
-                });
+                },
+            );
             if replace {
                 latest = Some((
                     checkpoint.updated_at.clone(),
@@ -1567,8 +1681,8 @@ pub async fn run_headless_batch(
         events: Arc::new(NullEventSink),
     };
     let mut run = Box::pin(coordinator.run_batch(&batch_id, receiver));
-    let deadline = tokio::time::Instant::now()
-        + Duration::from_secs(timeout_seconds.clamp(30, 3600));
+    let deadline =
+        tokio::time::Instant::now() + Duration::from_secs(timeout_seconds.clamp(30, 3600));
     let mut poll = tokio::time::interval(Duration::from_millis(250));
     let mut stopped_for_manual = false;
     let mut timed_out = false;
@@ -1700,14 +1814,12 @@ pub async fn recover_headless_pending_credentials(
     if vault_account.password_state != PasswordState::Unknown {
         bail!("Account Keeper pending recovery is not required");
     }
-    let pending_password = vault_account
-        .pending_password
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("Account Keeper pending recovery password is unavailable"))?;
-    let batch_id = vault_account
-        .last_job_id
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("Account Keeper pending recovery checkpoint is unavailable"))?;
+    let pending_password = vault_account.pending_password.clone().ok_or_else(|| {
+        anyhow::anyhow!("Account Keeper pending recovery password is unavailable")
+    })?;
+    let batch_id = vault_account.last_job_id.clone().ok_or_else(|| {
+        anyhow::anyhow!("Account Keeper pending recovery checkpoint is unavailable")
+    })?;
     let runtime = HeadlessProfileRuntime;
     let profile_id = ensure_recovery_profile(
         &runtime,
@@ -1716,13 +1828,8 @@ pub async fn recover_headless_pending_credentials(
         vault_index,
         crate::account_keeper_store::save_vault,
     )?;
-    let now = verify_headless_password(
-        imported,
-        &profile_id,
-        &pending_password,
-        timeout_seconds,
-    )
-    .await?;
+    let now =
+        verify_headless_password(imported, &profile_id, &pending_password, timeout_seconds).await?;
 
     let mut checkpoint = crate::account_keeper_store::load_job(&batch_id)?;
     let checkpoint_account = checkpoint
@@ -1745,12 +1852,7 @@ pub async fn recover_headless_pending_credentials(
     account.password_state = PasswordState::Changed;
     account.last_verified_at = Some(now);
     account.last_status = Some("success".to_string());
-    persist_snapshot(
-        &mut checkpoint,
-        &vault,
-        &SystemClock,
-        &NullEventSink,
-    )?;
+    persist_snapshot(&mut checkpoint, &vault, &SystemClock, &NullEventSink)?;
     Ok(job_view_from_checkpoint(&checkpoint, &vault))
 }
 
@@ -1774,6 +1876,7 @@ async fn verify_headless_password(
             account: imported.account.clone(),
             current_password: candidate_password.to_string(),
             new_password: String::new(),
+            new_email: String::new(),
         })
         .await?;
 
@@ -1792,11 +1895,20 @@ async fn verify_headless_password(
                     bail!("Account Keeper credential recovery requires manual action");
                 }
                 Some(WorkerEvent::Failed { code }) => {
-                    bail!("Account Keeper credential recovery failed: {}", safe_error_code(&code));
+                    bail!(
+                        "Account Keeper credential recovery failed: {}",
+                        safe_error_code(&code)
+                    );
                 }
                 Some(WorkerEvent::PasswordSubmitRequired | WorkerEvent::PasswordChanged) => {
                     bail!("Account Keeper recovery worker attempted a password change");
                 }
+                Some(
+                    WorkerEvent::TotpEnrollmentSecret(_)
+                    | WorkerEvent::TotpChanged
+                    | WorkerEvent::EmailVerificationRequired
+                    | WorkerEvent::EmailChanged,
+                ) => bail!("Account Keeper recovery worker attempted a security change"),
                 None => bail!("Account Keeper credential recovery worker stopped"),
             }
         }
@@ -1810,7 +1922,9 @@ async fn verify_headless_password(
         Ok(result) => result,
         Err(_) => {
             let _ = session.send(WorkerCommand::Cancel).await;
-            Err(anyhow::anyhow!("Account Keeper credential recovery timed out"))
+            Err(anyhow::anyhow!(
+                "Account Keeper credential recovery timed out"
+            ))
         }
     };
     let _ = session.finish().await;
@@ -2086,6 +2200,7 @@ pub async fn resolve_critical(request: ManualControlRequest) -> Result<JobView> 
         normalized_account: normalize_account(&account),
         current_password: pending_password.clone(),
         totp_secret,
+        new_email: None,
     };
     let now = verify_headless_password(&imported, &profile_id, &pending_password, 300).await?;
 
@@ -2166,8 +2281,7 @@ pub async fn account_keeper_clean_progress(
     if !can_clean_checkpoint_status(&checkpoint.status) {
         return Err("only terminal Account Keeper progress can be cleaned".to_string());
     }
-    let mut vault =
-        crate::account_keeper_store::load_vault().map_err(|error| error.to_string())?;
+    let mut vault = crate::account_keeper_store::load_vault().map_err(|error| error.to_string())?;
     let forgotten_recovery_accounts = forget_unknown_recovery_accounts(&mut vault, &checkpoint);
     if forgotten_recovery_accounts > 0 {
         crate::account_keeper_store::save_vault(&vault).map_err(|error| error.to_string())?;
@@ -2275,7 +2389,10 @@ fn ensure_account_keeper_supported() -> Result<()> {
 
 pub(crate) fn validate_start_request(request: &StartRequest) -> Result<()> {
     validate_input_source_shape(&request.source)?;
-    if !matches!(request.operation.as_str(), "login" | "change_password") {
+    if !matches!(
+        request.operation.as_str(),
+        "login" | "change_password" | "change_totp" | "change_email"
+    ) {
         bail!("unsupported Account Keeper operation");
     }
     if !matches!(
@@ -2285,7 +2402,7 @@ pub(crate) fn validate_start_request(request: &StartRequest) -> Result<()> {
         bail!("unsupported Account Keeper adapter");
     }
     let operation = account_keeper_batch_operation(request);
-    if operation == BatchOperation::ChangePassword {
+    if operation != BatchOperation::Login {
         if request.output_path.trim().is_empty() {
             bail!("Account Keeper output path is required");
         }
@@ -2294,7 +2411,9 @@ pub(crate) fn validate_start_request(request: &StartRequest) -> Result<()> {
                 bail!("Account Keeper input and output paths must differ");
             }
         }
-        PasswordTemplate::parse(&request.template)?;
+        if operation == BatchOperation::ChangePassword {
+            PasswordTemplate::parse(&request.template)?;
+        }
     } else if let InputSource::File { path } = &request.source {
         // Login mode may still specify an output path; if it does, guard the
         // same input==output collision.
@@ -2419,7 +2538,10 @@ fn account_keeper_profile_notes(vault_account: &VaultAccount) -> String {
             "{}|{}|{}",
             vault_account.account, vault_account.current_password, secret
         ),
-        _ => format!("{}|{}", vault_account.account, vault_account.current_password),
+        _ => format!(
+            "{}|{}",
+            vault_account.account, vault_account.current_password
+        ),
     }
 }
 
@@ -2444,6 +2566,10 @@ fn terminal_outcome(state: &AccountRunState) -> AccountOutcome {
         AccountStage::Cancelled => AccountOutcome::Cancelled,
         _ => AccountOutcome::Failed,
     }
+}
+
+fn security_failure_is_critical(operation: &str, submission_started: bool) -> bool {
+    submission_started && matches!(operation, "change_totp" | "change_email")
 }
 
 fn spawn_batch(
@@ -2480,10 +2606,10 @@ impl Coordinator {
     ) -> Result<()> {
         let mut checkpoint = crate::account_keeper_store::load_job(batch_id)?;
         let mut vault = crate::account_keeper_store::load_vault()?;
-        let template = if checkpoint.operation == "login" {
-            None
-        } else {
+        let template = if checkpoint.operation == "change_password" {
             Some(PasswordTemplate::parse(&checkpoint.template)?)
+        } else {
+            None
         };
         let mut random = OsRandom;
         let mut used_passwords: HashSet<String> = vault
@@ -2538,13 +2664,13 @@ impl Coordinator {
                 }
             }
 
-            let pending_password = if checkpoint.operation == "login" {
-                String::new()
-            } else {
+            let pending_password = if checkpoint.operation == "change_password" {
                 template
                     .as_ref()
                     .expect("change_password requires template")
                     .generate(&mut random, &mut used_passwords)?
+            } else {
+                String::new()
             };
             let outcome = self
                 .process_account(
@@ -2675,11 +2801,17 @@ impl Coordinator {
             };
 
             let request_id = uuid::Uuid::new_v4().to_string();
-            let worker_operation = if checkpoint.operation == "login" {
-                "verify_credentials"
-            } else {
-                "change_password"
+            let worker_operation = match checkpoint.operation.as_str() {
+                "login" => "verify_credentials",
+                "change_totp" => "change_totp",
+                "change_email" => "change_email",
+                _ => "change_password",
             };
+            let new_email = vault
+                .pending_security_changes
+                .get(&account_key)
+                .and_then(|change| change.new_email.clone())
+                .unwrap_or_default();
             let start = WorkerStart {
                 request_id,
                 operation: worker_operation.to_string(),
@@ -2688,6 +2820,7 @@ impl Coordinator {
                 account: vault.accounts[vault_index].account.clone(),
                 current_password: vault.accounts[vault_index].current_password.clone(),
                 new_password: pending_password.to_string(),
+                new_email,
             };
             let mut session = match self.workers.spawn(start).await {
                 Ok(session) => session,
@@ -2720,6 +2853,7 @@ impl Coordinator {
             };
 
             let mut waiting_manual = false;
+            let mut security_submission_started = false;
             let mut controls_open = true;
             loop {
                 tokio::select! {
@@ -2857,6 +2991,59 @@ impl Coordinator {
                                     self.events.as_ref(),
                                 )?;
                             }
+                            WorkerEvent::TotpEnrollmentSecret(secret) => {
+                                let change = vault
+                                    .pending_security_changes
+                                    .entry(account_key.clone())
+                                    .or_default();
+                                change.new_totp_secret = Some(secret.clone());
+                                persist_snapshot(
+                                    checkpoint,
+                                    vault,
+                                    self.clock.as_ref(),
+                                    self.events.as_ref(),
+                                )?;
+                                session
+                                    .send(WorkerCommand::TotpEnrollmentCode(totp_now(&secret)?))
+                                    .await?;
+                                security_submission_started = true;
+                            }
+                            WorkerEvent::TotpChanged => {
+                                security_submission_started = true;
+                            }
+                            WorkerEvent::EmailVerificationRequired => {
+                                security_submission_started = true;
+                                let new_email = vault
+                                    .pending_security_changes
+                                    .get(&account_key)
+                                    .and_then(|change| change.new_email.clone())
+                                    .ok_or_else(|| anyhow::anyhow!("Account Keeper new email is unavailable"))?;
+                                if let Some(code) = crate::account_keeper_mailbox::fetch_code(
+                                    &checkpoint.batch_id,
+                                    &new_email,
+                                ).await? {
+                                    session.send(WorkerCommand::EmailVerificationCode(code)).await?;
+                                } else {
+                                    waiting_manual = true;
+                                    checkpoint.status = "waiting_manual".to_string();
+                                    record_account_state(
+                                        checkpoint,
+                                        account_index,
+                                        &state,
+                                        Some("email_verification"),
+                                        &self.clock.now(),
+                                    );
+                                    persist_snapshot(
+                                        checkpoint,
+                                        vault,
+                                        self.clock.as_ref(),
+                                        self.events.as_ref(),
+                                    )?;
+                                }
+                            }
+                            WorkerEvent::EmailChanged => {
+                                security_submission_started = true;
+                            }
                             WorkerEvent::Verified => {
                                 if checkpoint.operation == "login" {
                                     apply_login_verified(
@@ -2864,7 +3051,7 @@ impl Coordinator {
                                         &mut vault.accounts[vault_index],
                                         &self.clock.now(),
                                     )?;
-                                } else {
+                                } else if checkpoint.operation == "change_password" {
                                     apply_worker_event(
                                         &mut state,
                                         &mut vault.accounts[vault_index],
@@ -2872,6 +3059,29 @@ impl Coordinator {
                                         WorkerEvent::Verified,
                                         &self.clock.now(),
                                     )?;
+                                } else {
+                                    state.transition(AccountEvent::SecurityVerified)?;
+                                    let pending = vault
+                                        .pending_security_changes
+                                        .remove(&account_key)
+                                        .ok_or_else(|| anyhow::anyhow!("Account Keeper pending security change is missing"))?;
+                                    if checkpoint.operation == "change_totp" {
+                                        vault.accounts[vault_index].totp_secret = pending.new_totp_secret;
+                                    } else if let Some(new_email) = pending.new_email {
+                                        let normalized = normalize_account(&new_email);
+                                        let new_key = stable_account_key(&normalized);
+                                        if vault.accounts.iter().enumerate().any(|(index, account)| {
+                                            index != vault_index && account.account_key == new_key
+                                        }) {
+                                            bail!("Account Keeper new email is already mapped");
+                                        }
+                                        vault.accounts[vault_index].account = new_email;
+                                        vault.accounts[vault_index].account_key = new_key.clone();
+                                        checkpoint.accounts[account_index].account_key = new_key.clone();
+                                        state.account_key = new_key;
+                                    }
+                                    vault.accounts[vault_index].last_verified_at = Some(self.clock.now());
+                                    vault.accounts[vault_index].last_status = Some("success".to_string());
                                 }
                                 label_account_profile(
                                     self.profiles.as_ref(),
@@ -2904,6 +3114,29 @@ impl Coordinator {
                                 return Ok(AccountOutcome::Success);
                             }
                             WorkerEvent::Failed { code } => {
+                                if security_failure_is_critical(
+                                    &checkpoint.operation,
+                                    security_submission_started,
+                                ) {
+                                    state.stage = AccountStage::Critical;
+                                    vault.accounts[vault_index].last_status = Some("critical".to_string());
+                                    record_account_state(
+                                        checkpoint,
+                                        account_index,
+                                        &state,
+                                        Some("security_state_unknown"),
+                                        &self.clock.now(),
+                                    );
+                                    checkpoint.status = "critical".to_string();
+                                    persist_snapshot(
+                                        checkpoint,
+                                        vault,
+                                        self.clock.as_ref(),
+                                        self.events.as_ref(),
+                                    )?;
+                                    let _ = session.finish().await;
+                                    return Ok(AccountOutcome::Critical);
+                                }
                                 let retry_navigation = code == "navigation_failed"
                                     && state.password_state != PasswordState::Unknown
                                     && navigation_retries < 2;
@@ -3008,6 +3241,13 @@ impl Coordinator {
                             JobControl::MarkFailed { .. } if waiting_manual => {
                                 if route_manual_control(&account_key, &control) == Some(ManualDecision::MarkFailed) {
                                     let _ = session.send(WorkerCommand::Cancel).await;
+                                    if security_failure_is_critical(
+                                        &checkpoint.operation,
+                                        security_submission_started,
+                                    ) {
+                                        state.stage = AccountStage::Critical;
+                                        vault.accounts[vault_index].last_status = Some("critical".to_string());
+                                    } else {
                                     apply_worker_event(
                                         &mut state,
                                         &mut vault.accounts[vault_index],
@@ -3015,6 +3255,7 @@ impl Coordinator {
                                         WorkerEvent::Failed { code: "manual_marked_failed".to_string() },
                                         &self.clock.now(),
                                     )?;
+                                    }
                                     let outcome = terminal_outcome(&state);
                                     let critical = outcome == AccountOutcome::Critical;
                                     record_account_state(
@@ -3044,11 +3285,21 @@ impl Coordinator {
                             }
                             JobControl::Cancel => {
                                 let _ = session.send(WorkerCommand::Cancel).await;
-                                let code = if state.password_state == PasswordState::Unknown {
+                                let security_critical = security_failure_is_critical(
+                                    &checkpoint.operation,
+                                    security_submission_started,
+                                );
+                                let code = if security_critical {
+                                    "security_state_unknown"
+                                } else if state.password_state == PasswordState::Unknown {
                                     "credential_state_unknown"
                                 } else {
                                     "cancelled"
                                 };
+                                if security_critical {
+                                    state.stage = AccountStage::Critical;
+                                    vault.accounts[vault_index].last_status = Some("critical".to_string());
+                                } else {
                                 apply_worker_event(
                                     &mut state,
                                     &mut vault.accounts[vault_index],
@@ -3056,6 +3307,7 @@ impl Coordinator {
                                     WorkerEvent::Failed { code: code.to_string() },
                                     &self.clock.now(),
                                 )?;
+                                }
                                 let critical = state.stage == AccountStage::Critical;
                                 record_account_state(
                                     checkpoint,
@@ -3103,6 +3355,11 @@ fn account_stage_name(stage: AccountStage) -> &'static str {
         AccountStage::SubmittingTotp => "submitting_totp",
         AccountStage::ChangingPassword => "changing_password",
         AccountStage::VerifyingNewPassword => "verifying_new_password",
+        AccountStage::ChangingTotp => "changing_totp",
+        AccountStage::VerifyingNewTotp => "verifying_new_totp",
+        AccountStage::ChangingEmail => "changing_email",
+        AccountStage::WaitingEmailVerification => "waiting_email_verification",
+        AccountStage::VerifyingNewEmail => "verifying_new_email",
         AccountStage::WaitingManual => "waiting_manual",
         AccountStage::Success => "success",
         AccountStage::Failed => "failed",
@@ -3439,8 +3696,7 @@ fn managed_profile_views(
         .accounts
         .iter()
         .filter(|account| {
-            account.last_status.as_deref() == Some("success")
-                && account.last_verified_at.is_some()
+            account.last_status.as_deref() == Some("success") && account.last_verified_at.is_some()
         })
         .map(|account| {
             let last_verified_at = account.last_verified_at.clone();
@@ -3532,6 +3788,12 @@ pub fn apply_worker_event(
             state.transition(AccountEvent::PasswordChanged)?;
             vault.last_status = Some("credential_state_unknown".to_string());
         }
+        WorkerEvent::TotpEnrollmentSecret(_)
+        | WorkerEvent::TotpChanged
+        | WorkerEvent::EmailVerificationRequired
+        | WorkerEvent::EmailChanged => {
+            bail!("Account Keeper security event requires operation coordinator handling");
+        }
         WorkerEvent::Verified => {
             if !is_verification_stage(state.stage)
                 || state.password_state != PasswordState::Unknown
@@ -3620,7 +3882,9 @@ mod tests {
     #[test]
     fn defaults_use_valid_template_and_documents_output_path() {
         let document_dir = test_dir("defaults").join("Documents");
-        let expected_output_path = document_dir.join("output").join("account-keeper-result.json");
+        let expected_output_path = document_dir
+            .join("output")
+            .join("account-keeper-result.json");
 
         let defaults = default_config_for(&document_dir).unwrap();
 
@@ -3829,7 +4093,9 @@ mod tests {
     #[test]
     fn start_request_rejects_unknown_operation() {
         let request = StartRequest {
-            source: InputSource::Inline { text: "a@b.test|pw|".into() },
+            source: InputSource::Inline {
+                text: "a@b.test|pw|".into(),
+            },
             output_path: "C:/synthetic/result.json".into(),
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
@@ -3843,7 +4109,9 @@ mod tests {
     #[test]
     fn start_request_login_operation_skips_template_and_output() {
         let request = StartRequest {
-            source: InputSource::Inline { text: "a@b.test|pw|".into() },
+            source: InputSource::Inline {
+                text: "a@b.test|pw|".into(),
+            },
             output_path: String::new(),
             template: String::new(),
             adapter_id: "fixture-v1".into(),
@@ -3852,13 +4120,18 @@ mod tests {
             pause_after_current: false,
         };
         assert!(validate_start_request(&request).is_ok());
-        assert_eq!(account_keeper_batch_operation(&request), BatchOperation::Login);
+        assert_eq!(
+            account_keeper_batch_operation(&request),
+            BatchOperation::Login
+        );
     }
 
     #[test]
     fn start_request_change_password_still_requires_template_and_output() {
         let request = StartRequest {
-            source: InputSource::Inline { text: "a@b.test|pw|".into() },
+            source: InputSource::Inline {
+                text: "a@b.test|pw|".into(),
+            },
             output_path: String::new(),
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
@@ -4027,6 +4300,7 @@ mod tests {
     fn managed_profiles_include_only_verified_successes_without_secrets() {
         let vault = VaultFile {
             schema_version: crate::account_keeper_store::SCHEMA_VERSION,
+            pending_security_changes: Default::default(),
             accounts: vec![
                 VaultAccount {
                     account_key: "success-key".into(),
@@ -4056,11 +4330,7 @@ mod tests {
         };
         let running = std::collections::HashSet::from(["profile-success".to_string()]);
 
-        let profiles = managed_profile_views(
-            &vault,
-            &running,
-            "http://127.0.0.1:40325",
-        );
+        let profiles = managed_profile_views(&vault, &running, "http://127.0.0.1:40325");
 
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].profile_id, "profile-success");
@@ -4081,6 +4351,7 @@ mod tests {
     fn managed_profiles_include_login_only_with_rotated_false() {
         let vault = VaultFile {
             schema_version: SCHEMA_VERSION,
+            pending_security_changes: Default::default(),
             accounts: vec![
                 VaultAccount {
                     account_key: "rotated-key".into(),
@@ -4109,8 +4380,7 @@ mod tests {
             ],
         };
         let running: HashSet<String> = HashSet::new();
-        let profiles =
-            managed_profile_views(&vault, &running, "http://127.0.0.1:40325/");
+        let profiles = managed_profile_views(&vault, &running, "http://127.0.0.1:40325/");
         assert_eq!(profiles.len(), 2);
         let login = profiles
             .iter()
@@ -4151,6 +4421,7 @@ mod tests {
     fn clean_progress_forgets_only_matching_unknown_recovery_accounts() {
         let mut vault = VaultFile {
             schema_version: 1,
+            pending_security_changes: Default::default(),
             accounts: vec![
                 VaultAccount {
                     account_key: "unknown-key".into(),
@@ -4711,6 +4982,14 @@ mod tests {
         assert_eq!(terminal_outcome(&state), AccountOutcome::Critical);
     }
 
+    #[test]
+    fn security_failure_is_critical_after_submission_starts() {
+        assert!(security_failure_is_critical("change_totp", true));
+        assert!(security_failure_is_critical("change_email", true));
+        assert!(!security_failure_is_critical("change_totp", false));
+        assert!(!security_failure_is_critical("change_password", true));
+    }
+
     #[cfg(windows)]
     #[test]
     fn backend_support_guard_allows_windows() {
@@ -4868,6 +5147,26 @@ mod tests {
                 "request_id": "req_1",
             })
         );
+    }
+
+    #[test]
+    fn login_worker_start_omits_change_email_field() {
+        let value = worker_start_value(&WorkerStart {
+            request_id: "req_1".into(),
+            operation: "verify_credentials".into(),
+            adapter_id: "fixture-v1".into(),
+            cdp_endpoint: "http://127.0.0.1:9222".into(),
+            account: "owner@example.test".into(),
+            current_password: "current-password".into(),
+            new_password: String::new(),
+            new_email: String::new(),
+        });
+
+        assert_eq!(
+            value.get("operation").and_then(|item| item.as_str()),
+            Some("verify_credentials")
+        );
+        assert!(value.get("new_email").is_none());
     }
 
     #[test]

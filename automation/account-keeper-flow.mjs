@@ -68,6 +68,15 @@ export async function runAccountFlow({
       control: commandControl,
     });
 
+    if (request.operation === "change_totp") {
+      await changeTotp({ pageSource, adapter, request, send, control: commandControl });
+      return;
+    }
+    if (request.operation === "change_email") {
+      await changeEmail({ pageSource, adapter, request, send, control: commandControl });
+      return;
+    }
+
     commandControl.throwIfCancelled();
     await send({ type: "stage", stage: "changing_password" });
     await runPageAction({
@@ -135,6 +144,78 @@ export async function runAccountFlow({
       : normalizeFailureCode(error);
     await send({ type: "failed", code, message: "ignored" });
   }
+}
+
+async function changeTotp({ pageSource, adapter, request, send, control }) {
+  await send({ type: "stage", stage: "changing_totp" });
+  await runPageAction({
+    pageSource,
+    adapter,
+    control,
+    action: (page) => adapter.openTotpChange(page, { control }),
+  });
+  const enrollment = await runPageRead({
+    pageSource,
+    adapter,
+    control,
+    read: (page) => adapter.readTotpEnrollment(page, { control }),
+  });
+  await send({ type: "totp_enrollment_secret", value: enrollment });
+  const command = await waitForExpected(control, "totp_enrollment_code", request.request_id);
+  await send({ type: "stage", stage: "verifying_new_totp" });
+  await runPageAction({
+    pageSource,
+    adapter,
+    control,
+    action: (page) => adapter.submitTotpEnrollment(page, command.code, { control }),
+  });
+  const verified = await runPageRead({
+    pageSource,
+    adapter,
+    control,
+    read: (page) => adapter.verifyTotpChanged(page, { control }),
+  });
+  if (!verified) throw flowError("verification_failed");
+  await send({ type: "totp_changed" });
+  await send({ type: "verified" });
+}
+
+async function changeEmail({ pageSource, adapter, request, send, control }) {
+  await send({ type: "stage", stage: "changing_email" });
+  await runPageAction({
+    pageSource,
+    adapter,
+    control,
+    action: (page) => adapter.openEmailChange(page, { control }),
+  });
+  await runPageAction({
+    pageSource,
+    adapter,
+    control,
+    action: (page) => adapter.submitEmailChange(page, request.new_email, { control }),
+  });
+  await send({ type: "stage", stage: "waiting_email_verification" });
+  await send({ type: "email_verification_required" });
+  const command = await control.waitForAny(["email_verification_code", "resume"]);
+  control.throwIfCancelled();
+  if (command.type === "email_verification_code") {
+    await runPageAction({
+      pageSource,
+      adapter,
+      control,
+      action: (page) => adapter.submitEmailVerification(page, command.code, { control }),
+    });
+  }
+  await send({ type: "stage", stage: "verifying_new_email" });
+  const verified = await runPageRead({
+    pageSource,
+    adapter,
+    control,
+    read: (page) => adapter.verifyEmailChanged(page, request.new_email, { control }),
+  });
+  if (!verified) throw flowError("verification_failed");
+  await send({ type: "email_changed" });
+  await send({ type: "verified" });
 }
 
 async function verifyCredentials({
@@ -623,9 +704,18 @@ function normalizeControl(control, waitForCommand) {
   if (
     control &&
     typeof control.throwIfCancelled === "function" &&
-    typeof control.waitFor === "function"
+    (typeof control.waitFor === "function" || typeof control.waitForAny === "function")
   ) {
-    return control;
+    return {
+      ...control,
+      throwIfCancelled: control.throwIfCancelled.bind(control),
+      waitFor: typeof control.waitFor === "function"
+        ? control.waitFor.bind(control)
+        : async (type) => control.waitForAny([type]),
+      waitForAny: typeof control.waitForAny === "function"
+        ? control.waitForAny.bind(control)
+        : async (types) => control.waitFor(types[0]),
+    };
   }
   if (typeof waitForCommand !== "function") {
     throw flowError("protocol_error");
@@ -633,6 +723,7 @@ function normalizeControl(control, waitForCommand) {
   return {
     throwIfCancelled() {},
     waitFor: () => waitForCommand(),
+    waitForAny: () => waitForCommand(),
   };
 }
 

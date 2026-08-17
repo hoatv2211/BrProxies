@@ -1,6 +1,7 @@
 use crate::{dpapi, store};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -42,6 +43,16 @@ pub struct VaultAccount {
 pub struct VaultFile {
     pub schema_version: u32,
     pub accounts: Vec<VaultAccount>,
+    #[serde(default)]
+    pub pending_security_changes: HashMap<String, PendingSecurityChange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PendingSecurityChange {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_totp_secret: Option<String>,
 }
 
 impl Default for VaultFile {
@@ -49,6 +60,7 @@ impl Default for VaultFile {
         Self {
             schema_version: SCHEMA_VERSION,
             accounts: Vec::new(),
+            pending_security_changes: HashMap::new(),
         }
     }
 }
@@ -58,6 +70,7 @@ impl VaultFile {
         Self {
             schema_version: SCHEMA_VERSION,
             accounts: vec![account],
+            pending_security_changes: HashMap::new(),
         }
     }
 }

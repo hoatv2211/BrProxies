@@ -154,6 +154,78 @@ export const fixtureAdapter = {
     control?.throwIfCancelled?.();
   },
 
+  async openTotpChange(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "open_totp_change" });
+      return;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async readTotpEnrollment(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "read_totp_enrollment" });
+      return "JBSWY3DPEHPK3PXP";
+    }
+    throw codedError("flow_changed");
+  },
+
+  async submitTotpEnrollment(page, code, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "submit_totp_enrollment", code });
+      return;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async verifyTotpChanged(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "verify_totp_changed" });
+      return true;
+    }
+    return false;
+  },
+
+  async openEmailChange(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "open_email_change" });
+      return;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async submitEmailChange(page, email, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "submit_email_change", email });
+      return;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async submitEmailVerification(page, code, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "submit_email_verification", code });
+      return;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async verifyEmailChanged(page, email, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "verify_email_changed", email });
+      return true;
+    }
+    return false;
+  },
+
   async logout(page, { control } = {}) {
     if (isSyntheticPage(page)) {
       page.actions.push({ type: "logout" });

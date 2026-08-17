@@ -41,6 +41,51 @@ test("parses credential verification operation without a new password", () => {
   assert.equal(message.operation, "verify_credentials");
 });
 
+test("parses change email operation with a new email", () => {
+  const message = parseInbound(JSON.stringify({
+    ...validStart(),
+    operation: "change_email",
+    new_password: "",
+    new_email: "synthetic-new@example.test",
+  }));
+  assert.equal(message.operation, "change_email");
+  assert.equal(message.new_email, "synthetic-new@example.test");
+});
+
+test("parses change 2FA operation without a new password", () => {
+  const message = parseInbound(JSON.stringify({
+    ...validStart(),
+    operation: "change_totp",
+    new_password: "",
+  }));
+  assert.equal(message.operation, "change_totp");
+});
+
+test("allows a strict TOTP enrollment secret event", () => {
+  const message = sanitizeOutbound({
+    protocol_version: 1,
+    type: "totp_enrollment_secret",
+    request_id: "req_1",
+    value: "JBSWY3DPEHPK3PXP",
+  });
+  assert.equal(message.value, "JBSWY3DPEHPK3PXP");
+});
+
+test("parses TOTP enrollment and email verification commands", () => {
+  assert.equal(parseInbound(JSON.stringify({
+    protocol_version: 1,
+    type: "totp_enrollment_code",
+    request_id: "req_1",
+    code: "123456",
+  })).code, "123456");
+  assert.equal(parseInbound(JSON.stringify({
+    protocol_version: 1,
+    type: "email_verification_code",
+    request_id: "req_1",
+    code: "654321",
+  })).code, "654321");
+});
+
 test("parses explicit password submit authorization", () => {
   const message = {
     protocol_version: 1,

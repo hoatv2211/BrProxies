@@ -459,6 +459,94 @@ export const openaiChatgptAdapter = {
     akDebug("password_change_submitted", {});
   },
 
+  async openTotpChange(page, { control } = {}) {
+    await openSettingsTarget(page, this, {
+      tabLocators: [
+        page.locator('[data-testid="security-tab"]'),
+        page.getByRole("tab", { name: /security( and login)?|bảo mật/i }),
+      ],
+      targetLocators: [
+        page.locator('[data-testid="mfa-setting"], [data-testid="two-factor-setting"]'),
+        page.getByRole("button", { name: /multi-factor|two-factor|2fa|mfa|authenticator/i }),
+      ],
+      readyLocators: [totpEnrollmentSecret(page), oneTimeCode(page)],
+      control,
+    });
+  },
+
+  async readTotpEnrollment(page, { control } = {}) {
+    checkControl(control);
+    const locator = await firstVisible([totpEnrollmentSecret(page)]);
+    if (!locator) throw adapterError("flow_changed");
+    const raw = typeof locator.inputValue === "function"
+      ? await locator.inputValue().catch(() => "")
+      : "";
+    const text = raw || await locator.textContent().catch(() => "");
+    const secret = String(text).replace(/[\s-]+/g, "").toUpperCase();
+    if (!/^[A-Z2-7]{16,256}$/.test(secret)) throw adapterError("flow_changed");
+    return secret;
+  },
+
+  async submitTotpEnrollment(page, code, { control } = {}) {
+    const input = oneTimeCode(page);
+    if (!(await visible(input))) throw adapterError("flow_changed");
+    await browserSideEffect(control, () => input.fill(code));
+    await clickFirstVisible([
+      page.getByRole("button", { name: /^(verify|confirm|enable|continue|xác minh|xác nhận|tiếp tục)$/i }),
+      submitControl(page),
+    ], control);
+  },
+
+  async verifyTotpChanged(page, { control } = {}) {
+    checkControl(control);
+    return anyVisible([
+      page.getByRole("status").filter({ hasText: /multi-factor|two-factor|2fa|mfa|authenticator/i }),
+      page.getByText(/multi-factor authentication is on|two-factor authentication is on|authenticator.*enabled/i),
+      page.getByRole("button", { name: /disable|remove|reset.*(multi-factor|two-factor|2fa|mfa|authenticator)/i }),
+    ]);
+  },
+
+  async openEmailChange(page, { control } = {}) {
+    await openSettingsTarget(page, this, {
+      tabLocators: [
+        page.locator('[data-testid="account-tab"]'),
+        page.getByRole("tab", { name: /^(account|tài khoản)$/i }),
+      ],
+      targetLocators: [
+        page.locator('[data-testid="email-setting"]'),
+        page.getByRole("button", { name: /^(email|email address|địa chỉ email)/i }),
+      ],
+      readyLocators: [emailInput(page)],
+      control,
+    });
+  },
+
+  async submitEmailChange(page, email, { control } = {}) {
+    const input = emailInput(page);
+    if (!(await visible(input))) throw adapterError("flow_changed");
+    await browserSideEffect(control, () => input.fill(email));
+    await clickFirstVisible([
+      page.getByRole("button", { name: /^(continue|save|update email|change email|tiếp tục|lưu)$/i }),
+      submitControl(page),
+    ], control);
+    await waitForAny(page, [oneTimeCode(page), page.getByText(/check your email|verify.*email/i)], 15_000, control);
+  },
+
+  async submitEmailVerification(page, code, { control } = {}) {
+    const input = oneTimeCode(page);
+    if (!(await visible(input))) throw adapterError("flow_changed");
+    await browserSideEffect(control, () => input.fill(code));
+    await clickFirstVisible([
+      page.getByRole("button", { name: /^(verify|confirm|continue|xác minh|xác nhận|tiếp tục)$/i }),
+      submitControl(page),
+    ], control);
+  },
+
+  async verifyEmailChanged(page, email, { control } = {}) {
+    checkControl(control);
+    return visible(page.getByText(email, { exact: true }));
+  },
+
   async logout(page, { control } = {}) {
     checkControl(control);
     const state = await this.classify(page);
@@ -643,6 +731,44 @@ function oneTimeCode(page) {
   return page
     .locator('input[autocomplete="one-time-code"], input[inputmode="numeric"][maxlength="6"]')
     .first();
+}
+
+function totpEnrollmentSecret(page) {
+  return page.locator(
+    '[data-testid="totp-secret"], [data-testid="mfa-secret"], input[readonly][value], code',
+  ).first();
+}
+
+async function openSettingsTarget(page, adapter, {
+  tabLocators,
+  targetLocators,
+  readyLocators,
+  control,
+}) {
+  checkControl(control);
+  if (await adapter.classify(page) !== "signed_in") throw adapterError("flow_changed");
+  await dismissBlockingDialog(page, control);
+  const settingsLocators = [
+    page.locator('[data-testid="settings-menu-item"]'),
+    page.getByRole("menuitem", { name: /^(settings|cài đặt)$/i }),
+    page.getByRole("button", { name: /^(settings|cài đặt)$/i }),
+  ];
+  let settings = await firstVisible(settingsLocators);
+  if (!settings) {
+    const menu = await firstVisible(accountMenuLocators(page));
+    if (!menu) throw adapterError("flow_changed");
+    await browserSideEffect(control, () => menu.click({ force: true }));
+    await waitForAny(page, settingsLocators, 5_000, control);
+    settings = await firstVisible(settingsLocators);
+  }
+  if (!settings) throw adapterError("flow_changed");
+  await browserSideEffect(control, () => settings.click());
+  await waitForAny(page, tabLocators, 5_000, control);
+  await clickFirstVisible(tabLocators, control);
+  await waitForAny(page, targetLocators, 5_000, control);
+  await clickFirstVisible(targetLocators, control);
+  await waitForAny(page, readyLocators, 15_000, control);
+  await adapter.assertAllowedOrigin(page);
 }
 
 function submitControl(page) {

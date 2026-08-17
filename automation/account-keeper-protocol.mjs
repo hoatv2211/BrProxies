@@ -20,13 +20,18 @@ const FAILURE_MESSAGES = new Map([
   ["worker_not_ready", "Browser flow is not provisioned"],
 ]);
 const ADAPTER_IDS = new Set(["fixture-v1", "openai-chatgpt-v1"]);
-const OPERATIONS = new Set(["change_password", "verify_credentials"]);
+const OPERATIONS = new Set(["change_password", "verify_credentials", "change_totp", "change_email"]);
 const STAGES = new Set([
   "launching",
   "logging_in",
   "submitting_totp",
   "changing_password",
   "verifying_new_password",
+  "changing_totp",
+  "verifying_new_totp",
+  "changing_email",
+  "waiting_email_verification",
+  "verifying_new_email",
   "waiting_manual",
 ]);
 const MANUAL_REASONS = new Set([
@@ -62,8 +67,11 @@ const INBOUND_FIELDS = {
     "account",
     "current_password",
     "new_password",
+    "new_email",
   ]),
   totp_code: new Set(["protocol_version", "type", "request_id", "code"]),
+  totp_enrollment_code: new Set(["protocol_version", "type", "request_id", "code"]),
+  email_verification_code: new Set(["protocol_version", "type", "request_id", "code"]),
   submit_password: new Set(["protocol_version", "type", "request_id"]),
   resume: new Set(["protocol_version", "type", "request_id"]),
   cancel: new Set(["protocol_version", "type", "request_id"]),
@@ -81,6 +89,10 @@ const OUTBOUND_FIELDS = {
   ]),
   password_submit_required: new Set(["protocol_version", "type", "request_id"]),
   password_changed: new Set(["protocol_version", "type", "request_id"]),
+  totp_enrollment_secret: new Set(["protocol_version", "type", "request_id", "value"]),
+  totp_changed: new Set(["protocol_version", "type", "request_id"]),
+  email_verification_required: new Set(["protocol_version", "type", "request_id"]),
+  email_changed: new Set(["protocol_version", "type", "request_id"]),
   verified: new Set(["protocol_version", "type", "request_id"]),
   failed: new Set([
     "protocol_version",
@@ -122,13 +134,20 @@ export function parseInbound(line) {
       assertString(
         message.new_password,
         "new_password",
-        message.operation === "verify_credentials" ? 0 : 12,
+        (message.operation ?? "change_password") === "change_password" ? 12 : 0,
         128,
       );
+      if (message.operation === "change_email") {
+        assertString(message.new_email, "new_email", 3, 320);
+      } else if (message.new_email !== undefined) {
+        throw new Error("new_email is only valid for change_email");
+      }
       break;
     case "totp_code":
+    case "totp_enrollment_code":
+    case "email_verification_code":
       if (typeof message.code !== "string" || !/^\d{6}$/.test(message.code)) {
-        throw new Error("code must be a six-digit TOTP value");
+        throw new Error("code must be a six-digit value");
       }
       break;
     case "submit_password":
@@ -170,7 +189,13 @@ export function sanitizeOutbound(message) {
     case "totp_required":
     case "password_submit_required":
     case "password_changed":
+    case "totp_changed":
+    case "email_verification_required":
+    case "email_changed":
     case "verified":
+      break;
+    case "totp_enrollment_secret":
+      assertString(message.value, "value", 16, 256);
       break;
     default:
       throw new Error("unsupported outbound message type");
@@ -240,6 +265,9 @@ export function withPasswordSubmitAuthorization(control) {
 
   return {
     throwIfCancelled: () => control.throwIfCancelled(),
+    waitForAny(expectedTypes) {
+      return control.waitForAny(expectedTypes);
+    },
     waitFor(expectedType) {
       if (expectedType !== "submit_password") {
         return control.waitFor(expectedType);

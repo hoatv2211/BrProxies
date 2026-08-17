@@ -23,6 +23,11 @@ const resumableAccountStages = new Set<AccountStage>([
   "submitting_totp",
   "changing_password",
   "verifying_new_password",
+  "changing_totp",
+  "verifying_new_totp",
+  "changing_email",
+  "waiting_email_verification",
+  "verifying_new_email",
 ]);
 
 export function activeInputSource(draft: DraftState): InputSource {
@@ -47,8 +52,8 @@ export function canStart(draft: DraftState, jobs: readonly JobView[]): boolean {
   if (!draft.plaintextAcknowledged) return false;
   if (!draft.inputValidation || draft.inputValidation.validCount < 1) return false;
   if (draft.inputValidationRevision !== draft.inputRevision) return false;
+  if (draft.operation !== "login" && !draft.outputPath.trim()) return false;
   if (draft.operation === "change_password") {
-    if (!draft.outputPath.trim()) return false;
     if (!draft.templateValidation?.valid) return false;
   }
   return !jobs.some((job) => job.batchBlocked || !terminalJobStatuses.has(job.status));

@@ -1,4 +1,9 @@
-const PHASE_COMMANDS = new Set(["resume", "totp_code"]);
+const PHASE_COMMANDS = new Set([
+  "resume",
+  "totp_code",
+  "totp_enrollment_code",
+  "email_verification_code",
+]);
 
 export class CommandControl {
   constructor(requestId) {
@@ -28,7 +33,7 @@ export class CommandControl {
     if (
       this.cancelled ||
       !this.waiter ||
-      this.waiter.expectedType !== message.type
+      !this.waiter.expectedTypes.has(message.type)
     ) {
       return false;
     }
@@ -39,14 +44,23 @@ export class CommandControl {
   }
 
   waitFor(expectedType) {
-    if (!PHASE_COMMANDS.has(expectedType) || this.waiter) {
+    return this.waitForAny([expectedType]);
+  }
+
+  waitForAny(expectedTypes) {
+    const allowed = new Set(expectedTypes);
+    if (
+      allowed.size === 0 ||
+      [...allowed].some((type) => !PHASE_COMMANDS.has(type)) ||
+      this.waiter
+    ) {
       return Promise.reject(codedError("protocol_error"));
     }
     if (this.cancelled) {
       return Promise.resolve(this.cancelMessage);
     }
     return new Promise((resolve) => {
-      this.waiter = { expectedType, resolve };
+      this.waiter = { expectedTypes: allowed, resolve };
     });
   }
 

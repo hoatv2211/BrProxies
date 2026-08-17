@@ -163,6 +163,20 @@ describe("canStart operation modes", () => {
     expect(canStart({ ...loginDraft, plaintextAcknowledged: false }, [])).toBe(false);
     expect(canStart({ ...loginDraft, inputValidation: null }, [])).toBe(false);
   });
+
+  it.each(["change_totp", "change_email"] as const)(
+    "%s requires output but not a password template",
+    (operation) => {
+      const securityDraft: DraftState = {
+        ...validDraft,
+        operation,
+        templateText: "",
+        templateValidation: null,
+      };
+      expect(canStart(securityDraft, [])).toBe(true);
+      expect(canStart({ ...securityDraft, outputPath: "" }, [])).toBe(false);
+    },
+  );
 });
 
 describe("canResume", () => {

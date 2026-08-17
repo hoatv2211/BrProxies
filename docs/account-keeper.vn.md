@@ -18,6 +18,8 @@ dùng:
 - Account Keeper không giải hoặc bypass CAPTCHA, device approval, cảnh báo đăng
   nhập bất thường, email verification hay cơ chế bảo mật khác.
 - Tính năng không đăng nhập inbox và không tự động lấy nội dung email.
+- Khi đổi email, có thể dùng connector mailbox loopback do người vận hành cấu hình
+  để lấy mã sáu chữ số. Nếu connector không hoạt động, profile vẫn mở để xác minh thủ công.
 - Social login qua Google, Microsoft, Apple hoặc identity provider khác chưa
   được hỗ trợ trong MVP.
 - Tính năng không export cookie, browser session, authorization header, access
@@ -86,6 +88,15 @@ với mỗi record trên một dòng:
 account|current_password|optional_totp_secret
 ```
 
+Riêng **Change email**, thêm email mới ở field thứ tư:
+
+```text
+current_email|current_password|optional_totp_secret|new_email
+```
+
+Email đầu tiên dùng để tìm profile hiện tại. Field thứ tư là email mới và chỉ
+được ghi nhận sau khi provider xác minh thành công.
+
 Ví dụ synthetic bắt buộc:
 
 ```text
@@ -114,6 +125,8 @@ Quy tắc parser:
   không phân biệt hoa thường; space và hyphen bị bỏ qua; padding `=` hợp lệ ở
   cuối được chấp nhận.
 - Lỗi validation báo số dòng nhưng không lặp lại password hoặc TOTP secret.
+- Field thứ tư chỉ hợp lệ với **Change email**, phải là email hợp lệ và phải khác
+  email hiện tại sau khi normalize.
 
 Ví dụ password có delimiter bên trong:
 
@@ -160,20 +173,35 @@ Ví dụ không hợp lệ gồm thiếu placeholder, có hai placeholder, `{ran
 ## Bắt Đầu Batch
 
 1. Mở **Account Keeper** trong BrProxies.
-2. Giữ mode **Paste text** mặc định và dán mỗi record trên một dòng, hoặc bấm
+2. Chọn **Login GPT**, **Change password**, **Change 2FA** hoặc **Change email**.
+3. Giữ mode **Paste text** mặc định và dán mỗi record trên một dòng, hoặc bấm
    **Choose file**, sau đó bấm **Browse** dưới **Input file** và chọn file input
    plaintext UTF-8.
-3. Với text dán, bấm **Validate Input** để validate rõ ràng. File được validate
+4. Với text dán, bấm **Validate Input** để validate rõ ràng. File được validate
    ngay sau khi chọn.
-4. Giữ đường dẫn mặc định
+5. Với operation thay đổi, giữ đường dẫn mặc định
    `%USERPROFILE%\Documents\account-keeper-result.json`, hoặc bấm **Browse**
    dưới **Output file** để chọn đường dẫn output JSON plaintext khác.
-5. Nhập password template cho batch, rồi bấm **Validate Template**.
-6. Kiểm tra identity account đã mask, tổng số account đã parse và lỗi theo dòng.
-7. Xác nhận rằng input đang dùng chứa secret plaintext và output cũng vậy.
-8. Tùy chọn bật **Keep profile running after completion**. Mặc định toggle này
+6. Chỉ với **Change password**, nhập password template rồi bấm **Validate Template**.
+7. Kiểm tra identity account đã mask, tổng số account đã parse và lỗi theo dòng.
+8. Xác nhận rằng input đang dùng chứa secret plaintext và output cũng vậy.
+9. Tùy chọn bật **Keep profile running after completion**. Mặc định toggle này
    tắt.
-9. Bấm **Start Batch** và xác nhận thao tác đổi mật khẩu.
+10. Bấm **Start Batch** và xác nhận operation đã chọn.
+
+### Connector mailbox tùy chọn
+
+Cấu hình tại **Settings** > **Account Keeper email verification**. Endpoint phải
+dùng HTTP loopback và chỉ trả một trong các response sau:
+
+```json
+{"status":"code","code":"123456"}
+{"status":"pending"}
+{"status":"manual"}
+```
+
+Timeout, lỗi connector hoặc `manual` sẽ fallback sang **Continue** thủ công.
+Token connector chỉ nằm trong settings local, không gửi cho browser worker.
 
 Mỗi lần validate hoặc start đều gửi `request.source` qua IPC local từ React sang
 Tauri. Paste mode gửi `{ kind: "inline", text }`; file mode gửi
@@ -197,7 +225,7 @@ Với mỗi tài khoản, Account Keeper:
 2. Launch profile với CDP được bật.
 3. Start một Node/Patchright worker mới cho account.
 4. Classify session hiện tại. Nếu profile đã đăng nhập, worker bỏ qua việc nhập
-   credential và mở thẳng **Settings** > **Security and login** > **Password**.
+   credential và mở settings phù hợp với operation đã chọn.
    Nếu chưa đăng nhập, worker dùng email/password trực tiếp.
 5. Chỉ tạo TOTP local khi form TOTP đang hiển thị yêu cầu.
 6. Pause để người vận hành xử lý khi có security challenge.
@@ -208,8 +236,8 @@ Với mỗi tài khoản, Account Keeper:
 11. Stop profile nếu keep-profile toggle không bật, rồi mới chạy account tiếp
     theo.
 
-Stage bình thường gồm `queued`, `launching`, `logging_in`, `submitting_totp`,
-`changing_password`, `verifying_new_password` và `success`. State ngoại lệ gồm
+Stage bình thường còn có `changing_totp`, `verifying_new_totp`, `changing_email`,
+`waiting_email_verification`, `verifying_new_email` và `success`. State ngoại lệ gồm
 `waiting_manual`, `failed`, `critical` và `cancelled`.
 
 ## Điều Khiển Batch

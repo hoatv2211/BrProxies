@@ -5,6 +5,11 @@ export type AccountStage =
   | "submitting_totp"
   | "changing_password"
   | "verifying_new_password"
+  | "changing_totp"
+  | "verifying_new_totp"
+  | "changing_email"
+  | "waiting_email_verification"
+  | "verifying_new_email"
   | "waiting_manual"
   | "success"
   | "failed"
@@ -103,7 +108,7 @@ export interface ManagedProfileView {
 }
 
 export interface DraftState {
-  operation: "login" | "change_password";
+  operation: "login" | "change_password" | "change_totp" | "change_email";
   inputMode: InputMode;
   inputText: string;
   inputPath: string;

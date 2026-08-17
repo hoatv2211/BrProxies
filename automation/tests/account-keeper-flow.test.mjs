@@ -127,6 +127,59 @@ test("runs direct login, password change, logout, and verified re-login", async 
   assert.equal(page.actions[6].password, "Synthetic-New-Password-123!");
 });
 
+test("changes authenticator 2FA and verifies the new enrollment", async () => {
+  const page = createFixturePage(["login_ready", "signed_in"]);
+  const events = [];
+  await runAccountFlow({
+    page,
+    adapter: getAdapter("fixture-v1"),
+    request: { ...request(), operation: "change_totp", new_password: "" },
+    emit: (message) => events.push(message),
+    control: {
+      throwIfCancelled() {},
+      async waitFor(type) {
+        assert.equal(type, "totp_enrollment_code");
+        return { type, request_id: "req_1", code: "123456" };
+      },
+    },
+  });
+  assert.deepEqual(page.actions.map((action) => action.type), [
+    "open_login", "submit_credentials", "open_totp_change",
+    "read_totp_enrollment", "submit_totp_enrollment", "verify_totp_changed",
+  ]);
+  assert.equal(events.some((event) => event.type === "totp_enrollment_secret"), true);
+  assert.equal(events.at(-1).type, "verified");
+});
+
+test("changes email with connector code and verifies the new address", async () => {
+  const page = createFixturePage(["login_ready", "signed_in"]);
+  const events = [];
+  await runAccountFlow({
+    page,
+    adapter: getAdapter("fixture-v1"),
+    request: {
+      ...request(),
+      operation: "change_email",
+      new_password: "",
+      new_email: "synthetic-new@example.test",
+    },
+    emit: (message) => events.push(message),
+    control: {
+      throwIfCancelled() {},
+      async waitForAny(types) {
+        assert.deepEqual(types, ["email_verification_code", "resume"]);
+        return { type: "email_verification_code", request_id: "req_1", code: "654321" };
+      },
+    },
+  });
+  assert.deepEqual(page.actions.map((action) => action.type), [
+    "open_login", "submit_credentials", "open_email_change",
+    "submit_email_change", "submit_email_verification", "verify_email_changed",
+  ]);
+  assert.equal(events.some((event) => event.type === "email_verification_required"), true);
+  assert.equal(events.at(-1).type, "verified");
+});
+
 test("continues login when the email step has not submitted the password", async () => {
   const page = createFixturePage([
     "login_ready",
@@ -2410,6 +2463,103 @@ test("OpenAI password change uses an already-open account menu", async () => {
   await openaiChatgptAdapter.openPasswordChange(page);
 
   assert.deepEqual(actions, ["settings", "security", "password"]);
+});
+
+test("OpenAI adapter changes TOTP through explicit security settings", async () => {
+  let stage = "profile_menu";
+  const actions = [];
+  let submittedCode = null;
+  const locator = ({ visible = () => false, onClick, value = "", text = "", onFill } = {}) => ({
+    first() { return this; },
+    filter() { return this; },
+    async isVisible() { return Boolean(visible()); },
+    async count() { return 0; },
+    async click(options) { onClick?.(options); },
+    async fill(next) { onFill?.(next); },
+    async inputValue() { return value; },
+    async textContent() { return text; },
+  });
+  const hidden = () => locator();
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) {
+        return locator({ visible: () => stage === "profile_menu" });
+      }
+      if (selector.includes('data-testid="settings-menu-item"')) {
+        return locator({ visible: () => stage === "profile_menu", onClick: () => { actions.push("settings"); stage = "settings"; } });
+      }
+      if (selector.includes('data-testid="security-tab"')) {
+        return locator({ visible: () => stage === "settings", onClick: () => { actions.push("security"); stage = "security"; } });
+      }
+      if (selector.includes('data-testid="mfa-setting"')) {
+        return locator({ visible: () => stage === "security", onClick: () => { actions.push("mfa"); stage = "enrollment"; } });
+      }
+      if (selector.includes('data-testid="totp-secret"')) {
+        return locator({ visible: () => stage === "enrollment", value: "JBSW Y3DP EHPK 3PXP" });
+      }
+      if (selector.includes('autocomplete="one-time-code"')) {
+        return locator({ visible: () => stage === "enrollment", onFill: (code) => { submittedCode = code; } });
+      }
+      if (selector.includes('button[type="submit"]')) {
+        return locator({ visible: () => stage === "enrollment", onClick: () => { stage = "enabled"; } });
+      }
+      return hidden();
+    },
+    getByRole(role) {
+      if (role === "button" && stage === "enabled") return locator({ visible: () => true });
+      return hidden();
+    },
+    getByText() { return hidden(); },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.openTotpChange(page);
+  assert.equal(await openaiChatgptAdapter.readTotpEnrollment(page), "JBSWY3DPEHPK3PXP");
+  await openaiChatgptAdapter.submitTotpEnrollment(page, "123456");
+  assert.equal(submittedCode, "123456");
+  assert.equal(await openaiChatgptAdapter.verifyTotpChanged(page), true);
+  assert.deepEqual(actions, ["settings", "security", "mfa"]);
+});
+
+test("OpenAI adapter changes email through explicit account settings", async () => {
+  let stage = "profile_menu";
+  const actions = [];
+  let enteredEmail = null;
+  let enteredCode = null;
+  const locator = ({ visible = () => false, onClick, onFill } = {}) => ({
+    first() { return this; },
+    filter() { return this; },
+    async isVisible() { return Boolean(visible()); },
+    async count() { return 0; },
+    async click(options) { onClick?.(options); },
+    async fill(value) { onFill?.(value); },
+  });
+  const hidden = () => locator();
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) return locator({ visible: () => stage === "profile_menu" });
+      if (selector.includes('data-testid="settings-menu-item"')) return locator({ visible: () => stage === "profile_menu", onClick: () => { actions.push("settings"); stage = "settings"; } });
+      if (selector.includes('data-testid="account-tab"')) return locator({ visible: () => stage === "settings", onClick: () => { actions.push("account"); stage = "account"; } });
+      if (selector.includes('data-testid="email-setting"')) return locator({ visible: () => stage === "account", onClick: () => { actions.push("email"); stage = "email_form"; } });
+      if (selector.includes('autocomplete="username"')) return locator({ visible: () => stage === "email_form", onFill: (value) => { enteredEmail = value; } });
+      if (selector.includes('autocomplete="one-time-code"')) return locator({ visible: () => stage === "verification", onFill: (value) => { enteredCode = value; } });
+      if (selector.includes('button[type="submit"]')) return locator({ visible: () => stage === "email_form" || stage === "verification", onClick: () => { stage = stage === "email_form" ? "verification" : "changed"; } });
+      return hidden();
+    },
+    getByRole() { return hidden(); },
+    getByText(text) { return locator({ visible: () => stage === "changed" && text === "new@example.test" }); },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.openEmailChange(page);
+  await openaiChatgptAdapter.submitEmailChange(page, "new@example.test");
+  await openaiChatgptAdapter.submitEmailVerification(page, "654321");
+  assert.equal(await openaiChatgptAdapter.verifyEmailChanged(page, "new@example.test"), true);
+  assert.equal(enteredEmail, "new@example.test");
+  assert.equal(enteredCode, "654321");
+  assert.deepEqual(actions, ["settings", "account", "email"]);
 });
 
 test("emitted worker messages contain no credentials, tokens, HTML, or account", async () => {

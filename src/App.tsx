@@ -6,6 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { AccountKeeper } from "./account-keeper/AccountKeeper";
+import { deleteGroupFromRegistry, renameGroupInRegistry } from "./browser-groups";
 import "./App.css";
 
 // Host OS of the launcher window (never spoofed) — drives default OS tab + titlebar.
@@ -244,6 +245,10 @@ type Settings = {
   api_enabled?: boolean;
   api_port?: number;
   api_secret?: string;
+  account_keeper_mailbox_endpoint?: string;
+  account_keeper_mailbox_token?: string;
+  account_keeper_mailbox_timeout_seconds?: number;
+  account_keeper_mailbox_poll_interval_ms?: number;
   proxypool_host?: string;
   proxypool_port?: number;
   proxypool_redis_url?: string;
@@ -1168,13 +1173,31 @@ function BrowsersView() {
     try { return JSON.parse(localStorage.getItem("brproxies-folders") || localStorage.getItem("shardx-folders") || "[]"); }
     catch { return []; }
   });
-  const [folderModal, setFolderModal] = useState<{ profileId: string | null } | null>(null);
+  const [groupModal, setGroupModal] = useState<
+    | { mode: "create" }
+    | { mode: "move"; profileId: string }
+    | { mode: "rename"; group: string }
+    | { mode: "bulk" }
+    | null
+  >(null);
   // Folder name currently highlighted as a drag-and-drop target ("__all__"
   // for the All tab).  Cleared in dragleave/drop.
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const rememberFolder = (f: string) =>
     setFolderRegistry((r) => {
       const next = r.includes(f) ? r : [...r, f];
+      localStorage.setItem("brproxies-folders", JSON.stringify(next));
+      return next;
+    });
+  const replaceGroupInRegistry = (oldName: string, newName: string) =>
+    setFolderRegistry((groups) => {
+      const next = renameGroupInRegistry(groups, oldName, newName);
+      localStorage.setItem("brproxies-folders", JSON.stringify(next));
+      return next;
+    });
+  const forgetGroup = (name: string) =>
+    setFolderRegistry((groups) => {
+      const next = deleteGroupFromRegistry(groups, name);
       localStorage.setItem("brproxies-folders", JSON.stringify(next));
       return next;
     });
@@ -1410,9 +1433,9 @@ function BrowsersView() {
     { label: "Clone", onClick: () => cloneProfile(p.id) },
     { label: p.pinned ? "Unpin" : "Pin to top", onClick: () => togglePin(p) },
     { sep: true, label: "", onClick: () => {} },
-    { label: "Move to folder…", onClick: () => setFolderModal({ profileId: p.id }) },
+    { label: "Add to group…", onClick: () => setGroupModal({ mode: "move", profileId: p.id }) },
     ...(p.folder
-      ? [{ label: "Remove from folder", onClick: () => setProfileFolder(p.id, "") }]
+      ? [{ label: "Remove from group", onClick: () => setProfileFolder(p.id, "") }]
       : []),
     { sep: true, label: "", onClick: () => {} },
     { label: "Export cookies", onClick: () => exportCookies(p) },
@@ -1442,39 +1465,59 @@ function BrowsersView() {
     } catch (e) { toast.err(String(e)); }
   };
 
-  const deleteFolder = async (f: string) => {
-    const count = profiles.filter((p) => p.folder === f).length;
-    // Three outcomes: delete profiles, unfile, cancel.
-    const choice = await confirmModal({
-      title: `Delete folder “${f}”`,
-      message:
-        count > 0
-          ? `This folder has ${count} profile${count === 1 ? "" : "s"}. ` +
-            `Delete them too, or keep them (they move to “All”)?`
-          : `Delete the empty folder “${f}”?`,
-      buttons:
-        count > 0
-          ? [
-              { label: "Cancel", value: "cancel" },
-              { label: "Keep profiles", value: "keep" },
-              { label: "Delete profiles", value: "delete", danger: true },
-            ]
-          : [
-              { label: "Cancel", value: "cancel" },
-              { label: "Delete", value: "keep", danger: true },
-            ],
-    });
-    if (choice == null || choice === "cancel") return;
-    const alsoDelete = choice === "delete";
+  const renameGroup = async (oldName: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) {
+      setGroupModal(null);
+      return;
+    }
     try {
-      const n = await invoke<number>("folder_delete", { folder: f, deleteProfiles: alsoDelete });
-      if (folder === f) setFolder("all");
-      reload();
-      toast.ok(
-        alsoDelete
-          ? `Deleted folder “${f}” + ${n} profile${n === 1 ? "" : "s"}`
-          : `Removed folder “${f}” (${n} profile${n === 1 ? "" : "s"} kept)`,
-      );
+      const count = await invoke<number>("folder_rename", { old: oldName, new: trimmed });
+      replaceGroupInRegistry(oldName, trimmed);
+      if (folder === oldName) setFolder(trimmed);
+      setGroupModal(null);
+      await reload();
+      toast.ok(`Renamed group to “${trimmed}” (${count} profile${count === 1 ? "" : "s"})`);
+    } catch (e) { toast.err(String(e)); }
+  };
+
+  const deleteGroup = async (name: string) => {
+    const count = profiles.filter((p) => p.folder === name).length;
+    const confirmed = await confirmModal({
+      title: `Delete group “${name}”`,
+      message: count > 0
+        ? `Delete this group? Its ${count} profile${count === 1 ? "" : "s"} will move back to All. No profiles will be deleted.`
+        : "Delete this empty group? No profiles will be deleted.",
+      danger: true,
+    });
+    if (confirmed !== true) return;
+    try {
+      const moved = await invoke<number>("folder_delete", {
+        folder: name,
+        deleteProfiles: false,
+      });
+      forgetGroup(name);
+      if (folder === name) setFolder("all");
+      await reload();
+      toast.ok(`Deleted group “${name}” (${moved} profile${moved === 1 ? "" : "s"} moved to All)`);
+    } catch (e) { toast.err(String(e)); }
+  };
+
+  const addSelectedToGroup = async (targetGroup: string) => {
+    const ids = [...selected];
+    if (ids.length === 0) {
+      setGroupModal(null);
+      return;
+    }
+    try {
+      for (const id of ids) {
+        await invoke("profile_set_folder", { id, folder: targetGroup });
+      }
+      rememberFolder(targetGroup);
+      setSelected(new Set());
+      setGroupModal(null);
+      await reload();
+      toast.ok(`Added ${ids.length} profile${ids.length === 1 ? "" : "s"} to “${targetGroup}”`);
     } catch (e) { toast.err(String(e)); }
   };
 
@@ -1621,10 +1664,11 @@ function BrowsersView() {
                 key={f}
                 className={`folder-tab ${folder === f ? "active" : ""} ${dropTarget === f ? "folder-tab-drop" : ""}`}
                 onClick={() => setFolder(f)}
-                title="Right-click for folder actions · drop profiles to move them"
+                title="Right-click for group actions · drop profiles to add them"
                 onContextMenu={(e) =>
                   ctx.open(e, [
-                    { label: "Delete folder…", onClick: () => deleteFolder(f), danger: true },
+                    { label: "Rename group…", onClick: () => setGroupModal({ mode: "rename", group: f }) },
+                    { label: "Delete group…", onClick: () => deleteGroup(f), danger: true },
                   ])
                 }
                 onDragOver={(e) => {
@@ -1654,8 +1698,8 @@ function BrowsersView() {
             ))}
             <button
               className="folder-tab folder-tab-add"
-              title="Create a new folder"
-              onClick={() => setFolderModal({ profileId: null })}
+              title="Create a new group"
+              onClick={() => setGroupModal({ mode: "create" })}
             >
               +
             </button>
@@ -1665,6 +1709,9 @@ function BrowsersView() {
           {selected.size > 0 && (
             <div className="bulk-bar">
               <span>{selected.size} selected</span>
+              <button className="btn-ghost btn-sm" onClick={() => setGroupModal({ mode: "bulk" })}>
+                <Icon.Folder /> Add to group
+              </button>
               <button className="btn-ghost btn-sm" onClick={bulkLaunch}><Icon.Play /> Launch</button>
               <button className="btn-ghost btn-sm" onClick={bulkStop}><Icon.Stop /> Stop</button>
               <button className="btn-ghost btn-sm" onClick={bulkExport}><Icon.Upload /> Export</button>
@@ -1697,25 +1744,60 @@ function BrowsersView() {
           onClose={() => setTemplatePickerOpen(false)}
         />
       )}
-      {folderModal && (() => {
-        const moving = folderModal.profileId
-          ? profiles.find((p) => p.id === folderModal!.profileId) ?? null
-          : null;
-        // "move" mode: pick from other folders; "create" mode: just the input.
-        const pickable = moving ? folders.filter((f) => f !== moving.folder) : [];
-        const assign = (f: string) => {
-          if (folderModal!.profileId) setProfileFolder(folderModal!.profileId, f);
-          else rememberFolder(f);
-          setFolder(f);
-          setFolderModal(null);
+      {groupModal && (() => {
+        if (groupModal.mode === "create") {
+          return (
+            <GroupModal
+              mode="create"
+              existing={folders}
+              onSubmit={(name) => {
+                const group = name.trim();
+                if (!group) return;
+                rememberFolder(group);
+                setFolder(group);
+                setGroupModal(null);
+              }}
+              onClose={() => setGroupModal(null)}
+            />
+          );
+        }
+        if (groupModal.mode === "rename") {
+          return (
+            <GroupModal
+              mode="rename"
+              existing={folders.filter((name) => name !== groupModal.group)}
+              initialName={groupModal.group}
+              onSubmit={(name) => void renameGroup(groupModal.group, name)}
+              onClose={() => setGroupModal(null)}
+            />
+          );
+        }
+        if (groupModal.mode === "bulk") {
+          return (
+            <GroupModal
+              mode="bulk"
+              existing={folders}
+              onPick={(group) => void addSelectedToGroup(group)}
+              onClose={() => setGroupModal(null)}
+            />
+          );
+        }
+        const moving = profiles.find((profile) => profile.id === groupModal.profileId) ?? null;
+        const pickable = folders.filter((name) => name !== moving?.folder);
+        const assign = (group: string) => {
+          void setProfileFolder(groupModal.profileId, group);
+          setGroupModal(null);
         };
         return (
-          <FolderModal
-            mode={folderModal.profileId ? "move" : "create"}
+          <GroupModal
+            mode="move"
             existing={pickable}
             onPick={assign}
-            onCreate={(name) => { const f = name.trim(); if (f) assign(f); }}
-            onClose={() => setFolderModal(null)}
+            onSubmit={(name) => {
+              const group = name.trim();
+              if (group) assign(group);
+            }}
+            onClose={() => setGroupModal(null)}
           />
         );
       })()}
@@ -6178,63 +6260,83 @@ function FingerprintImporter({ onClose }: { onClose: () => void }) {
   );
 }
 
-/// Folder picker/creator modal (replaces native prompt). mode: "create" | "move".
-function FolderModal({
-  mode, existing, onPick, onCreate, onClose,
+/// Group picker/editor modal used by Browser profile management.
+function GroupModal({
+  mode, existing, initialName = "", onPick, onSubmit, onClose,
 }: {
-  mode: "create" | "move";
+  mode: "create" | "move" | "rename" | "bulk";
   existing: string[];
-  onPick: (folder: string) => void;
-  onCreate: (name: string) => void;
+  initialName?: string;
+  onPick?: (group: string) => void;
+  onSubmit?: (name: string) => void;
   onClose: () => void;
 }) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initialName);
   const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => { ref.current?.focus(); }, []);
+  const acceptsName = mode !== "bulk";
+  useEffect(() => { if (acceptsName) ref.current?.focus(); }, [acceptsName]);
   const trimmed = name.trim();
-  const dup = existing.includes(trimmed);
-  const create = () => { if (trimmed && !dup) onCreate(trimmed); };
-  const showList = mode === "move" && existing.length > 0;
+  const duplicate = existing.includes(trimmed);
+  const submit = () => {
+    if (trimmed && !duplicate) onSubmit?.(trimmed);
+  };
+  const title = mode === "create"
+    ? "New group"
+    : mode === "rename"
+      ? "Rename group"
+      : "Add to group";
+  const showList = (mode === "move" || mode === "bulk") && existing.length > 0;
   return (
     <div className="dialog-bg" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <header className="dialog-head">
-          <h2><ShardMini /> {mode === "move" ? "Move to folder" : "New folder"}</h2>
+          <h2><ShardMini /> {title}</h2>
           <button className="icon-btn" onClick={onClose}>✕</button>
         </header>
         <div className="dialog-body">
           {showList && (
             <>
-              <span className="lbl">Existing folders</span>
+              <span className="lbl">Existing groups</span>
               <div className="folder-pick-list">
-                {existing.map((f) => (
-                  <button key={f} className="folder-pick" onClick={() => onPick(f)}>
-                    <Icon.Folder /> {f}
+                {existing.map((group) => (
+                  <button key={group} className="folder-pick" onClick={() => onPick?.(group)}>
+                    <Icon.Folder /> {group}
                   </button>
                 ))}
               </div>
-              <div className="folder-pick-sep"><span>or create new</span></div>
+              {mode === "move" && <div className="folder-pick-sep"><span>or create new</span></div>}
             </>
           )}
-          <label>
-            <span className="lbl">{showList ? "New folder name" : "Folder name"}</span>
-            <input
-              ref={ref}
-              value={name}
-              placeholder="e.g. Shops, Socials, QA…"
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") create();
-                if (e.key === "Escape") onClose();
-              }}
-            />
-          </label>
-          {dup && <div className="muted small" style={{ color: "var(--err)" }}>Folder “{trimmed}” already exists.</div>}
+          {mode === "bulk" && existing.length === 0 && (
+            <div className="empty">No groups exist yet. Create a group first.</div>
+          )}
+          {acceptsName && (
+            <label>
+              <span className="lbl">{mode === "move" && showList ? "New group name" : "Group name"}</span>
+              <input
+                ref={ref}
+                value={name}
+                placeholder="e.g. GPT, Shops, QA…"
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submit();
+                  if (e.key === "Escape") onClose();
+                }}
+              />
+            </label>
+          )}
+          {duplicate && (
+            <div className="muted small" style={{ color: "var(--err)" }}>
+              Group “{trimmed}” already exists.
+            </div>
+          )}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
             <button className="btn-ghost" onClick={onClose}>Cancel</button>
-            <button className="btn-primary" disabled={!trimmed || dup} onClick={create}>
-              {showList ? "Create & move" : "Create"}
-            </button>
+            {acceptsName && (
+              <button className="btn-primary" disabled={!trimmed || duplicate} onClick={submit}>
+                {mode === "rename" ? "Rename" : mode === "move" ? "Create & add" : "Create"}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -6511,6 +6613,10 @@ function SettingsView() {
     screen_resolution_mode: "fingerprint",
     api_enabled: true,
     api_port: 40325,
+    account_keeper_mailbox_endpoint: "",
+    account_keeper_mailbox_token: "",
+    account_keeper_mailbox_timeout_seconds: 30,
+    account_keeper_mailbox_poll_interval_ms: 1000,
     android_manager_host: "127.0.0.1",
     android_manager_port: 40327,
     android_manager_token: "",
@@ -6630,6 +6736,53 @@ function SettingsView() {
             </p>
           </>
         )}
+      </div>
+
+      <div className="card" style={{ marginBottom: 14 }}>
+        <h3>Account Keeper email verification</h3>
+        <p className="muted small">
+          Optional local connector for retrieving a six-digit email verification code during <strong>Change email</strong>.
+          The endpoint must use <code>http://127.0.0.1</code>. If it is unavailable or returns manual status, Account Keeper keeps the profile open for manual verification.
+        </p>
+        <label>
+          <span className="lbl">Connector endpoint</span>
+          <input
+            placeholder="http://127.0.0.1:40328/account-keeper/code"
+            value={s.account_keeper_mailbox_endpoint ?? ""}
+            onChange={(e) => setS({ ...s, account_keeper_mailbox_endpoint: e.target.value })}
+          />
+        </label>
+        <label>
+          <span className="lbl">Bearer token</span>
+          <input
+            type="password"
+            autoComplete="off"
+            value={s.account_keeper_mailbox_token ?? ""}
+            onChange={(e) => setS({ ...s, account_keeper_mailbox_token: e.target.value })}
+          />
+        </label>
+        <div className="form-row">
+          <label>
+            <span className="lbl">Timeout (seconds)</span>
+            <input
+              type="number"
+              min={1}
+              max={300}
+              value={s.account_keeper_mailbox_timeout_seconds ?? 30}
+              onChange={(e) => setS({ ...s, account_keeper_mailbox_timeout_seconds: Number(e.target.value) || 30 })}
+            />
+          </label>
+          <label>
+            <span className="lbl">Poll interval (ms)</span>
+            <input
+              type="number"
+              min={100}
+              max={10000}
+              value={s.account_keeper_mailbox_poll_interval_ms ?? 1000}
+              onChange={(e) => setS({ ...s, account_keeper_mailbox_poll_interval_ms: Number(e.target.value) || 1000 })}
+            />
+          </label>
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom: 14 }}>

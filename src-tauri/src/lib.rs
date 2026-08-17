@@ -4,6 +4,7 @@ pub mod account_keeper;
 mod account_keeper_daemon;
 pub mod account_keeper_agent;
 mod account_keeper_format;
+mod account_keeper_mailbox;
 mod account_keeper_store;
 mod account_keeper_worker;
 mod actions;

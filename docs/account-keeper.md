@@ -2,8 +2,8 @@
 
 [README](../README.md) | [Tiếng Việt](account-keeper.vn.md)
 
-Account Keeper is the Windows 10/11 BrProxies workflow for rotating passwords
-on accounts you own or are explicitly authorized to manage. The MVP processes
+Account Keeper is the Windows 10/11 BrProxies workflow for logging in and changing
+passwords, authenticator 2FA, or account email on accounts you own or are explicitly authorized to manage. It processes
 one account at a time and maps every account to one persistent BrProxies
 profile.
 
@@ -17,6 +17,8 @@ Account Keeper changes credentials. Read these boundaries before using it:
 - Account Keeper does not solve or bypass CAPTCHA, device approval, unusual
   login warnings, email verification, or other security controls.
 - It does not log in to inboxes or automate email-message retrieval.
+- Change email can call an optional operator-provided loopback mailbox connector
+  for a six-digit verification code. If unavailable, the profile stays open for manual verification.
 - Social login through Google, Microsoft, Apple, or another identity provider
   is not supported in the MVP.
 - It does not export cookies, browser sessions, authorization headers, access
@@ -84,6 +86,15 @@ this format, with one record per line:
 account|current_password|optional_totp_secret
 ```
 
+For **Change email**, append the new email as the fourth field:
+
+```text
+current_email|current_password|optional_totp_secret|new_email
+```
+
+The first email identifies the existing profile. The fourth field is the new
+email and is committed only after provider verification.
+
 Required synthetic example:
 
 ```text
@@ -114,6 +125,8 @@ Parser rules:
   `=` padding is accepted.
 - Validation errors report the line number but do not echo passwords or TOTP
   secrets.
+- The fourth field is accepted only for **Change email**, must be a valid email,
+  and must differ from the normalized current email.
 
 Example with an internal password delimiter:
 
@@ -163,21 +176,36 @@ length is outside 12-128 characters.
 ## Start A Batch
 
 1. Open **Account Keeper** in BrProxies.
-2. Keep the default **Paste text** mode selected and paste one record per line,
+2. Select **Login GPT**, **Change password**, **Change 2FA**, or **Change email**.
+3. Keep the default **Paste text** mode selected and paste one record per line,
    or click **Choose file**, then **Browse** under **Input file**, and select a
    UTF-8 plaintext input file.
-3. For pasted text, click **Validate Input** explicitly. A selected file is
+4. For pasted text, click **Validate Input** explicitly. A selected file is
    validated immediately after selection.
-4. Keep the default `%USERPROFILE%\Documents\account-keeper-result.json`, or
+5. For change operations, keep the default `%USERPROFILE%\Documents\account-keeper-result.json`, or
    click **Browse** under **Output file** and choose another plaintext output
    JSON path.
-5. Enter the batch password template, then click **Validate Template**.
-6. Review the masked account identities, parsed account count, and any
+6. For **Change password** only, enter the batch password template, then click **Validate Template**.
+7. Review the masked account identities, parsed account count, and any
    line-specific errors.
-7. Acknowledge that the active input and output contain plaintext secrets.
-8. Optionally enable **Keep profile running after completion**. It is disabled
+8. Acknowledge that the active input and output contain plaintext secrets.
+9. Optionally enable **Keep profile running after completion**. It is disabled
    by default.
-9. Click **Start Batch** and confirm the password-changing operation.
+10. Click **Start Batch** and confirm the selected operation.
+
+### Optional mailbox connector
+
+Configure it under **Settings** > **Account Keeper email verification**. The
+endpoint must use loopback HTTP and may return one of these strict responses:
+
+```json
+{"status":"code","code":"123456"}
+{"status":"pending"}
+{"status":"manual"}
+```
+
+Timeouts, connector errors, or `manual` fall back to manual **Continue**. The
+connector token stays in local settings and is never sent to the browser worker.
 
 Validation and start each send `request.source` through local React-to-Tauri
 IPC. Paste mode sends `{ kind: "inline", text }`; file mode sends
@@ -201,8 +229,8 @@ For each account, Account Keeper:
 2. Launches that profile with CDP enabled.
 3. Starts a fresh Node/Patchright worker for the account.
 4. Classifies the current session. If the profile is already signed in, it
-   skips credential submission and opens **Settings** > **Security and login**
-   > **Password** directly. Otherwise it signs in with direct email/password.
+   skips credential submission and opens the settings surface for the selected operation.
+   Otherwise it signs in with direct email/password.
 5. Generates a local TOTP code only when requested by the visible TOTP form.
 6. Pauses for manual action when a security challenge appears.
 7. Submits the generated password through the supported provider flow.
@@ -212,8 +240,9 @@ For each account, Account Keeper:
 11. Stops the profile unless the keep-profile toggle is enabled, then starts
     the next account.
 
-Normal stages are `queued`, `launching`, `logging_in`, `submitting_totp`,
-`changing_password`, `verifying_new_password`, and `success`. Exceptional
+Normal stages also include `changing_totp`, `verifying_new_totp`,
+`changing_email`, `waiting_email_verification`, and `verifying_new_email`.
+Exceptional
 states are `waiting_manual`, `failed`, `critical`, and `cancelled`.
 
 ## Batch Controls
