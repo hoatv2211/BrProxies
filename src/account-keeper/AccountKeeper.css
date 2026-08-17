@@ -400,6 +400,20 @@
   gap: 6px;
 }
 
+.account-keeper .account-keeper__bulk-export {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 9px 10px;
+  border: 1px solid #34d39944;
+  border-radius: 8px;
+  background: #0596690f;
+  color: #6ee7b7;
+  font-size: 10.5px;
+}
+
 .account-keeper .account-keeper__logs {
   display: grid;
   gap: 6px;

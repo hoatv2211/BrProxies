@@ -7,7 +7,6 @@ import {
   canResume,
   canStart,
   isCleanableJob,
-  profileImportJson,
   progressLogEntries,
   reduceProgress,
 } from "./model";
@@ -21,7 +20,6 @@ import type {
   JobStatus,
   JobView,
   ManagedProfileView,
-  ProfileImportPayload,
   ProgressEvent,
   TemplateValidationDto,
 } from "./types";
@@ -188,41 +186,14 @@ function normalizeProgress(value: unknown): ProgressEvent | null {
   return revision < 0 || !job ? null : { revision, job };
 }
 
-function normalizeProfileImportPayload(value: unknown): ProfileImportPayload | null {
-  const record = asRecord(value);
-  if (
-    asNumber(record?.schema_version) !== 1
-    || asString(record?.kind) !== "brproxies-account-keeper-profile"
-    || asString(record?.account_status) !== "success"
-  ) {
-    return null;
-  }
-  const profileId = asString(record?.profile_id);
-  const apiBaseUrl = asString(record?.api_base_url);
-  const vaultRef = asString(record?.vault_ref);
-  if (!profileId || !apiBaseUrl || !vaultRef) return null;
-  return {
-    schema_version: 1,
-    kind: "brproxies-account-keeper-profile",
-    profile_id: profileId,
-    account_status: "success",
-    last_verified_at: asNullableString(record?.last_verified_at),
-    api_base_url: apiBaseUrl,
-    vault_ref: vaultRef,
-  };
-}
-
 function normalizeManagedProfile(value: unknown): ManagedProfileView | null {
   const record = asRecord(value);
   const profileId = asString(record?.profile_id);
   const maskedAccount = asString(record?.masked_account);
-  const importPayload = normalizeProfileImportPayload(record?.import_payload);
   if (
     !profileId
     || !maskedAccount
     || asString(record?.status) !== "success"
-    || !importPayload
-    || importPayload.profile_id !== profileId
   ) {
     return null;
   }
@@ -233,7 +204,15 @@ function normalizeManagedProfile(value: unknown): ManagedProfileView | null {
     last_verified_at: asNullableString(record?.last_verified_at),
     running: asBoolean(record?.running),
     rotated: asBoolean(record?.rotated),
-    import_payload: importPayload,
+    codex_auth: (() => {
+      const auth = asRecord(record?.codex_auth);
+      const status = asString(auth?.status);
+      return {
+        status: status === "ready" || status === "reconnect_required" ? status : "missing",
+        expires_at: asNullableString(auth?.expires_at),
+        has_account_id: asBoolean(auth?.has_account_id),
+      };
+    })(),
   };
 }
 
@@ -491,6 +470,10 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
   const resumableJobs = jobs.filter((job) => !terminalJobStatuses.has(job.status));
   const selectedLogs = useMemo(() => progressLogEntries(selectedJob), [selectedJob]);
   const importProfile = profiles.find((profile) => profile.profile_id === importProfileId) ?? null;
+  const readyCodexProfileIds = useMemo(
+    () => profiles.filter((profile) => profile.codex_auth.status === "ready").map((profile) => profile.profile_id),
+    [profiles],
+  );
 
   const replaceJob = (value: unknown) => {
     const job = normalizeJob(value);
@@ -903,13 +886,63 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     }
   };
 
-  const copyImportInfo = async (profile: ManagedProfileView) => {
-    setBusyAction(`copy-profile-${profile.profile_id}`);
+  const connectCodex = async (profile: ManagedProfileView) => {
+    setBusyAction(`connect-codex-${profile.profile_id}`);
     setError(null);
     setNotice(null);
     try {
-      await invoke("clipboard_write", { text: profileImportJson(profile) });
-      setNotice("9Router/Cockpit import info copied.");
+      const codexAuth = await invoke<NonNullable<ManagedProfileView["codex_auth"]>>(
+        "account_keeper_connect_codex",
+        { request: { profileId: profile.profile_id } },
+      );
+      setProfiles((current) => current.map((item) => item.profile_id === profile.profile_id
+        ? { ...item, codex_auth: codexAuth }
+        : item));
+      setImportProfileId(profile.profile_id);
+      setNotice("Codex OAuth connected. Export JSON is ready.");
+    } catch (actionError) {
+      setError(String(actionError));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const exportCodex = async (
+    profileIds: string[],
+    format: "nine_router" | "cockpit",
+    destination: "copy" | "save",
+  ) => {
+    const approved = await confirm({
+      title: "Export plaintext Codex credentials",
+      message: `${destination === "copy" ? "Copy" : "Save"} ${profileIds.length} Codex account credential${profileIds.length === 1 ? "" : "s"} for ${format === "nine_router" ? "9Router" : "Cockpit"}? The JSON contains plaintext OAuth tokens.`,
+      buttons: [
+        { label: "Cancel", value: false },
+        { label: destination === "copy" ? "Copy JSON" : "Save JSON", value: true, primary: true },
+      ],
+    });
+    if (approved !== true) return;
+    const action = `${destination}-${format}-${profileIds.join("-")}`;
+    setBusyAction(action);
+    setError(null);
+    setNotice(null);
+    try {
+      if (destination === "copy") {
+        const result = await invoke<{ exportedCount: number }>("account_keeper_copy_codex_export", {
+          request: { profileIds, format },
+        });
+        setNotice(`${result.exportedCount} Codex account(s) copied for ${format === "nine_router" ? "9Router" : "Cockpit"}.`);
+      } else {
+        const outputPath = await saveDialog({
+          title: `Save ${format === "nine_router" ? "9Router" : "Cockpit"} Codex JSON`,
+          defaultPath: format === "nine_router" ? "9router-codex-accounts.json" : "cockpit-codex-accounts.json",
+          filters: [{ name: "JSON", extensions: ["json"] }],
+        });
+        if (!outputPath) return;
+        const result = await invoke<{ exportedCount: number }>("account_keeper_save_codex_export", {
+          request: { profileIds, format, outputPath },
+        });
+        setNotice(`${result.exportedCount} Codex account(s) saved.`);
+      }
     } catch (actionError) {
       setError(String(actionError));
     } finally {
@@ -1404,6 +1437,18 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           <span className="account-keeper__panel-note">{profiles.length} verified</span>
         </div>
 
+        {readyCodexProfileIds.length > 0 && (
+          <div className="account-keeper__bulk-export" role="group" aria-label="Bulk Codex export">
+            <span>{readyCodexProfileIds.length} Codex account{readyCodexProfileIds.length === 1 ? "" : "s"} ready</span>
+            <div className="account-keeper__profile-actions">
+              <button type="button" className="btn-sm" aria-label="Copy all ready accounts for 9Router" onClick={() => void exportCodex(readyCodexProfileIds, "nine_router", "copy")} disabled={busyAction !== null}>Copy all to 9Router</button>
+              <button type="button" className="btn-sm" aria-label="Save all ready accounts for 9Router" onClick={() => void exportCodex(readyCodexProfileIds, "nine_router", "save")} disabled={busyAction !== null}>Save all to 9Router</button>
+              <button type="button" className="btn-sm" aria-label="Copy all ready accounts for Cockpit" onClick={() => void exportCodex(readyCodexProfileIds, "cockpit", "copy")} disabled={busyAction !== null}>Copy all to Cockpit</button>
+              <button type="button" className="btn-sm" aria-label="Save all ready accounts for Cockpit" onClick={() => void exportCodex(readyCodexProfileIds, "cockpit", "save")} disabled={busyAction !== null}>Save all to Cockpit</button>
+            </div>
+          </div>
+        )}
+
         {profiles.length === 0 ? (
           <p className="account-keeper__empty">Successful Account Keeper profiles appear here after new-password verification.</p>
         ) : (
@@ -1437,11 +1482,15 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
                   <button
                     type="button"
                     className="btn-sm"
-                    aria-label={`Import info ${profile.masked_account}`}
-                    onClick={() => setImportProfileId((current) => current === profile.profile_id ? null : profile.profile_id)}
+                    aria-label={`${profile.codex_auth?.status === "ready" ? "Export" : "Connect Codex"} ${profile.masked_account}`}
+                    onClick={() => profile.codex_auth?.status === "ready"
+                      ? setImportProfileId((current) => current === profile.profile_id ? null : profile.profile_id)
+                      : void connectCodex(profile)}
                     disabled={busyAction !== null}
                   >
-                    Import Info
+                    {profile.codex_auth?.status === "ready"
+                      ? "Export"
+                      : profile.codex_auth?.status === "reconnect_required" ? "Reconnect Codex" : "Connect Codex"}
                   </button>
                   <button
                     type="button"
@@ -1459,20 +1508,18 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
         )}
 
         {importProfile && (
-          <div className="account-keeper__import" role="region" aria-label="9Router/Cockpit import info">
+          <div className="account-keeper__import" role="region" aria-label="9Router/Cockpit Codex export">
             <div>
-              <strong>9Router/Cockpit import reference</strong>
-              <p>Contains profile metadata only. No password, TOTP, cookie, or session token.</p>
+              <strong>Codex OAuth export</strong>
+              <p>Tokens stay hidden. Copy or save a directly importable JSON array.</p>
             </div>
-            <pre>{profileImportJson(importProfile)}</pre>
-            <button
-              type="button"
-              className="btn-sm"
-              onClick={() => void copyImportInfo(importProfile)}
-              disabled={busyAction !== null}
-            >
-              Copy JSON
-            </button>
+            <p className="account-keeper__mono">Expires: {importProfile.codex_auth?.expires_at ?? "unknown"}</p>
+            <div className="account-keeper__profile-actions">
+              <button type="button" className="btn-sm" onClick={() => void exportCodex([importProfile.profile_id], "nine_router", "copy")} disabled={busyAction !== null}>Copy 9Router JSON</button>
+              <button type="button" className="btn-sm" onClick={() => void exportCodex([importProfile.profile_id], "nine_router", "save")} disabled={busyAction !== null}>Save 9Router JSON</button>
+              <button type="button" className="btn-sm" onClick={() => void exportCodex([importProfile.profile_id], "cockpit", "copy")} disabled={busyAction !== null}>Copy Cockpit JSON</button>
+              <button type="button" className="btn-sm" onClick={() => void exportCodex([importProfile.profile_id], "cockpit", "save")} disabled={busyAction !== null}>Save Cockpit JSON</button>
+            </div>
           </div>
         )}
       </section>

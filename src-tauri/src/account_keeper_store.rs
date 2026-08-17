@@ -40,11 +40,26 @@ pub struct VaultAccount {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexOAuthCredential {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub id_token: String,
+    pub account_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    pub last_refresh_at: String,
+    pub expires_at: String,
+    pub expires_in: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultFile {
     pub schema_version: u32,
     pub accounts: Vec<VaultAccount>,
     #[serde(default)]
     pub pending_security_changes: HashMap<String, PendingSecurityChange>,
+    #[serde(default)]
+    pub codex_oauth: HashMap<String, CodexOAuthCredential>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -61,6 +76,7 @@ impl Default for VaultFile {
             schema_version: SCHEMA_VERSION,
             accounts: Vec::new(),
             pending_security_changes: HashMap::new(),
+            codex_oauth: HashMap::new(),
         }
     }
 }
@@ -71,6 +87,7 @@ impl VaultFile {
             schema_version: SCHEMA_VERSION,
             accounts: vec![account],
             pending_security_changes: HashMap::new(),
+            codex_oauth: HashMap::new(),
         }
     }
 }

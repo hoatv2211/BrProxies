@@ -194,6 +194,27 @@ export function validateCdpEndpoint(value) {
   return url.toString();
 }
 
+export function validateCodexOAuthUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw codedError("protocol_error");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "auth.openai.com" ||
+    url.port !== "" ||
+    url.pathname !== "/oauth/authorize" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.hash !== "" ||
+    !url.searchParams.get("client_id") ||
+    !url.searchParams.get("state")
+  ) throw codedError("protocol_error");
+  return url.toString();
+}
+
 function normalizeOrigins(values) {
   if (!Array.isArray(values) || values.length === 0) {
     throw codedError("protocol_error");

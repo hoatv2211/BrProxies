@@ -20,7 +20,7 @@ const FAILURE_MESSAGES = new Map([
   ["worker_not_ready", "Browser flow is not provisioned"],
 ]);
 const ADAPTER_IDS = new Set(["fixture-v1", "openai-chatgpt-v1"]);
-const OPERATIONS = new Set(["change_password", "verify_credentials", "change_totp", "change_email"]);
+const OPERATIONS = new Set(["change_password", "verify_credentials", "change_totp", "change_email", "codex_oauth"]);
 const STAGES = new Set([
   "launching",
   "logging_in",
@@ -68,6 +68,7 @@ const INBOUND_FIELDS = {
     "current_password",
     "new_password",
     "new_email",
+    "oauth_url",
   ]),
   totp_code: new Set(["protocol_version", "type", "request_id", "code"]),
   totp_enrollment_code: new Set(["protocol_version", "type", "request_id", "code"]),
@@ -94,6 +95,7 @@ const OUTBOUND_FIELDS = {
   email_verification_required: new Set(["protocol_version", "type", "request_id"]),
   email_changed: new Set(["protocol_version", "type", "request_id"]),
   verified: new Set(["protocol_version", "type", "request_id"]),
+  oauth_opened: new Set(["protocol_version", "type", "request_id"]),
   failed: new Set([
     "protocol_version",
     "type",
@@ -129,6 +131,13 @@ export function parseInbound(line) {
       );
       assertAllowedValue(message.adapter_id, ADAPTER_IDS, "adapter_id");
       assertString(message.cdp_endpoint, "cdp_endpoint", 1, 256);
+      if (message.operation === "codex_oauth") {
+        assertString(message.oauth_url, "oauth_url", 1, 4096);
+        for (const field of ["account", "current_password", "new_password", "new_email"]) {
+          if (message[field] !== undefined) throw new Error(`${field} is not valid for codex_oauth`);
+        }
+        break;
+      }
       assertString(message.account, "account", 1, 320);
       assertString(message.current_password, "current_password", 1, 128);
       assertString(
@@ -193,6 +202,7 @@ export function sanitizeOutbound(message) {
     case "email_verification_required":
     case "email_changed":
     case "verified":
+    case "oauth_opened":
       break;
     case "totp_enrollment_secret":
       assertString(message.value, "value", 16, 256);

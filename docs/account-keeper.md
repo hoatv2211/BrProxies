@@ -21,8 +21,9 @@ Account Keeper changes credentials. Read these boundaries before using it:
   for a six-digit verification code. If unavailable, the profile stays open for manual verification.
 - Social login through Google, Microsoft, Apple, or another identity provider
   is not supported in the MVP.
-- It does not export cookies, browser sessions, authorization headers, access
-  tokens, or refresh tokens.
+- It does not export cookies, browser sessions, or authorization headers. The
+  explicit Codex export in section 04 can export OAuth tokens only after the
+  operator authorizes that verified profile and acknowledges plaintext handling.
 - TOTP secrets remain local. Rust generates a short-lived six-digit code and
   sends only that code to the worker when the expected TOTP form is visible.
 
@@ -266,19 +267,16 @@ states are `waiting_manual`, `failed`, `critical`, and `cancelled`.
 
 ## Verified Profiles
 
-Section **04 Profiles** lists only vault records that completed new-password
-verification with `status: success` and `password_state: changed`.
+Section **04 Profiles** lists verified vault records with `status: success`.
 
 - **Run** launches the persistent mapped profile.
 - **Delete** stops the profile, removes its local browser data, and deletes its
-  Account Keeper vault mapping.
-- **Import Info** exposes local metadata for 9Router or Cockpit. **Copy JSON**
-  copies the same payload.
-
-The import payload contains `schema_version`, `kind`, `profile_id`,
-`account_status`, `last_verified_at`, `api_base_url`, and an opaque `vault_ref`.
-It never contains the account identifier, password, TOTP secret, cookies,
-access tokens, refresh tokens, or browser-session data.
+  Account Keeper vault mapping, including any protected Codex OAuth record.
+- **Connect Codex** opens the official Codex authorization flow in that mapped
+  profile. **Reconnect Codex** replaces an expired or unusable authorization only
+  after the returned account email matches the verified vault account.
+- **Export** provides copy/save actions for one ready account. The section-level
+  bulk actions export every ready account to one JSON array for 9Router or Cockpit.
 
 ## Manual Intervention
 
@@ -513,11 +511,14 @@ normal BrProxies profile filenames remain unchanged. Cleanup removes the QA
 root and stops its child processes. Never substitute a production account or
 provider for this fixture.
 
-## 9Router And Cockpit Import Boundary
+## 9Router And Cockpit Codex Export
 
-The section 04 import payload is a local profile reference, not a session
-export. Consumers may use the stable `profile_id`, redacted success metadata,
-local API base URL, and opaque vault reference. Cookie export, browser-session
-export, credential export, and token export remain outside this feature.
-Provider OAuth or gateway-token support requires a separate design and
-authorization review.
+Section 04 can authorize Codex OAuth inside each verified persistent profile.
+Use **Connect Codex** (or **Reconnect Codex**) and complete any visible OpenAI
+confirmation in that profile. Once ready, **Export** can copy or save a JSON array
+for 9Router or Cockpit; use the **Copy all** or **Save all** actions to export all
+ready profiles together. Rust refreshes credentials that are within five minutes
+of expiry before producing JSON. If refresh fails, reconnect that profile instead
+of exporting stale credentials. Token values never render in the Account Keeper UI
+and are stored only in the protected local vault. Saved JSON files and clipboard
+contents are plaintext secrets; import them promptly and protect or delete them.

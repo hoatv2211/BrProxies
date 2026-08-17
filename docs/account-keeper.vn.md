@@ -22,8 +22,9 @@ dùng:
   để lấy mã sáu chữ số. Nếu connector không hoạt động, profile vẫn mở để xác minh thủ công.
 - Social login qua Google, Microsoft, Apple hoặc identity provider khác chưa
   được hỗ trợ trong MVP.
-- Tính năng không export cookie, browser session, authorization header, access
-  token hoặc refresh token.
+- Tính năng không export cookie, browser session hoặc authorization header. Chỉ
+  chức năng export Codex rõ ràng ở section 04 mới export OAuth token sau khi người
+  vận hành authorize profile đã verify và xác nhận xử lý plaintext.
 - TOTP secret luôn ở local. Rust tạo code sáu chữ số có thời hạn ngắn và chỉ
   gửi code đó cho worker khi form TOTP mong đợi đang hiển thị.
 
@@ -259,19 +260,17 @@ Stage bình thường còn có `changing_totp`, `verifying_new_totp`, `changing_
 
 ## Profile Đã Verify
 
-Section **04 Profiles** chỉ liệt kê record trong vault đã verify đăng nhập bằng
-password mới với `status: success` và `password_state: changed`.
+Section **04 Profiles** chỉ liệt kê record trong vault đã verify với
+`status: success`.
 
 - **Run** launch persistent profile đã ánh xạ.
 - **Delete** stop profile, xóa browser data local và xóa mapping trong Account
-  Keeper vault.
-- **Import Info** hiển thị metadata local cho 9Router hoặc Cockpit. **Copy JSON**
-  copy cùng payload đó.
-
-Payload import gồm `schema_version`, `kind`, `profile_id`, `account_status`,
-`last_verified_at`, `api_base_url` và `vault_ref` opaque. Payload không chứa
-account identifier, password, TOTP secret, cookie, access token, refresh token
-hoặc browser-session data.
+  Keeper vault, bao gồm Codex OAuth record được bảo vệ nếu có.
+- **Connect Codex** mở luồng authorize Codex chính thức trong profile đã ánh xạ.
+  **Reconnect Codex** chỉ thay credential cũ khi email token trả về khớp account
+  đã verify trong vault.
+- **Export** có action copy/lưu cho một account sẵn sàng. Action bulk ở đầu section
+  export mọi account sẵn sàng thành một mảng JSON cho 9Router hoặc Cockpit.
 
 ## Can Thiệp Thủ Công
 
@@ -475,10 +474,14 @@ và resume rõ ràng sau khi restart Tauri. Workflow cũng xác nhận filename 
 BrProxies bình thường không thay đổi. Cleanup xóa QA root và dừng child process.
 Không thay fixture bằng account hoặc provider production.
 
-## Ranh Giới Import 9Router Và Cockpit
+## Export Codex Cho 9Router Và Cockpit
 
-Payload import ở section 04 là local profile reference, không phải session
-export. Consumer có thể dùng stable `profile_id`, success metadata đã redact,
-local API base URL và opaque vault reference. Cookie export, browser-session
-export, credential export và token export vẫn nằm ngoài tính năng này. Provider
-OAuth hoặc gateway-token support cần design và authorization review riêng.
+Section 04 có thể authorize Codex OAuth ngay trong từng persistent profile đã
+verify. Bấm **Connect Codex** (hoặc **Reconnect Codex**) và hoàn tất xác nhận OpenAI
+nếu profile hiển thị. Khi trạng thái sẵn sàng, **Export** có thể copy hoặc lưu mảng
+JSON dùng trực tiếp cho 9Router hay Cockpit; dùng **Copy all** hoặc **Save all** để
+export toàn bộ profile sẵn sàng cùng lúc. Rust refresh credential còn tối đa năm
+phút trước khi tạo JSON. Nếu refresh lỗi, hãy reconnect profile thay vì export
+credential cũ. Token không được render trong UI và chỉ lưu trong local vault được
+bảo vệ. File JSON và clipboard là plaintext secret; hãy import sớm rồi bảo vệ hoặc
+xóa sau khi dùng.

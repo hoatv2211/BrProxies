@@ -12,6 +12,7 @@ import {
   CommandControl,
   createControlledPageSession,
   validateCdpEndpoint,
+  validateCodexOAuthUrl,
 } from "./account-keeper-worker-runtime.mjs";
 
 let active = null;
@@ -68,6 +69,16 @@ async function runStart(request, session) {
       throw codedError("browser_crashed");
     }
     const context = contexts[0];
+    if (request.operation === "codex_oauth") {
+      const page = await context.newPage();
+      await page.goto(validateCodexOAuthUrl(request.oauth_url), { waitUntil: "domcontentloaded" });
+      await writeMessage({
+        protocol_version: PROTOCOL_VERSION,
+        type: "oauth_opened",
+        request_id: request.request_id,
+      });
+      return;
+    }
     const adapter = getAdapter(request.adapter_id);
     await adapter.prepareContext?.(context);
     const pageSession = await createControlledPageSession(

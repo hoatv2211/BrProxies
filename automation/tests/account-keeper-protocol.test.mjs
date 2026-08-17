@@ -41,6 +41,28 @@ test("parses credential verification operation without a new password", () => {
   assert.equal(message.operation, "verify_credentials");
 });
 
+test("parses credential-free Codex OAuth navigation", () => {
+  const message = {
+    protocol_version: 1,
+    type: "start",
+    request_id: "req_oauth",
+    operation: "codex_oauth",
+    adapter_id: "openai-chatgpt-v1",
+    cdp_endpoint: "http://127.0.0.1:9222",
+    oauth_url: "https://auth.openai.com/oauth/authorize?client_id=synthetic&state=synthetic",
+  };
+  assert.deepEqual(parseInbound(JSON.stringify(message)), message);
+  assert.deepEqual(sanitizeOutbound({
+    protocol_version: 1,
+    type: "oauth_opened",
+    request_id: "req_oauth",
+  }), {
+    protocol_version: 1,
+    type: "oauth_opened",
+    request_id: "req_oauth",
+  });
+});
+
 test("parses change email operation with a new email", () => {
   const message = parseInbound(JSON.stringify({
     ...validStart(),
