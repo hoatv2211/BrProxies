@@ -1,20 +1,23 @@
 ---
 name: account-keeper
-description: Specialized BrProxies Account Keeper development, debugging, testing, and authorized live-account verification. Use when changing Account Keeper React UI, Rust coordination/store/worker code, Node/Patchright flow or provider adapters, worker packaging, account-keeper-result.json status handling, logged-in session navigation, password-change verification, TOTP/manual challenges, resume/critical recovery, or Account Keeper documentation.
+description: "Use when working on BrProxies Account Keeper or authorized ChatGPT/OpenAI account automation: signed-in settings navigation, password verification, authenticator 2FA rotation, TOTP/identity challenges, dynamic CDP recovery, stale worker bundles, vault/Notes/output reconciliation, resume/critical recovery, provider adapters, or secret-safe live testing."
 ---
 
 # Account Keeper
 
 Use this skill for Account Keeper work inside BrProxies. Preserve credentials, persistent profiles, and the password-state safety model while fixing the smallest root cause.
 
+Last updated: **2026-08-19**.
+
 ## Start Here
 
 1. Read `references/architecture.md` for ownership and data flow.
 2. Read only the relevant section of `references/debugging.md`.
 3. Read `references/live-account-safety.md` before touching a real account or `account-keeper-result.json`.
-4. Use focused commands from `references/commands.md`.
-5. Read `references/operator-workflow.md` when the operator wants to supply `account|current_password|totp_secret` and receive an output file.
-6. Use `references/extension-guide.md` when adding a provider, state, protocol message, or workflow.
+4. Read `references/chatgpt-2fa.md` for ChatGPT authenticator rotation, stuck MFA challenges, or live TOTP recovery.
+5. Use focused commands from `references/commands.md`.
+6. Read `references/operator-workflow.md` when the operator wants to supply `account|current_password|totp_secret` and receive an output file.
+7. Use `references/extension-guide.md` when adding a provider, state, protocol message, or workflow.
 
 ## Operator Workflow Contract
 
@@ -22,6 +25,7 @@ Use this skill for Account Keeper work inside BrProxies. Preserve credentials, p
 - Run one live account at a time unless the operator explicitly requests a batch.
 - Use the Account Keeper coordinator and persistent mapped profile; do not replace it with ad-hoc browser automation.
 - If the profile is already signed in, open password settings directly and continue through any current-password identity challenge.
+- For `change_totp`, preserve the signed-in session from disabling the old factor through enrolling and verifying the new factor.
 - Write the result through the normal atomic vault/checkpoint/output transaction.
 - Report only verified outcome metadata. See `references/operator-workflow.md` for the complete reusable runbook.
 
@@ -34,6 +38,8 @@ Use this skill for Account Keeper work inside BrProxies. Preserve credentials, p
 - Preserve one persistent BrProxies profile per normalized account.
 - Stop the batch on `credential_state_unknown`; keep the affected profile available for manual recovery.
 - Do not mark a password `changed` or an account `success` until a new-password sign-in is verified.
+- Do not mark a TOTP rotation `success` until the provider accepts a code from the new enrollment and the authenticator setting is visibly enabled.
+- Do not start a second blind rotation when browser state and persistence disagree; inspect and reconcile the active session first.
 - Update secret-bearing output atomically. Never create debug or backup copies containing credentials.
 
 ## Login And Password-Change Contract
@@ -45,6 +51,15 @@ Use this skill for Account Keeper work inside BrProxies. Preserve credentials, p
 - If the profile is signed out, use direct email/password login, then navigate to password settings.
 - After password submission, log out only for verification, sign in with the proposed password, then emit `verified`.
 - After verification, persist `password_state: changed`, `status: success`, the verified password, and `last_verified_at` to the vault/checkpoint/output transaction.
+
+## ChatGPT 2FA Contract
+
+- Execute one uninterrupted sequence: inspect current state, disable the old authenticator, satisfy identity/TOTP challenges in the provider's actual order, confirm removal, enroll the new authenticator, submit a code generated from the new secret, and verify the setting is enabled.
+- Treat `confirmation -> identity -> TOTP` and `identity -> TOTP -> confirmation` as valid provider orderings.
+- Reacquire the active allowed-origin page between phases; ChatGPT settings remain in the app page while identity and MFA challenges may use `auth.openai.com`.
+- Send the old stored TOTP only for a visible old-factor challenge. Generate the enrollment code only from the newly emitted enrollment secret.
+- Keep the profile open on any uncertain state. A failure after disable authorization is security-critical until live inspection proves which factor is active.
+- After verification, converge browser truth, encrypted vault, profile Notes, checkpoint, and output before reporting success. See `references/chatgpt-2fa.md`.
 
 ## Debugging Workflow
 
@@ -77,5 +92,6 @@ Do not report success without evidence:
 - Relevant automated tests pass.
 - Worker bundle builds when worker resources or dependencies changed.
 - No credential values appear in `git diff`, test fixtures, logs, or newly created files.
-- Live runs, when requested, reach verified new-password login.
-- `account-keeper-result.json` shows `status: success` and `password_state: changed` for the target record without exposing other fields.
+- Password-change runs reach verified new-password login and output `status: success`, `password_state: changed`, with fresh `last_verified_at`.
+- TOTP-change runs keep the account signed in, prove the new code is accepted, leave authenticator 2FA enabled, and output `status: success` with fresh `last_verified_at`.
+- Vault, profile Notes, checkpoint, and output agree on the verified secret without exposing it.

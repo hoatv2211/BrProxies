@@ -5,7 +5,7 @@ async fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.iter().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "Usage: account-keeper-agent --input <file> [--output <file>] [--template <template>] [--timeout-seconds <30-3600>] [--close-profile] [--dry-run]"
+            "Usage: account-keeper-agent --input <file> [--output <file>] [--operation <change_password|change_totp>] [--template <template>] [--timeout-seconds <30-3600>] [--close-profile] [--dry-run]"
         );
         return;
     }

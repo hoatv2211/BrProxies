@@ -35,6 +35,15 @@ async function akDebugInput(event, locator) {
   akDebug(event, await akInputDiag(locator));
 }
 
+function pageDebugMetadata(page) {
+  try {
+    const url = new URL(page.url());
+    return { origin: url.origin, path: url.pathname };
+  } catch {
+    return { origin: null, path: null };
+  }
+}
+
 function akTruncate(message) {
   if (typeof message !== "string") {
     return null;
@@ -460,37 +469,254 @@ export const openaiChatgptAdapter = {
   },
 
   async openTotpChange(page, { control } = {}) {
-    await openSettingsTarget(page, this, {
+    akDebug("totp_open_start", pageDebugMetadata(page));
+    const readyLocators = totpChangeReadyLocators(page);
+    if (await anyVisible(readyLocators)) {
+      akDebug("totp_open_reuse_ready", pageDebugMetadata(page));
+      await this.assertAllowedOrigin(page);
+      return;
+    }
+    await openSettingsSection(page, this, {
       tabLocators: [
         page.locator('[data-testid="security-tab"]'),
         page.getByRole("tab", { name: /security( and login)?|bảo mật/i }),
       ],
-      targetLocators: [
-        page.locator('[data-testid="mfa-setting"], [data-testid="two-factor-setting"]'),
-        page.getByRole("button", { name: /multi-factor|two-factor|2fa|mfa|authenticator/i }),
-      ],
-      readyLocators: [totpEnrollmentSecret(page), oneTimeCode(page)],
       control,
     });
+    akDebug("totp_open_security_ready", pageDebugMetadata(page));
+    const settingLocators = [
+      page.locator('[data-testid="mfa-setting"], [data-testid="two-factor-setting"]'),
+      page.getByRole("button", { name: /multi-factor|two-factor|2fa|mfa|authenticator/i }),
+    ];
+    await waitForAny(page, [...readyLocators, ...settingLocators], 15_000, control);
+    const readyAfterWait = await anyVisible(readyLocators);
+    akDebug("totp_open_ready_probe", { ready: readyAfterWait });
+    if (!readyAfterWait) {
+      akDebug("totp_open_setting_probe", { visible: await anyVisible(settingLocators) });
+      await clickFirstVisible(settingLocators, control);
+      await waitForAny(page, readyLocators, 15_000, control);
+    }
+    akDebug("totp_open_complete", {
+      ...pageDebugMetadata(page),
+      ready: await anyVisible(readyLocators),
+    });
+    await this.assertAllowedOrigin(page);
+  },
+
+  async inspectTotpChange(page, { control } = {}) {
+    checkControl(control);
+    const enrollmentSecretVisible = await visible(totpEnrollmentSecret(page));
+    const enrollmentDialog = await findTotpEnrollmentDialog(page);
+    const enrollmentDialogVisible = Boolean(enrollmentDialog);
+    const oneTimeCodeVisible = await visible(oneTimeCode(page));
+    const disableChallengeUrl = isTotpDisableChallengeUrl(page);
+    const toggleState = await readTotpToggleState(page);
+    const disableVisible = await anyVisible(totpDisableLocators(page));
+    const enableVisible = await anyVisible(totpEnableLocators(page));
+    akDebug("totp_inspect", {
+      ...pageDebugMetadata(page),
+      enrollment_secret_visible: enrollmentSecretVisible,
+      enrollment_dialog_visible: enrollmentDialogVisible,
+      one_time_code_visible: oneTimeCodeVisible,
+      disable_challenge_url: disableChallengeUrl,
+      toggle_state: toggleState,
+      disable_visible: disableVisible,
+      enable_visible: enableVisible,
+    });
+    if (enrollmentSecretVisible || enrollmentDialogVisible) {
+      return "enrollment";
+    }
+    if (oneTimeCodeVisible && !disableChallengeUrl) {
+      return "enrollment";
+    }
+    if (toggleState !== null) {
+      return toggleState ? "enabled" : "disabled";
+    }
+    if (disableVisible) {
+      return "enabled";
+    }
+    if (enableVisible) {
+      return "disabled";
+    }
+    throw adapterError("flow_changed");
+  },
+
+  async inspectTotpDisable(page, { control } = {}) {
+    checkControl(control);
+    if (await visible(currentPassword(page))) {
+      akDebug("totp_disable_inspect", { ...pageDebugMetadata(page), state: "identity_challenge" });
+      return "identity_challenge";
+    }
+    if (await anyVisible(totpDisableConfirmLocators(page))) {
+      akDebug("totp_disable_inspect", { ...pageDebugMetadata(page), state: "confirmation" });
+      return "confirmation";
+    }
+    let authState = "flow_changed";
+    try {
+      authState = await this.classify(page);
+    } catch (error) {
+      if (error?.code !== "flow_changed") throw error;
+    }
+    if (authState === "totp_required" || authState === "totp_rejected") {
+      akDebug("totp_disable_inspect", { ...pageDebugMetadata(page), state: authState });
+      return authState;
+    }
+    try {
+      const state = await this.inspectTotpChange(page, { control });
+      akDebug("totp_disable_inspect", { ...pageDebugMetadata(page), state });
+      return state;
+    } catch (error) {
+      if (error?.code !== "flow_changed") throw error;
+    }
+    if (authState === "signed_in") {
+      akDebug("totp_disable_inspect", { ...pageDebugMetadata(page), state: authState });
+      return authState;
+    }
+    akDebug("totp_disable_inspect", { ...pageDebugMetadata(page), state: "flow_changed" });
+    return "flow_changed";
+  },
+
+  async beginTotpDisable(page, { control } = {}) {
+    if (await anyVisible(totpDisableConfirmLocators(page))) {
+      akDebug("totp_disable_begin", { ...pageDebugMetadata(page), initial_state: "confirmation" });
+      return page;
+    }
+    const initialState = await this.inspectTotpChange(page, { control });
+    akDebug("totp_disable_begin", { ...pageDebugMetadata(page), initial_state: initialState });
+    if (initialState !== "enabled") {
+      throw adapterError("flow_changed");
+    }
+    const disableControl = await firstVisible(totpDisableLocators(page));
+    if (disableControl) {
+      akDebug("totp_disable_click", { kind: "disable_control" });
+      await browserSideEffect(control, () => disableControl.click());
+    } else {
+      const toggle = await firstVisible(totpToggleLocators(page));
+      const checked = toggle ? await readToggleChecked(toggle) : null;
+      akDebug("totp_disable_click", { kind: "toggle", present: Boolean(toggle), checked });
+      if (!toggle || checked !== true) {
+        throw adapterError("flow_changed");
+      }
+      await browserSideEffect(control, () => toggle.click({ force: true }));
+    }
+    akDebug("totp_disable_click_complete", pageDebugMetadata(page));
+    return waitForTotpDisableSurface(
+      page,
+      new Set([
+        "identity_challenge",
+        "totp_required",
+        "totp_rejected",
+        "confirmation",
+        "disabled",
+        "enrollment",
+      ]),
+      15_000,
+      control,
+    );
+  },
+
+  async submitTotpDisableIdentity(page, password, { control } = {}) {
+    const state = await this.inspectTotpDisable(page, { control });
+    if (state !== "identity_challenge") return page;
+    if (typeof password !== "string" || password.length === 0) {
+      throw adapterError("flow_changed");
+    }
+    await this.submitIdentityChallenge(page, password, { control });
+    return waitForTotpDisableSurface(
+      page,
+      new Set([
+        "totp_required",
+        "totp_rejected",
+        "confirmation",
+        "signed_in",
+        "enabled",
+        "disabled",
+        "enrollment",
+      ]),
+      15_000,
+      control,
+    );
+  },
+
+  async submitTotpDisableChallenge(page, code, { control } = {}) {
+    const state = await this.inspectTotpDisable(page, { control });
+    if (state !== "totp_required" && state !== "totp_rejected") {
+      throw adapterError("flow_changed");
+    }
+    await this.submitTotp(page, code, { control });
+    return page;
+  },
+
+  async confirmTotpDisable(page, { control } = {}) {
+    const state = await this.inspectTotpDisable(page, { control });
+    if (state === "disabled" || state === "enrollment") return page;
+    if (state !== "confirmation") throw adapterError("flow_changed");
+    const confirmation = await firstVisible(totpDisableConfirmLocators(page));
+    if (!confirmation) throw adapterError("flow_changed");
+    await browserSideEffect(control, () => confirmation.click());
+    return waitForTotpDisableSurface(
+      page,
+      new Set([
+        "identity_challenge",
+        "totp_required",
+        "totp_rejected",
+        "signed_in",
+        "enabled",
+        "disabled",
+        "enrollment",
+      ]),
+      15_000,
+      control,
+    );
+  },
+
+  async openTotpEnrollment(page, { control } = {}) {
+    const state = await this.inspectTotpChange(page, { control });
+    akDebug("totp_enrollment_open", { ...pageDebugMetadata(page), initial_state: state });
+    if (state === "enrollment") return;
+    if (state !== "disabled") throw adapterError("flow_changed");
+    const enableControl = await firstVisible(totpEnableLocators(page));
+    if (enableControl) {
+      akDebug("totp_enrollment_click", { kind: "enable_control" });
+      await browserSideEffect(control, () => enableControl.click());
+    } else {
+      const toggle = await firstVisible(totpToggleLocators(page));
+      const checked = toggle ? await readToggleChecked(toggle) : null;
+      akDebug("totp_enrollment_click", { kind: "toggle", present: Boolean(toggle), checked });
+      if (!toggle || checked !== false) {
+        throw adapterError("flow_changed");
+      }
+      await browserSideEffect(control, () => toggle.click({ force: true }));
+    }
+    akDebug("totp_enrollment_click_complete", pageDebugMetadata(page));
+    return waitForTotpEnrollmentSurface(page, 15_000, control);
   },
 
   async readTotpEnrollment(page, { control } = {}) {
     checkControl(control);
-    const locator = await firstVisible([totpEnrollmentSecret(page)]);
-    if (!locator) throw adapterError("flow_changed");
-    const raw = typeof locator.inputValue === "function"
-      ? await locator.inputValue().catch(() => "")
-      : "";
-    const text = raw || await locator.textContent().catch(() => "");
-    const secret = String(text).replace(/[\s-]+/g, "").toUpperCase();
-    if (!/^[A-Z2-7]{16,256}$/.test(secret)) throw adapterError("flow_changed");
+    let secret = await readVisibleTotpEnrollmentSecret(page, false);
+    if (!isValidTotpSecret(secret)) {
+      const reveal = await firstVisible(totpEnrollmentRevealLocators(page));
+      if (reveal) {
+        await browserSideEffect(control, () => reveal.click());
+        secret = await waitForTotpEnrollmentSecret(page, 5_000, control);
+      } else {
+        secret = await readVisibleTotpEnrollmentSecret(page);
+      }
+    }
+    if (!isValidTotpSecret(secret)) throw adapterError("flow_changed");
     return secret;
   },
 
   async submitTotpEnrollment(page, code, { control } = {}) {
-    const input = oneTimeCode(page);
+    const enrollmentDialog = await findTotpEnrollmentDialog(page);
+    const input = enrollmentDialog?.input ?? oneTimeCode(page);
     if (!(await visible(input))) throw adapterError("flow_changed");
     await browserSideEffect(control, () => input.fill(code));
+    if (enrollmentDialog?.verify) {
+      await browserSideEffect(control, () => enrollmentDialog.verify.click());
+      return;
+    }
     await clickFirstVisible([
       page.getByRole("button", { name: /^(verify|confirm|enable|continue|xác minh|xác nhận|tiếp tục)$/i }),
       submitControl(page),
@@ -498,12 +724,24 @@ export const openaiChatgptAdapter = {
   },
 
   async verifyTotpChanged(page, { control } = {}) {
-    checkControl(control);
-    return anyVisible([
-      page.getByRole("status").filter({ hasText: /multi-factor|two-factor|2fa|mfa|authenticator/i }),
-      page.getByText(/multi-factor authentication is on|two-factor authentication is on|authenticator.*enabled/i),
-      page.getByRole("button", { name: /disable|remove|reset.*(multi-factor|two-factor|2fa|mfa|authenticator)/i }),
-    ]);
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      checkControl(control);
+      if (await anyVisible(totpEnrollmentErrorLocators(page))) return false;
+      const enrollmentDialog = await findTotpEnrollmentDialog(page);
+      if (!enrollmentDialog && !(await visible(oneTimeCode(page)))) {
+        if (await anyVisible([
+          page.getByRole("status").filter({ hasText: /multi-factor|two-factor|2fa|mfa|authenticator/i }),
+          page.getByText(/multi-factor authentication is on|two-factor authentication is on|authenticator.*enabled/i),
+          ...totpDisableLocators(page),
+        ])) {
+          return true;
+        }
+        if (await readTotpToggleState(page) === true) return true;
+      }
+      await page.waitForTimeout(100);
+    }
+    return false;
   },
 
   async openEmailChange(page, { control } = {}) {
@@ -733,10 +971,322 @@ function oneTimeCode(page) {
     .first();
 }
 
+function normalizeTotpSecret(value) {
+  return String(value ?? "").replace(/[\s-]+/g, "").toUpperCase();
+}
+
+function isValidTotpSecret(value) {
+  return /^[A-Z2-7]{16,256}$/.test(value);
+}
+
+async function readTotpSecretFromDom(page) {
+  if (typeof page.evaluate !== "function") return "";
+  return page.evaluate(() => {
+    const isVisibleElement = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== "none"
+        && style.visibility !== "hidden"
+        && rect.width > 0
+        && rect.height > 0;
+    };
+    const visibleDialogs = [...document.querySelectorAll('[role="dialog"]')]
+      .filter(isVisibleElement);
+    const explicitSelector = '[data-testid="totp-secret"], [data-testid="mfa-secret"], input[readonly][value], code';
+    const candidates = visibleDialogs.flatMap((dialog) => [...dialog.querySelectorAll(
+      `${explicitSelector}, p, span, div`,
+    )])
+      .filter(isVisibleElement)
+      .map((element) => {
+        const inputValue = element instanceof HTMLInputElement ? element.value : "";
+        const text = String(inputValue || element.innerText || element.textContent || "").trim();
+        const normalized = text.replace(/[\s-]+/g, "").toUpperCase();
+        return {
+          normalized,
+          children: element.childElementCount,
+          explicit: element.matches(explicitSelector),
+          hasDigit: /[2-7]/.test(normalized),
+        };
+      })
+      .filter(({ normalized, children, explicit, hasDigit }) => (
+        /^[A-Z2-7]{16,256}$/.test(normalized)
+        && (explicit || (children === 0 && hasDigit))
+      ))
+      .sort((left, right) => (
+        Number(right.explicit) - Number(left.explicit)
+        || left.children - right.children
+        || left.normalized.length - right.normalized.length
+      ));
+    return candidates[0]?.normalized ?? "";
+  }).catch(() => "");
+}
+
+async function readVisibleTotpEnrollmentSecret(page, includeDom = true) {
+  const locator = await firstVisible([totpEnrollmentSecret(page)]);
+  if (locator) {
+    const raw = typeof locator.inputValue === "function"
+      ? await locator.inputValue().catch(() => "")
+      : "";
+    const text = raw || await locator.textContent().catch(() => "");
+    const secret = normalizeTotpSecret(text);
+    if (isValidTotpSecret(secret)) return secret;
+  }
+  if (!includeDom) return "";
+  const domSecret = normalizeTotpSecret(await readTotpSecretFromDom(page));
+  return isValidTotpSecret(domSecret) ? domSecret : "";
+}
+
+async function findTotpEnrollmentDialog(page) {
+  if (typeof page.getByRole !== "function") return null;
+  const dialogs = page.getByRole("dialog");
+  if (typeof dialogs?.count !== "function" || typeof dialogs?.nth !== "function") {
+    return null;
+  }
+  const count = await dialogs.count().catch(() => 0);
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const dialog = dialogs.nth(index);
+    if (!(await visible(dialog))) continue;
+    const input = dialog.locator(
+      'input[autocomplete="one-time-code"], input[inputmode="numeric"], input[type="text"], input:not([type])',
+    ).first();
+    const verify = dialog.getByRole("button", {
+      name: /^(verify|confirm|enable|continue|xác minh|xác nhận|tiếp tục)$/i,
+    }).first();
+    if (await visible(input) && await visible(verify)) {
+      return { dialog, input, verify };
+    }
+  }
+  return null;
+}
+
 function totpEnrollmentSecret(page) {
   return page.locator(
     '[data-testid="totp-secret"], [data-testid="mfa-secret"], input[readonly][value], code',
   ).first();
+}
+
+function totpEnrollmentRevealLocators(page) {
+  const label = /can(?:not|'t)? scan|trouble.*scan|problem.*scan|manual(?: setup)?|setup key|secret key|bạn gặp vấn đề khi quét/i;
+  return [
+    page.getByRole("button", { name: label }),
+    page.getByRole("link", { name: label }),
+  ];
+}
+
+function totpEnrollmentErrorLocators(page) {
+  const message = /could not verify|unable to verify|invalid (?:verification )?code|incorrect code|code.*(?:invalid|incorrect|expired)|không xác minh được mã|mã không hợp lệ|mã.*(?:không đúng|hết hạn)/i;
+  return [
+    page.locator('[data-testid="totp-error"], [data-testid="mfa-error"]'),
+    page.getByRole("alert").filter({ hasText: message }),
+    page.getByText(message),
+  ];
+}
+
+function isTotpDisableChallengeUrl(page) {
+  try {
+    const url = new URL(page.url());
+    return url.origin === "https://auth.openai.com"
+      && url.pathname.startsWith("/mfa-challenge/");
+  } catch {
+    return false;
+  }
+}
+
+function totpDisableLocators(page) {
+  return [
+    page.locator('[data-testid="mfa-disable"], [data-testid="two-factor-disable"]'),
+    page.getByRole("button", {
+      name: /^(disable|remove|turn off|reset)( multi-factor authentication| two-factor authentication| 2fa| mfa| authenticator( app)?)?$/i,
+    }),
+  ];
+}
+
+function totpDisableConfirmLocators(page) {
+  return [
+    page.locator('[data-testid="confirm-mfa-disable"], [data-testid="confirm-two-factor-disable"]'),
+    page.getByRole("button", {
+      name: /^(disable|remove|turn off|confirm|yes,? disable|xóa|xoá)$/i,
+    }),
+  ];
+}
+
+function totpEnableLocators(page) {
+  return [
+    page.locator('[data-testid="mfa-enable"], [data-testid="two-factor-enable"]'),
+    page.getByRole("button", {
+      name: /^(enable|add|set up|turn on)( multi-factor authentication| two-factor authentication| 2fa| mfa| authenticator( app)?)?$/i,
+    }),
+  ];
+}
+
+function totpToggleLocators(page) {
+  return [
+    page.locator('[data-testid="mfa-toggle"], [data-testid="two-factor-toggle"], [data-testid="authenticator-toggle"], [data-testid="mfa-authenticator-toggle"]'),
+    page.getByRole("switch", { name: /authenticator app|ứng dụng xác thực/i }),
+  ];
+}
+
+async function readToggleChecked(locator) {
+  if (typeof locator?.isChecked === "function") {
+    const checked = await locator.isChecked().catch(() => null);
+    if (typeof checked === "boolean") return checked;
+  }
+  if (typeof locator?.getAttribute === "function") {
+    const ariaChecked = await locator.getAttribute("aria-checked").catch(() => null);
+    if (ariaChecked === "true") return true;
+    if (ariaChecked === "false") return false;
+    const dataState = await locator.getAttribute("data-state").catch(() => null);
+    if (dataState === "checked" || dataState === "on") return true;
+    if (dataState === "unchecked" || dataState === "off") return false;
+  }
+  return null;
+}
+
+async function readTotpToggleState(page) {
+  const toggle = await firstVisible(totpToggleLocators(page));
+  return toggle ? readToggleChecked(toggle) : null;
+}
+
+function totpCandidatePages(page) {
+  if (typeof page.context !== "function") return [page];
+  const pages = page.context().pages();
+  const currentIndex = pages.indexOf(page);
+  return currentIndex >= 0 ? pages.slice(currentIndex) : [page];
+}
+
+async function waitForTotpDisableSurface(page, expectedStates, timeout, control) {
+  const deadline = Date.now() + timeout;
+  let lastState = null;
+  while (Date.now() < deadline) {
+    checkControl(control);
+    const pages = totpCandidatePages(page);
+    for (let index = pages.length - 1; index >= 0; index -= 1) {
+      const candidate = pages[index];
+      let origin;
+      try {
+        origin = new URL(candidate.url()).origin;
+      } catch {
+        continue;
+      }
+      if (!ALLOWED_ORIGINS.has(origin)) continue;
+      const state = await openaiChatgptAdapter.inspectTotpDisable(candidate, { control });
+      if (state !== lastState) {
+        akDebug("totp_disable_wait_state", { ...pageDebugMetadata(candidate), state });
+        lastState = state;
+      }
+      if (expectedStates.has(state)) return candidate;
+    }
+    await page.waitForTimeout(100);
+  }
+  throw adapterError("flow_changed");
+}
+
+async function waitForTotpEnrollmentSurface(page, timeout, control) {
+  const deadline = Date.now() + timeout;
+  let lastSignature = null;
+  while (Date.now() < deadline) {
+    checkControl(control);
+    const pages = totpCandidatePages(page);
+    for (let index = pages.length - 1; index >= 0; index -= 1) {
+      const candidate = pages[index];
+      let origin;
+      try {
+        origin = new URL(candidate.url()).origin;
+      } catch {
+        continue;
+      }
+      if (!ALLOWED_ORIGINS.has(origin)) continue;
+      const secretVisible = await visible(totpEnrollmentSecret(candidate));
+      const codeVisible = await visible(oneTimeCode(candidate));
+      const dialogVisible = Boolean(await findTotpEnrollmentDialog(candidate));
+      const signature = [origin, secretVisible, codeVisible, dialogVisible].join(":");
+      if (signature !== lastSignature) {
+        akDebug("totp_enrollment_wait_state", {
+          ...pageDebugMetadata(candidate),
+          secret_visible: secretVisible,
+          code_visible: codeVisible,
+          dialog_visible: dialogVisible,
+        });
+        lastSignature = signature;
+      }
+      if (secretVisible || codeVisible || dialogVisible) {
+        return candidate;
+      }
+    }
+    await page.waitForTimeout(100);
+  }
+  throw adapterError("flow_changed");
+}
+
+async function waitForTotpEnrollmentSecret(page, timeout, control) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    checkControl(control);
+    const pages = totpCandidatePages(page);
+    for (let index = pages.length - 1; index >= 0; index -= 1) {
+      const candidate = pages[index];
+      let origin = null;
+      try {
+        origin = new URL(candidate.url()).origin;
+      } catch {
+        if (candidate !== page) continue;
+      }
+      if (origin !== null && !ALLOWED_ORIGINS.has(origin)) continue;
+      const secret = await readVisibleTotpEnrollmentSecret(candidate);
+      if (isValidTotpSecret(secret)) return secret;
+    }
+    await page.waitForTimeout(100);
+  }
+  return "";
+}
+
+function totpChangeReadyLocators(page) {
+  return [
+    ...totpDisableLocators(page),
+    ...totpEnableLocators(page),
+    ...totpToggleLocators(page),
+    totpEnrollmentSecret(page),
+    oneTimeCode(page),
+  ];
+}
+
+async function openSettingsSection(page, adapter, {
+  tabLocators,
+  control,
+}) {
+  checkControl(control);
+  const authState = await adapter.classify(page);
+  akDebug("settings_open_start", { ...pageDebugMetadata(page), auth_state: authState });
+  if (authState !== "signed_in") throw adapterError("flow_changed");
+  await dismissBlockingDialog(page, control);
+  const tabAlreadyVisible = await anyVisible(tabLocators);
+  akDebug("settings_tab_probe", { visible: tabAlreadyVisible });
+  if (tabAlreadyVisible) {
+    await clickFirstVisible(tabLocators, control);
+    akDebug("settings_tab_clicked_existing", pageDebugMetadata(page));
+    return;
+  }
+  const settingsLocators = [
+    page.locator('[data-testid="settings-menu-item"]'),
+    page.getByRole("menuitem", { name: /^(settings|cài đặt)$/i }),
+    page.getByRole("button", { name: /^(settings|cài đặt)$/i }),
+  ];
+  let settings = await firstVisible(settingsLocators);
+  akDebug("settings_item_probe", { visible: Boolean(settings) });
+  if (!settings) {
+    const menu = await firstVisible(accountMenuLocators(page));
+    akDebug("settings_menu_probe", { visible: Boolean(menu) });
+    if (!menu) throw adapterError("flow_changed");
+    await browserSideEffect(control, () => menu.click({ force: true }));
+    await waitForAny(page, settingsLocators, 5_000, control);
+    settings = await firstVisible(settingsLocators);
+  }
+  if (!settings) throw adapterError("flow_changed");
+  await browserSideEffect(control, () => settings.click());
+  akDebug("settings_item_clicked", pageDebugMetadata(page));
+  await waitForAny(page, tabLocators, 5_000, control);
+  await clickFirstVisible(tabLocators, control);
+  akDebug("settings_tab_clicked", pageDebugMetadata(page));
 }
 
 async function openSettingsTarget(page, adapter, {
@@ -745,26 +1295,7 @@ async function openSettingsTarget(page, adapter, {
   readyLocators,
   control,
 }) {
-  checkControl(control);
-  if (await adapter.classify(page) !== "signed_in") throw adapterError("flow_changed");
-  await dismissBlockingDialog(page, control);
-  const settingsLocators = [
-    page.locator('[data-testid="settings-menu-item"]'),
-    page.getByRole("menuitem", { name: /^(settings|cài đặt)$/i }),
-    page.getByRole("button", { name: /^(settings|cài đặt)$/i }),
-  ];
-  let settings = await firstVisible(settingsLocators);
-  if (!settings) {
-    const menu = await firstVisible(accountMenuLocators(page));
-    if (!menu) throw adapterError("flow_changed");
-    await browserSideEffect(control, () => menu.click({ force: true }));
-    await waitForAny(page, settingsLocators, 5_000, control);
-    settings = await firstVisible(settingsLocators);
-  }
-  if (!settings) throw adapterError("flow_changed");
-  await browserSideEffect(control, () => settings.click());
-  await waitForAny(page, tabLocators, 5_000, control);
-  await clickFirstVisible(tabLocators, control);
+  await openSettingsSection(page, adapter, { tabLocators, control });
   await waitForAny(page, targetLocators, 5_000, control);
   await clickFirstVisible(targetLocators, control);
   await waitForAny(page, readyLocators, 15_000, control);

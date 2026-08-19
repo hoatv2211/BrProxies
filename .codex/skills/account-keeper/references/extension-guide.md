@@ -11,6 +11,22 @@ Keep future changes modular. Update the smallest reference and code owner that r
 5. Register the adapter without adding provider-specific branches to the generic flow unless the protocol truly differs.
 6. Update `architecture.md` and `debugging.md` only for durable behavior.
 
+For authenticator enrollment adapters:
+
+- Read secrets only from visible enrollment UI; reveal the manual setup key when the QR-only dialog hides it.
+- Treat a visible enrollment error or still-open OTP dialog as failure even when a background toggle appears enabled.
+- Require the enrollment dialog to close before toggle- or disable-control-based success.
+- Add localized tests for manual-secret reveal labels and rejected-code messages.
+- Rebuild and hash-check every worker bundle before live verification.
+
+For authenticator enrollment adapters:
+
+- Read secrets only from visible enrollment UI; reveal the manual setup key when the QR-only dialog hides it.
+- Treat a visible enrollment error or still-open OTP dialog as failure even when a background toggle appears enabled.
+- Require the enrollment dialog to close before toggle- or disable-control-based success.
+- Add localized tests for manual-secret reveal labels and rejected-code messages.
+- Rebuild and hash-check every worker bundle before live verification.
+
 ## Add A Stage, Command, Or Failure Code
 
 Keep these layers synchronized:
@@ -47,4 +63,3 @@ Treat this as a safety-critical change. Update invariants, cancellation boundari
 python C:\Users\admin\.codex\skills\.system\skill-creator\scripts\quick_validate.py .codex\skills\account-keeper
 git diff --check
 ```
-

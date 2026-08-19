@@ -154,6 +154,51 @@ async function changeTotp({ pageSource, adapter, request, send, control }) {
     control,
     action: (page) => adapter.openTotpChange(page, { control }),
   });
+  const currentState = await runPageRead({
+    pageSource,
+    adapter,
+    control,
+    read: (page) => adapter.inspectTotpChange(page, { control }),
+  });
+  if (currentState === "enabled") {
+    const authorization = waitForExpected(
+      control,
+      "submit_totp_disable",
+      request.request_id,
+    );
+    await send({ type: "totp_disable_required" });
+    await authorization;
+    await runPageAction({
+      pageSource,
+      adapter,
+      control,
+      action: (page) => adapter.beginTotpDisable(page, { control }),
+    });
+    await resolveTotpDisableChallenge({
+      pageSource,
+      adapter,
+      request,
+      send,
+      control,
+    });
+    const disabledState = await runPageRead({
+      pageSource,
+      adapter,
+      control,
+      read: (page) => adapter.inspectTotpChange(page, { control }),
+    });
+    if (disabledState !== "disabled" && disabledState !== "enrollment") {
+      throw flowError("flow_changed");
+    }
+  } else if (currentState !== "disabled" && currentState !== "enrollment") {
+    throw flowError("flow_changed");
+  }
+  await runPageAction({
+    pageSource,
+    adapter,
+    control,
+    action: (page) => adapter.openTotpEnrollment(page, { control }),
+  });
   const enrollment = await runPageRead({
     pageSource,
     adapter,
@@ -178,6 +223,117 @@ async function changeTotp({ pageSource, adapter, request, send, control }) {
   if (!verified) throw flowError("verification_failed");
   await send({ type: "totp_changed" });
   await send({ type: "verified" });
+}
+
+async function resolveTotpDisableChallenge({
+  pageSource,
+  adapter,
+  request,
+  send,
+  control,
+}) {
+  let totpAttempts = 0;
+  let totpPending = false;
+  for (let step = 0; step < 12; step += 1) {
+    let result = await classifyTotpDisable({ pageSource, adapter, control });
+    if (
+      totpPending
+      && (result.state === "totp_required" || result.state === "flow_changed")
+    ) {
+      result = await waitForTotpTransition({
+        pageSource,
+        adapter,
+        control,
+        classifyPage: classifyTotpDisable,
+      });
+    }
+    totpPending = false;
+    switch (result.state) {
+      case "totp_required":
+      case "totp_rejected": {
+        if (totpAttempts >= 2) throw flowError("totp_rejected");
+        const pendingCommand = waitForExpected(
+          control,
+          "totp_code",
+          request.request_id,
+        );
+        await send({ type: "stage", stage: "submitting_totp" });
+        await send({ type: "totp_required" });
+        const command = await pendingCommand;
+        await runPageAction({
+          pageSource,
+          adapter,
+          control,
+          action: (page) =>
+            adapter.submitTotpDisableChallenge(page, command.code, { control }),
+        });
+        totpAttempts += 1;
+        totpPending = true;
+        break;
+      }
+      case "enabled":
+        await runPageAction({
+          pageSource,
+          adapter,
+          control,
+          action: (page) => adapter.beginTotpDisable(page, { control }),
+        });
+        break;
+      case "signed_in": {
+        await runPageAction({
+          pageSource,
+          adapter,
+          control,
+          action: (page) => adapter.openTotpChange(page, { control }),
+        });
+        const reopenedState = await runPageRead({
+          pageSource,
+          adapter,
+          control,
+          read: (page) => adapter.inspectTotpChange(page, { control }),
+        });
+        if (reopenedState === "enabled") {
+          await runPageAction({
+            pageSource,
+            adapter,
+            control,
+            action: (page) => adapter.beginTotpDisable(page, { control }),
+          });
+          break;
+        }
+        if (reopenedState === "disabled" || reopenedState === "enrollment") {
+          return;
+        }
+        throw flowError("flow_changed");
+      }
+      case "confirmation":
+        await runPageAction({
+          pageSource,
+          adapter,
+          control,
+          action: (page) => adapter.confirmTotpDisable(page, { control }),
+        });
+        break;
+      case "identity_challenge":
+        await runPageAction({
+          pageSource,
+          adapter,
+          control,
+          action: (page) => adapter.submitTotpDisableIdentity(
+            page,
+            request.current_password,
+            { control },
+          ),
+        });
+        break;
+      case "disabled":
+      case "enrollment":
+        return;
+      default:
+        throw flowError("flow_changed");
+    }
+  }
+  throw flowError("navigation_failed");
 }
 
 async function changeEmail({ pageSource, adapter, request, send, control }) {
@@ -592,6 +748,17 @@ async function classifyPasswordChange({ pageSource, adapter, control }) {
       adapter,
       control,
       read: (currentPage) => adapter.classifyPasswordChange(currentPage),
+    }),
+  );
+}
+
+async function classifyTotpDisable({ pageSource, adapter, control }) {
+  return normalizeState(
+    await runPageRead({
+      pageSource,
+      adapter,
+      control,
+      read: (currentPage) => adapter.inspectTotpDisable(currentPage, { control }),
     }),
   );
 }

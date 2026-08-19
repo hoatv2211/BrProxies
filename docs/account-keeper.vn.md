@@ -230,11 +230,14 @@ Với mỗi tài khoản, Account Keeper:
    Nếu chưa đăng nhập, worker dùng email/password trực tiếp.
 5. Chỉ tạo TOTP local khi form TOTP đang hiển thị yêu cầu.
 6. Pause để người vận hành xử lý khi có security challenge.
-7. Submit password đã sinh qua provider flow được hỗ trợ.
-8. Đăng xuất rồi đăng nhập lại bằng password mới.
-9. Chỉ đánh dấu password là `changed` sau khi đăng nhập mới được verify.
-10. Update checkpoint và output plaintext theo cách atomic.
-11. Stop profile nếu keep-profile toggle không bật, rồi mới chạy account tiếp
+7. Với **Change 2FA**, authorize rồi xóa authenticator factor cũ, mở enrollment
+   mới và chỉ commit secret mới sau khi verify. Lỗi sau ranh giới authorize xóa
+   được xem là `critical` vì factor đang hoạt động có thể không còn xác định.
+8. Submit password đã sinh qua provider flow được hỗ trợ.
+9. Đăng xuất rồi đăng nhập lại bằng password mới.
+10. Chỉ đánh dấu password là `changed` sau khi đăng nhập mới được verify.
+11. Update checkpoint và output plaintext theo cách atomic.
+12. Stop profile nếu keep-profile toggle không bật, rồi mới chạy account tiếp
     theo.
 
 Stage bình thường còn có `changing_totp`, `verifying_new_totp`, `changing_email`,

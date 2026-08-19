@@ -32,6 +32,18 @@ $account-keeper chạy file C:\private\account-keeper-input.txt và tự ghi out
 12. On verified login, let Rust atomically update vault, checkpoint, and output.
 13. Confirm output metadata is `status: success`, `password_state: changed`, with `last_verified_at` present.
 
+## ChatGPT Change 2FA Run
+
+1. Select operation `change_totp` and keep the mapped profile running.
+2. Rebuild worker resources and confirm the debug app is not using an older copied bundle.
+3. Preserve an existing signed-in ChatGPT session and open **Security and login** directly.
+4. Execute the removal state machine from `chatgpt-2fa.md`; accept either provider challenge order.
+5. After the old factor is disabled, open enrollment immediately in the same session.
+6. Send the new secret only through `totp_enrollment_secret`; Rust generates the enrollment code.
+7. Verify the new factor is enabled before emitting `verified` or replacing stored secrets.
+8. Confirm output `status: success`, fresh `last_verified_at`, and equality across vault, Notes, checkpoint, and output without displaying values.
+9. If a retry finds an already-enabled candidate secret, prove it non-destructively and reconcile persistence instead of rotating again.
+
 ## Output Contract
 
 - Never paste the full output JSON into chat.
@@ -46,4 +58,6 @@ $account-keeper chạy file C:\private\account-keeper-input.txt và tự ghi out
 - `đổi password account trong file và tự output`
 - `resume job account keeper`
 - `kiểm tra output account keeper`
+- `xoay 2FA ChatGPT và giữ nguyên phiên đăng nhập`
+- `khôi phục security_state_unknown sau khi 2FA mới đã bật`
 - `thêm provider/state mới vào workflow`

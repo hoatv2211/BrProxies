@@ -25,6 +25,18 @@ node --test automation/tests/account-keeper-flow.test.mjs
 node --test automation/tests/account-keeper-worker.test.mjs
 ```
 
+Run the focused ChatGPT authenticator regressions:
+
+```powershell
+node --test --test-name-pattern "reveals the manual TOTP secret|rejects TOTP verification while enrollment error" automation/tests/account-keeper-flow.test.mjs
+```
+
+Run the focused ChatGPT authenticator regressions:
+
+```powershell
+node --test --test-name-pattern "reveals the manual TOTP secret|rejects TOTP verification while enrollment error" automation/tests/account-keeper-flow.test.mjs
+```
+
 ## Frontend Tests And Build
 
 ```powershell
@@ -47,6 +59,34 @@ Required after changing worker modules, adapter files, Patchright dependencies, 
 ```powershell
 npm.cmd run build:account-keeper-worker
 ```
+
+After rebuilding, confirm source, packaged resource, and the running target bundle have identical adapter hashes:
+
+```powershell
+$paths = @(
+  "automation/adapters/openai-chatgpt-v1.mjs",
+  "src-tauri/resources/account-keeper/worker/adapters/openai-chatgpt-v1.mjs",
+  "src-tauri/target/debug/account-keeper/worker/adapters/openai-chatgpt-v1.mjs",
+  "src-tauri/target/release/account-keeper/worker/adapters/openai-chatgpt-v1.mjs"
+)
+Get-FileHash $paths | Select-Object Path,Hash
+```
+
+Do not start a live rotation while these hashes differ.
+
+After rebuilding, confirm source, packaged resource, and the running target bundle have identical adapter hashes:
+
+```powershell
+$paths = @(
+  "automation/adapters/openai-chatgpt-v1.mjs",
+  "src-tauri/resources/account-keeper/worker/adapters/openai-chatgpt-v1.mjs",
+  "src-tauri/target/debug/account-keeper/worker/adapters/openai-chatgpt-v1.mjs",
+  "src-tauri/target/release/account-keeper/worker/adapters/openai-chatgpt-v1.mjs"
+)
+Get-FileHash $paths | Select-Object Path,Hash
+```
+
+Do not start a live rotation while these hashes differ.
 
 ## Synthetic Tauri QA
 
@@ -81,4 +121,3 @@ git status --short
 ```
 
 Review diffs for accidental credentials before reporting completion. Do not stage or commit `account-keeper-result.json`, vault files, input files, screenshots, or browser-profile data.
-

@@ -80,6 +80,18 @@ test("extends worker control with explicit password submit authorization", async
   assert.equal((await waiting).type, "submit_password");
 });
 
+test("extends worker control with explicit TOTP disable authorization", async () => {
+  const control = protocol.withPasswordSubmitAuthorization(
+    new CommandControl("req_1"),
+  );
+  const waiting = control.waitFor("submit_totp_disable");
+  assert.equal(
+    control.push({ request_id: "req_1", type: "submit_totp_disable" }),
+    true,
+  );
+  assert.equal((await waiting).type, "submit_totp_disable");
+});
+
 test("password authorization wrapper preserves multi-command waits", async () => {
   const control = protocol.withPasswordSubmitAuthorization(
     new CommandControl("req_1"),
