@@ -43,6 +43,18 @@ Regression tests should prove both branches:
 - Pause at CAPTCHA, email verification, unusual-login approval, device approval, or unknown security challenge.
 - The worker performs no browser side effects while waiting for manual continuation.
 
+## ChatGPT 2FA Rotation Hangs
+
+Load `chatgpt-2fa.md` when `change_totp` stalls on `mfa-challenge`, returns to `signed_in`, leaves a delete confirmation open, or reports `security_state_unknown` after the new authenticator appears enabled.
+
+- Discover the current dynamic CDP listener instead of reconnecting to a stale port.
+- Inspect active ChatGPT/auth pages read-only before starting another rotation.
+- Distinguish removal confirmation, current-password identity, old-factor TOTP, disabled, enrollment, and enabled states.
+- Verify source, packaged resources, and the debug bundle contain the same worker modules.
+- Compare output, vault, pending security change, and profile Notes only by presence/equality metadata.
+- If a candidate new secret is already active, verify it through a disable challenge and cancel the final removal. Do not enroll another factor.
+- Repair persistence only after live proof, using atomic replacement and no plaintext backup.
+
 ## Failure Classification
 
 - `invalid_credentials`: current direct-login credential rejected before password change.
@@ -52,6 +64,7 @@ Regression tests should prove both branches:
 - `verification_failed`: proposed password could not be verified when the credential state is still known.
 - `credential_state_unknown`: submission may have happened and neither credential is safely established.
 - Repeated `flow_changed` during pending-password recovery: stop live retries, preserve the profile, and reproduce the page-selection/state transition with a synthetic test before another authorized attempt.
+- `security_state_unknown`: a 2FA/email mutation crossed its irreversible boundary and remains critical until live inspection establishes the active security state.
 
 Keep canonical failure messages in protocol/Rust mappings aligned. Do not leak arbitrary provider text when it may contain account data.
 

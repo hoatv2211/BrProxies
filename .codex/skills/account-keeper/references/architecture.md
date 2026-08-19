@@ -22,6 +22,14 @@
 | Protocol | `automation/account-keeper-protocol.mjs` | Message schemas, stages, sanitization |
 | Packaging | `scripts/prepare-account-keeper-worker.mjs` | Node runtime, Patchright, module graph, manifest |
 
+## ChatGPT 2FA Ownership
+
+- `account-keeper-flow.mjs` owns old-factor removal, challenge resolution, enrollment, and new-code verification.
+- `openai-chatgpt-v1.mjs` owns ChatGPT settings, localized controls, popup/page adoption, toggle state, enrollment DOM, and challenge classification.
+- Rust owns both TOTP code paths: the stored secret serves only a visible old-factor challenge; the pending new secret serves only enrollment verification.
+- `TotpDisableRequired` is the irreversible boundary. Failures after authorization remain critical until the active factor is proven.
+- A verified TOTP commit must converge browser state, encrypted vault, profile Notes, checkpoint, and output.
+
 ## Persistence Model
 
 - `vault.bin` is secret-bearing and DPAPI-protected for the current Windows context.
@@ -44,4 +52,4 @@
 - Release builds use bundled Windows Node, worker modules, Patchright, and Patchright Core under `src-tauri/resources/account-keeper/`.
 - Debug builds may fall back to source modules under `automation/` and system Node 18+.
 - Never validate release readiness using only the debug fallback.
-
+- A copied `src-tauri/target/debug/account-keeper/` bundle can remain stale after source edits. Rebuild resources and verify hashes against both resource and debug worker copies before live testing.

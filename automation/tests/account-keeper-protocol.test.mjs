@@ -96,6 +96,11 @@ test("allows a strict TOTP enrollment secret event", () => {
 test("parses TOTP enrollment and email verification commands", () => {
   assert.equal(parseInbound(JSON.stringify({
     protocol_version: 1,
+    type: "submit_totp_disable",
+    request_id: "req_1",
+  })).type, "submit_totp_disable");
+  assert.equal(parseInbound(JSON.stringify({
+    protocol_version: 1,
     type: "totp_enrollment_code",
     request_id: "req_1",
     code: "123456",
@@ -106,6 +111,15 @@ test("parses TOTP enrollment and email verification commands", () => {
     request_id: "req_1",
     code: "654321",
   })).code, "654321");
+});
+
+test("allows a strict TOTP disable authorization event", () => {
+  const message = sanitizeOutbound({
+    protocol_version: 1,
+    type: "totp_disable_required",
+    request_id: "req_1",
+  });
+  assert.equal(message.type, "totp_disable_required");
 });
 
 test("parses explicit password submit authorization", () => {

@@ -71,6 +71,7 @@ const INBOUND_FIELDS = {
     "oauth_url",
   ]),
   totp_code: new Set(["protocol_version", "type", "request_id", "code"]),
+  submit_totp_disable: new Set(["protocol_version", "type", "request_id"]),
   totp_enrollment_code: new Set(["protocol_version", "type", "request_id", "code"]),
   email_verification_code: new Set(["protocol_version", "type", "request_id", "code"]),
   submit_password: new Set(["protocol_version", "type", "request_id"]),
@@ -89,6 +90,7 @@ const OUTBOUND_FIELDS = {
     "url",
   ]),
   password_submit_required: new Set(["protocol_version", "type", "request_id"]),
+  totp_disable_required: new Set(["protocol_version", "type", "request_id"]),
   password_changed: new Set(["protocol_version", "type", "request_id"]),
   totp_enrollment_secret: new Set(["protocol_version", "type", "request_id", "value"]),
   totp_changed: new Set(["protocol_version", "type", "request_id"]),
@@ -160,6 +162,7 @@ export function parseInbound(line) {
       }
       break;
     case "submit_password":
+    case "submit_totp_disable":
     case "resume":
     case "cancel":
       break;
@@ -197,6 +200,7 @@ export function sanitizeOutbound(message) {
       break;
     case "totp_required":
     case "password_submit_required":
+    case "totp_disable_required":
     case "password_changed":
     case "totp_changed":
     case "email_verification_required":
@@ -271,6 +275,7 @@ export function withPasswordSubmitAuthorization(control) {
   ) {
     throw new Error("command control is required");
   }
+  const authorizationTypes = new Set(["submit_password", "submit_totp_disable"]);
   let authorizationWaiter = null;
 
   return {
@@ -279,7 +284,7 @@ export function withPasswordSubmitAuthorization(control) {
       return control.waitForAny(expectedTypes);
     },
     waitFor(expectedType) {
-      if (expectedType !== "submit_password") {
+      if (!authorizationTypes.has(expectedType)) {
         return control.waitFor(expectedType);
       }
       control.throwIfCancelled();
@@ -287,7 +292,7 @@ export function withPasswordSubmitAuthorization(control) {
         return Promise.reject(codedProtocolError());
       }
       return new Promise((resolve) => {
-        authorizationWaiter = { resolve };
+        authorizationWaiter = { expectedType, resolve };
       });
     },
     push(message) {
@@ -300,13 +305,17 @@ export function withPasswordSubmitAuthorization(control) {
         }
         return accepted;
       }
-      if (message?.type === "submit_password") {
+      if (authorizationTypes.has(message?.type)) {
         try {
           control.throwIfCancelled();
         } catch {
           return false;
         }
-        if (!authorizationWaiter || message.request_id !== control.requestId) {
+        if (
+          !authorizationWaiter
+          || message.type !== authorizationWaiter.expectedType
+          || message.request_id !== control.requestId
+        ) {
           return false;
         }
         const { resolve } = authorizationWaiter;

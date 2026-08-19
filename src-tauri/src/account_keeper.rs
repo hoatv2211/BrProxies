@@ -385,6 +385,7 @@ pub enum WorkerEvent {
     ManualRequired { reason: String },
     PasswordSubmitRequired,
     PasswordChanged,
+    TotpDisableRequired,
     TotpEnrollmentSecret(String),
     TotpChanged,
     EmailVerificationRequired,
@@ -411,6 +412,7 @@ pub struct WorkerStart {
 pub enum WorkerCommand {
     TotpCode(String),
     SubmitPassword,
+    SubmitTotpDisable,
     TotpEnrollmentCode(String),
     EmailVerificationCode(String),
     Resume,
@@ -614,6 +616,11 @@ fn worker_command_value(request_id: &str, command: WorkerCommand) -> serde_json:
         WorkerCommand::SubmitPassword => serde_json::json!({
             "protocol_version": 1,
             "type": "submit_password",
+            "request_id": request_id,
+        }),
+        WorkerCommand::SubmitTotpDisable => serde_json::json!({
+            "protocol_version": 1,
+            "type": "submit_totp_disable",
             "request_id": request_id,
         }),
         WorkerCommand::TotpEnrollmentCode(code) => serde_json::json!({
@@ -1452,6 +1459,10 @@ pub fn parse_worker_line(line: &str) -> Result<WorkerEvent> {
             ensure_worker_fields(object, &["protocol_version", "type", "request_id"])?;
             Ok(WorkerEvent::PasswordChanged)
         }
+        "totp_disable_required" => {
+            ensure_worker_fields(object, &["protocol_version", "type", "request_id"])?;
+            Ok(WorkerEvent::TotpDisableRequired)
+        }
         "totp_enrollment_secret" => {
             ensure_worker_fields(object, &["protocol_version", "type", "request_id", "value"])?;
             let value = object
@@ -1943,7 +1954,8 @@ async fn verify_headless_password(
                     bail!("Account Keeper recovery worker attempted a password change");
                 }
                 Some(
-                    WorkerEvent::TotpEnrollmentSecret(_)
+                    WorkerEvent::TotpDisableRequired
+                    | WorkerEvent::TotpEnrollmentSecret(_)
                     | WorkerEvent::TotpChanged
                     | WorkerEvent::EmailVerificationRequired
                     | WorkerEvent::EmailChanged,
@@ -3139,6 +3151,25 @@ impl Coordinator {
                                     self.events.as_ref(),
                                 )?;
                             }
+                            WorkerEvent::TotpDisableRequired => {
+                                security_submission_started = true;
+                                vault.accounts[vault_index].last_status =
+                                    Some("security_state_unknown".to_string());
+                                record_account_state(
+                                    checkpoint,
+                                    account_index,
+                                    &state,
+                                    None,
+                                    &self.clock.now(),
+                                );
+                                persist_snapshot(
+                                    checkpoint,
+                                    vault,
+                                    self.clock.as_ref(),
+                                    self.events.as_ref(),
+                                )?;
+                                session.send(WorkerCommand::SubmitTotpDisable).await?;
+                            }
                             WorkerEvent::TotpEnrollmentSecret(secret) => {
                                 let change = vault
                                     .pending_security_changes
@@ -3936,7 +3967,8 @@ pub fn apply_worker_event(
             state.transition(AccountEvent::PasswordChanged)?;
             vault.last_status = Some("credential_state_unknown".to_string());
         }
-        WorkerEvent::TotpEnrollmentSecret(_)
+        WorkerEvent::TotpDisableRequired
+        | WorkerEvent::TotpEnrollmentSecret(_)
         | WorkerEvent::TotpChanged
         | WorkerEvent::EmailVerificationRequired
         | WorkerEvent::EmailChanged => {
@@ -5361,12 +5393,35 @@ mod tests {
     }
 
     #[test]
+    fn worker_parser_accepts_totp_disable_handshake() {
+        assert_eq!(
+            parse_worker_line(
+                r#"{"protocol_version":1,"type":"totp_disable_required","request_id":"req_1"}"#,
+            )
+            .unwrap(),
+            WorkerEvent::TotpDisableRequired
+        );
+    }
+
+    #[test]
     fn worker_command_serializes_password_submit_authorization() {
         assert_eq!(
             worker_command_value("req_1", WorkerCommand::SubmitPassword),
             serde_json::json!({
                 "protocol_version": 1,
                 "type": "submit_password",
+                "request_id": "req_1",
+            })
+        );
+    }
+
+    #[test]
+    fn worker_command_serializes_totp_disable_authorization() {
+        assert_eq!(
+            worker_command_value("req_1", WorkerCommand::SubmitTotpDisable),
+            serde_json::json!({
+                "protocol_version": 1,
+                "type": "submit_totp_disable",
                 "request_id": "req_1",
             })
         );

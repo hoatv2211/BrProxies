@@ -234,11 +234,15 @@ For each account, Account Keeper:
    Otherwise it signs in with direct email/password.
 5. Generates a local TOTP code only when requested by the visible TOTP form.
 6. Pauses for manual action when a security challenge appears.
-7. Submits the generated password through the supported provider flow.
-8. Signs out and signs in again with the new password.
-9. Marks the password `changed` only after the new sign-in is verified.
-10. Atomically updates the checkpoint and plaintext output.
-11. Stops the profile unless the keep-profile toggle is enabled, then starts
+7. For **Change 2FA**, authorizes and disables the old authenticator factor,
+   opens a fresh enrollment, and commits the new secret only after verification.
+   A failure after disable authorization is treated as `critical` because the
+   active factor may be unknown.
+8. Submits the generated password through the supported provider flow.
+9. Signs out and signs in again with the new password.
+10. Marks the password `changed` only after the new sign-in is verified.
+11. Atomically updates the checkpoint and plaintext output.
+12. Stops the profile unless the keep-profile toggle is enabled, then starts
     the next account.
 
 Normal stages also include `changing_totp`, `verifying_new_totp`,
