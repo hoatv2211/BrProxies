@@ -139,6 +139,18 @@
 .account-keeper .account-keeper__field-label,
 .account-keeper .account-keeper__field > small { color: var(--tx-3); font-size: 10.5px; }
 
+.account-keeper .account-keeper__field > select {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--bd-1);
+  border-radius: 7px;
+  background: var(--bg-1);
+  color: var(--tx-1);
+  font-family: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+}
+
 .account-keeper .account-keeper__source-modes {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

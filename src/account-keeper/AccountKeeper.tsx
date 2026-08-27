@@ -36,6 +36,14 @@ type AccountKeeperProps = {
   confirm: (options: ConfirmOptions) => Promise<any>;
 };
 
+type ActiveProxyOption = {
+  id: string;
+  name: string;
+  proxy: string;
+  country: string;
+  latencyMs: number;
+};
+
 const accountStages = new Set<AccountStage>([
   "queued", "launching", "logging_in", "submitting_totp", "changing_password",
   "verifying_new_password", "changing_totp", "verifying_new_totp", "changing_email",
@@ -59,6 +67,7 @@ const initialDraft: DraftState = {
   inputValidationRevision: null,
   outputPath: "",
   templateText: "",
+  proxySelection: "none",
   keepProfileRunning: false,
   plaintextAcknowledged: false,
   inputValidation: null,
@@ -238,6 +247,8 @@ function labelFor(value: string): string {
 
 export function AccountKeeper({ confirm }: AccountKeeperProps) {
   const [draft, setDraft] = useState<DraftState>(initialDraft);
+  const [activeProxies, setActiveProxies] = useState<ActiveProxyOption[]>([]);
+  const [proxyListUnavailable, setProxyListUnavailable] = useState(false);
   const [jobs, setJobs] = useState<JobView[]>([]);
   const [profiles, setProfiles] = useState<ManagedProfileView[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -375,6 +386,52 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
       }
     };
     void loadDefaults();
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const loadActiveProxies = async () => {
+      try {
+        const value = await invoke<unknown>("proxy_list");
+        const entries = Array.isArray(value) ? value : [];
+        const candidates = entries.flatMap((entry) => {
+          const record = asRecord(entry);
+          const id = asString(record?.id).trim();
+          const host = asString(record?.host).trim();
+          const port = asNumber(record?.port);
+          if (!id || !host || !Number.isInteger(port) || port <= 0) return [];
+          return [{
+            id,
+            name: asString(record?.name).trim(),
+            proxy: host + ":" + port,
+            country: asString(record?.country).trim().toUpperCase(),
+          }];
+        });
+        const proxies = (await Promise.all(candidates.map(async (candidate) => {
+          try {
+            const snapshot = asRecord(await invoke<unknown>("proxy_last_test", {
+              id: candidate.id,
+            }));
+            const latencyMs = snapshot?.tcp_ms;
+            if (typeof latencyMs !== "number" || !Number.isFinite(latencyMs)) return null;
+            return { ...candidate, latencyMs };
+          } catch {
+            return null;
+          }
+        }))).filter((proxy): proxy is ActiveProxyOption => proxy !== null);
+        if (disposed) return;
+        proxies.sort((left, right) => left.latencyMs - right.latencyMs
+          || left.proxy.localeCompare(right.proxy));
+        setActiveProxies(proxies);
+        setProxyListUnavailable(false);
+      } catch {
+        if (!disposed) setProxyListUnavailable(true);
+      }
+    };
+    void loadActiveProxies();
     return () => {
       disposed = true;
     };
@@ -644,6 +701,11 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           template: draft.operation === "change_password" ? draft.templateText : "",
           adapterId: qaAdapterId.current,
           operation: draft.operation,
+          proxySelection: draft.proxySelection === "random"
+            ? { mode: "random" }
+            : draft.proxySelection.startsWith("proxy:")
+              ? { mode: "specific", proxy: draft.proxySelection.slice("proxy:".length) }
+              : { mode: "none" },
           keepProfileRunning: draft.keepProfileRunning,
           pauseAfterCurrent: false,
         },
@@ -1213,6 +1275,35 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
             </div>
           </div>
           )}
+
+          <div className="account-keeper__field">
+            <label htmlFor="account-keeper-proxy">Browser proxy</label>
+            <select
+              id="account-keeper-proxy"
+              value={draft.proxySelection}
+              onChange={(event) => setDraft((current) => ({
+                ...current,
+                proxySelection: event.target.value,
+              }))}
+            >
+              <option value="none">None</option>
+              <option value="random">Random active proxy</option>
+              {activeProxies.map((proxy) => (
+                <option key={proxy.id} value={"proxy:" + proxy.id}>
+                  {[proxy.country, proxy.name, proxy.proxy, proxy.latencyMs + " ms"]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </option>
+              ))}
+            </select>
+            <small>
+              {proxyListUnavailable
+                ? "Active launcher proxy list unavailable. None and Random remain available."
+                : activeProxies.length === 0
+                  ? "No active proxies found. Run Test all in Proxies, then reopen Account Keeper."
+                  : "None keeps the current proxy. Random or a selected proxy applies to new and existing profiles."}
+            </small>
+          </div>
 
           <label className="account-keeper__toggle">
             <input

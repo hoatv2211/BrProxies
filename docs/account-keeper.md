@@ -183,16 +183,22 @@ length is outside 12-128 characters.
    UTF-8 plaintext input file.
 4. For pasted text, click **Validate Input** explicitly. A selected file is
    validated immediately after selection.
-5. For change operations, keep the default `%USERPROFILE%\Documents\account-keeper-result.json`, or
-   click **Browse** under **Output file** and choose another plaintext output
-   JSON path.
+5. For change operations, keep the default
+   `<BrProxies.exe directory>\output\account-keeper-result.json`, or click
+   **Browse** under **Output file** and choose another plaintext output JSON
+   path.
 6. For **Change password** only, enter the batch password template, then click **Validate Template**.
 7. Review the masked account identities, parsed account count, and any
    line-specific errors.
 8. Acknowledge that the active input and output contain plaintext secrets.
-9. Optionally enable **Keep profile running after completion**. It is disabled
+9. Choose **Browser proxy**: **None** (default), **Random active proxy**, or one
+   active proxy already stored and tested under **Proxies**. **None** keeps an
+   existing profile's current proxy. **Random** or a selected proxy applies to
+   both new and existing profiles; a running profile is restarted when its
+   proxy changes.
+10. Optionally enable **Keep profile running after completion**. It is disabled
    by default.
-10. Click **Start Batch** and confirm the selected operation.
+11. Click **Start Batch** and confirm the selected operation.
 
 ### Optional mailbox connector
 
@@ -227,6 +233,13 @@ does not erase or zeroize copies that may remain in process memory.
 For each account, Account Keeper:
 
 1. Resolves or creates the account's persistent BrProxies profile.
+   If the batch selected **Random** or a specific proxy, Account Keeper binds or
+   replaces the profile proxy before launch. **Random active proxy** resolves
+   separately for each account. If the proxy changes while the profile is
+   running, Account Keeper stops it so the next launch uses the new proxy.
+   Failure to resolve or bind the proxy pauses the job without launching it
+   directly; test or restore an active proxy under **Proxies**, then use
+   **Resume Job**.
 2. Launches that profile with CDP enabled.
 3. Starts a fresh Node/Patchright worker for the account.
 4. Classifies the current session. If the profile is already signed in, it
@@ -261,6 +274,10 @@ states are `waiting_manual`, `failed`, `critical`, and `cancelled`.
 - **Keep profile running after completion** controls whether a normally
   completed profile process remains open. The persistent profile and its
   user-data directory remain mapped even when the process is stopped.
+- **Browser proxy** with **None** preserves the current proxy of an existing
+  Account Keeper profile. A specific selection applies to every account in the
+  batch; Random resolves independently for each account. Either selected mode
+  replaces an existing profile proxy when the resolved proxy differs.
 - **Logs** shows a redacted snapshot for the selected job: timestamp, masked
   account, stage, attempt count, and canonical error code only.
 - **Clean** removes a selected terminal progress checkpoint with status

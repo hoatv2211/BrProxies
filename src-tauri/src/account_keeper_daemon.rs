@@ -169,6 +169,7 @@ pub async fn create_job(request: CreateJobRequest) -> std::result::Result<Daemon
         template: template.clone(),
         adapter_id: "openai-chatgpt-v1".into(),
         operation: "change_password".into(),
+        proxy_selection: crate::proxypool::ProxySelection::None,
         keep_profile_running: request.keep_profile_running,
         pause_after_current: false,
     })
@@ -321,6 +322,7 @@ async fn start_queued_job(id: &str) -> Result<()> {
         template: job.template,
         adapter_id: "openai-chatgpt-v1".into(),
         operation: "change_password".into(),
+        proxy_selection: crate::proxypool::ProxySelection::None,
         keep_profile_running: job.keep_profile_running,
         pause_after_current: false,
     };

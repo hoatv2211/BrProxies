@@ -6,6 +6,7 @@ use crate::account_keeper_store::{
     AccountCheckpoint, BatchOutput, JobCheckpoint, OutputAccount, PasswordState,
     PendingSecurityChange, VaultAccount, VaultFile, SCHEMA_VERSION,
 };
+use crate::proxypool::ProxySelection;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -328,6 +329,8 @@ pub struct StartRequest {
     pub adapter_id: String,
     #[serde(default = "default_batch_operation")]
     pub operation: String,
+    #[serde(default)]
+    pub proxy_selection: ProxySelection,
     pub keep_profile_running: bool,
     pub pause_after_current: bool,
 }
@@ -951,6 +954,14 @@ pub trait ProfileRuntime: Send + Sync {
     fn create_profile(&self, fingerprint_id: &str, name: &str) -> Result<String>;
     fn set_folder(&self, profile_id: &str, folder: &str) -> Result<()>;
 
+    fn bound_proxy_id(&self, _profile_id: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    fn bind_proxy(&self, _profile_id: &str, _proxy_id: &str) -> Result<()> {
+        bail!("profile proxy binding is unavailable")
+    }
+
     /// Label a profile after a verified rotation (visible name + Notes line).
     /// Default no-op so test doubles need not implement it.
     fn set_label(&self, _profile_id: &str, _name: &str, _notes: &str) -> Result<()> {
@@ -977,6 +988,34 @@ pub trait ProfileRuntime: Send + Sync {
     }
 }
 
+pub trait ProxyRuntime: Send + Sync {
+    fn resolve_proxy_id<'a>(
+        &'a self,
+        selection: &'a ProxySelection,
+    ) -> BoxFuture<'a, Result<Option<String>>>;
+}
+
+#[derive(Clone, Default)]
+struct TauriProxyRuntime;
+
+impl ProxyRuntime for TauriProxyRuntime {
+    fn resolve_proxy_id<'a>(
+        &'a self,
+        selection: &'a ProxySelection,
+    ) -> BoxFuture<'a, Result<Option<String>>> {
+        Box::pin(async move {
+            let Some(entry) = crate::proxypool::resolve_proxy_entry(selection)
+                .await
+                .map_err(anyhow::Error::msg)?
+            else {
+                return Ok(None);
+            };
+            let stored = crate::proxy::upsert_dedup(entry)?;
+            Ok(Some(stored.id))
+        })
+    }
+}
+
 #[derive(Clone)]
 struct TauriProfileRuntime {
     window: tauri::WebviewWindow,
@@ -987,6 +1026,16 @@ struct HeadlessProfileRuntime;
 
 fn local_profile_exists(profile_id: &str) -> bool {
     crate::profile::load_raw(profile_id).is_ok()
+}
+
+fn local_bound_proxy_id(profile_id: &str) -> Result<Option<String>> {
+    Ok(crate::profile::load_raw(profile_id)?.meta.proxy_id)
+}
+
+fn bind_local_profile_proxy(profile_id: &str, proxy_id: &str) -> Result<()> {
+    let mut profile = crate::profile::load_raw(profile_id)?;
+    profile.meta.proxy_id = Some(proxy_id.to_string());
+    crate::profile::save_raw(&mut profile)
 }
 
 fn local_fingerprints() -> Result<Vec<FingerprintCandidate>> {
@@ -1056,6 +1105,14 @@ impl ProfileRuntime for TauriProfileRuntime {
 
     fn set_folder(&self, profile_id: &str, folder: &str) -> Result<()> {
         crate::profile::set_folder(profile_id, folder)
+    }
+
+    fn bound_proxy_id(&self, profile_id: &str) -> Result<Option<String>> {
+        local_bound_proxy_id(profile_id)
+    }
+
+    fn bind_proxy(&self, profile_id: &str, proxy_id: &str) -> Result<()> {
+        bind_local_profile_proxy(profile_id, proxy_id)
     }
 
     fn set_label(&self, profile_id: &str, name: &str, notes: &str) -> Result<()> {
@@ -1202,6 +1259,14 @@ impl ProfileRuntime for HeadlessProfileRuntime {
         crate::profile::set_folder(profile_id, folder)
     }
 
+    fn bound_proxy_id(&self, profile_id: &str) -> Result<Option<String>> {
+        local_bound_proxy_id(profile_id)
+    }
+
+    fn bind_proxy(&self, profile_id: &str, proxy_id: &str) -> Result<()> {
+        bind_local_profile_proxy(profile_id, proxy_id)
+    }
+
     fn set_label(&self, profile_id: &str, name: &str, notes: &str) -> Result<()> {
         crate::profile::set_account_keeper_label(profile_id, name, notes)
     }
@@ -1337,6 +1402,7 @@ pub fn merge_imports_and_checkpoint(
         accounts.push(AccountCheckpoint {
             account_key,
             profile_id: Some(profile_id),
+            assign_proxy: request.proxy_selection.assigns_proxy(),
             state: "queued".to_string(),
             attempts: 0,
             updated_at: now.to_string(),
@@ -1350,6 +1416,7 @@ pub fn merge_imports_and_checkpoint(
         output_path: request.output_path.clone(),
         template: request.template.clone(),
         adapter_id: request.adapter_id.clone(),
+        proxy_selection: request.proxy_selection.clone(),
         keep_profile_running: request.keep_profile_running,
         pause_after_current: request.pause_after_current,
         operation: request.operation.clone(),
@@ -1542,8 +1609,10 @@ fn ensure_worker_fields(
 
 #[tauri::command]
 pub fn account_keeper_defaults() -> std::result::Result<AccountKeeperDefaultsDto, String> {
-    let base_dir = std::env::current_dir()
+    let base_dir = std::env::current_exe()
         .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .or_else(|| std::env::current_dir().ok())
         .or_else(dirs::document_dir)
         .ok_or_else(|| "Account Keeper base directory is not available".to_string())?;
     default_config_for(&base_dir).map_err(|error| error.to_string())
@@ -1723,6 +1792,7 @@ pub async fn run_headless_batch(
     let coordinator = Coordinator {
         clock: Arc::new(SystemClock),
         profiles: Arc::new(runtime),
+        proxies: Arc::new(TauriProxyRuntime),
         workers: Arc::new(NodeWorkerTransport {
             resource_root: headless_worker_resource_root(),
         }),
@@ -2557,6 +2627,12 @@ pub(crate) fn validate_start_request(request: &StartRequest) -> Result<()> {
     ) {
         bail!("unsupported Account Keeper adapter");
     }
+    if matches!(
+        &request.proxy_selection,
+        ProxySelection::Specific { proxy } if proxy.trim().is_empty()
+    ) {
+        bail!("Account Keeper proxy selection is empty");
+    }
     let operation = account_keeper_batch_operation(request);
     if operation != BatchOperation::Login {
         if request.output_path.trim().is_empty() {
@@ -2704,6 +2780,7 @@ fn account_keeper_profile_notes(vault_account: &VaultAccount) -> String {
 struct Coordinator {
     clock: Arc<dyn Clock>,
     profiles: Arc<dyn ProfileRuntime>,
+    proxies: Arc<dyn ProxyRuntime>,
     workers: Arc<dyn WorkerTransport>,
     events: Arc<dyn EventSink>,
 }
@@ -2714,6 +2791,21 @@ enum AccountOutcome {
     Failed,
     Critical,
     Cancelled,
+    Paused,
+}
+
+fn pause_for_proxy_assignment_failure(
+    checkpoint: &mut JobCheckpoint,
+    account_index: usize,
+    now: &str,
+) -> AccountOutcome {
+    let account = &mut checkpoint.accounts[account_index];
+    account.state = "queued".to_string();
+    account.error = Some("proxy_assignment_failed".to_string());
+    account.updated_at = now.to_string();
+    checkpoint.status = "paused".to_string();
+    checkpoint.updated_at = now.to_string();
+    AccountOutcome::Paused
 }
 
 fn terminal_outcome(state: &AccountRunState) -> AccountOutcome {
@@ -2738,6 +2830,7 @@ fn spawn_batch(
     let coordinator = Coordinator {
         clock: Arc::new(SystemClock),
         profiles: Arc::new(TauriProfileRuntime { window }),
+        proxies: Arc::new(TauriProxyRuntime),
         workers: Arc::new(NodeWorkerTransport { resource_root }),
         events: Arc::new(TauriEventSink { app }),
     };
@@ -2864,6 +2957,7 @@ impl Coordinator {
                     )?;
                     return Ok(());
                 }
+                AccountOutcome::Paused => return Ok(()),
                 AccountOutcome::Success | AccountOutcome::Failed => {}
             }
 
@@ -2922,6 +3016,26 @@ impl Coordinator {
         let mut navigation_retries = 0usize;
         let mut crash_restarts = 0usize;
         let mut totp_requests = 0usize;
+
+        if checkpoint.accounts[account_index].assign_proxy {
+            if assign_pending_profile_proxy(
+                self.profiles.as_ref(),
+                self.proxies.as_ref(),
+                checkpoint,
+                account_index,
+            )
+            .await
+            .is_err()
+            {
+                let now = self.clock.now();
+                let outcome =
+                    pause_for_proxy_assignment_failure(checkpoint, account_index, &now);
+                vault.accounts[vault_index].last_status = Some("queued".to_string());
+                persist_snapshot(checkpoint, vault, self.clock.as_ref(), self.events.as_ref())?;
+                return Ok(outcome);
+            }
+            persist_snapshot(checkpoint, vault, self.clock.as_ref(), self.events.as_ref())?;
+        }
 
         'attempt: loop {
             state.stage = AccountStage::Queued;
@@ -3744,6 +3858,38 @@ pub fn ensure_profile_mapping(
     Ok(profile_id)
 }
 
+async fn assign_pending_profile_proxy(
+    profiles: &dyn ProfileRuntime,
+    proxies: &dyn ProxyRuntime,
+    checkpoint: &mut JobCheckpoint,
+    account_index: usize,
+) -> Result<()> {
+    if !checkpoint.accounts[account_index].assign_proxy {
+        return Ok(());
+    }
+    if !checkpoint.proxy_selection.assigns_proxy() {
+        checkpoint.accounts[account_index].assign_proxy = false;
+        return Ok(());
+    }
+    let profile_id = checkpoint.accounts[account_index]
+        .profile_id
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("Account Keeper profile mapping is missing"))?;
+    let proxy_id = proxies
+        .resolve_proxy_id(&checkpoint.proxy_selection)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Account Keeper proxy selection did not resolve"))?;
+    if profiles.bound_proxy_id(&profile_id)?.as_deref() != Some(proxy_id.as_str()) {
+        if profiles.is_running(&profile_id) {
+            profiles.kill_profile(&profile_id).await?;
+            wait_profile_absent(profiles, &profile_id).await?;
+        }
+        profiles.bind_proxy(&profile_id, &proxy_id)?;
+    }
+    checkpoint.accounts[account_index].assign_proxy = false;
+    Ok(())
+}
+
 pub async fn prepare_profile_cdp(runtime: &dyn ProfileRuntime, profile_id: &str) -> Result<String> {
     if runtime.is_running(profile_id) {
         if let Some(endpoint) = runtime.cdp_http_url(profile_id) {
@@ -4030,6 +4176,7 @@ pub fn apply_worker_event(
 mod tests {
     use super::*;
     use crate::account_keeper_store::{AccountCheckpoint, JobCheckpoint, VaultAccount, VaultFile};
+    use std::collections::HashMap;
     use std::sync::Mutex as StdMutex;
 
     fn test_dir(label: &str) -> std::path::PathBuf {
@@ -4255,6 +4402,7 @@ mod tests {
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
             operation: "change_password".into(),
+            proxy_selection: ProxySelection::None,
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -4280,6 +4428,7 @@ mod tests {
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
             operation: "delete_account".into(),
+            proxy_selection: ProxySelection::None,
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -4296,6 +4445,7 @@ mod tests {
             template: String::new(),
             adapter_id: "fixture-v1".into(),
             operation: "login".into(),
+            proxy_selection: ProxySelection::None,
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -4316,6 +4466,7 @@ mod tests {
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
             operation: "change_password".into(),
+            proxy_selection: ProxySelection::None,
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -4342,6 +4493,7 @@ mod tests {
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
             operation: "change_password".into(),
+            proxy_selection: ProxySelection::None,
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -4374,6 +4526,177 @@ mod tests {
     }
 
     #[test]
+    fn new_profile_random_proxy_selection_is_persisted_for_assignment() {
+        let source_text = "owner@example.test|current-password|JBSWY3DPEHPK3PXP";
+        let imports = read_input_accounts(&InputSource::Inline {
+            text: source_text.into(),
+        })
+        .unwrap();
+        let runtime = FakeProfileRuntime {
+            fingerprints: vec![FingerprintCandidate::new("windows-a", "Alpha", "Windows")],
+            ..Default::default()
+        };
+        let mut vault = VaultFile::default();
+        let request: StartRequest = serde_json::from_value(serde_json::json!({
+            "source": { "kind": "inline", "text": source_text },
+            "outputPath": "C:/synthetic/result.json",
+            "template": "Local-{random:16}",
+            "adapterId": "fixture-v1",
+            "operation": "change_password",
+            "proxySelection": { "mode": "random" },
+            "keepProfileRunning": false,
+            "pauseAfterCurrent": false
+        }))
+        .unwrap();
+
+        let checkpoint = merge_imports_and_checkpoint(
+            &runtime,
+            &mut vault,
+            &imports,
+            &request,
+            "batch-proxy-random",
+            "2026-08-27T00:00:00Z",
+        )
+        .unwrap();
+        let value = serde_json::to_value(checkpoint).unwrap();
+
+        assert_eq!(value["proxy_selection"]["mode"], "random");
+        assert_eq!(value["accounts"][0]["assign_proxy"], true);
+    }
+
+    #[test]
+    fn existing_profile_with_bound_proxy_is_marked_for_selected_proxy_assignment() {
+        let source_text = "owner@example.test|current-password|JBSWY3DPEHPK3PXP";
+        let imports = read_input_accounts(&InputSource::Inline {
+            text: source_text.into(),
+        })
+        .unwrap();
+        let runtime = FakeProfileRuntime {
+            existing_profiles: HashSet::from(["profile-1".to_string()]),
+            bound_proxies: StdMutex::new(HashMap::from([(
+                "profile-1".to_string(),
+                "proxy-existing".to_string(),
+            )])),
+            ..Default::default()
+        };
+        let mut vault = synthetic_vault();
+        vault.accounts[0].account_key = stable_account_key("owner@example.test");
+        let request: StartRequest = serde_json::from_value(serde_json::json!({
+            "source": { "kind": "inline", "text": source_text },
+            "outputPath": "C:/synthetic/result.json",
+            "template": "Local-{random:16}",
+            "adapterId": "fixture-v1",
+            "operation": "change_password",
+            "proxySelection": { "mode": "specific", "proxy": "1.2.3.4:8080" },
+            "keepProfileRunning": false,
+            "pauseAfterCurrent": false
+        }))
+        .unwrap();
+
+        let checkpoint = merge_imports_and_checkpoint(
+            &runtime,
+            &mut vault,
+            &imports,
+            &request,
+            "batch-proxy-specific",
+            "2026-08-27T00:00:00Z",
+        )
+        .unwrap();
+        let value = serde_json::to_value(checkpoint).unwrap();
+
+        assert_eq!(value["proxy_selection"]["mode"], "specific");
+        assert_eq!(value["accounts"][0]["assign_proxy"], true);
+        assert!(runtime.created.into_inner().unwrap().is_empty());
+    }
+
+    #[test]
+    fn existing_direct_profile_is_marked_for_selected_proxy_assignment() {
+        let source_text = "owner@example.test|current-password|JBSWY3DPEHPK3PXP";
+        let imports = read_input_accounts(&InputSource::Inline {
+            text: source_text.into(),
+        })
+        .unwrap();
+        let runtime = FakeProfileRuntime {
+            existing_profiles: HashSet::from(["profile-1".to_string()]),
+            ..Default::default()
+        };
+        let mut vault = synthetic_vault();
+        vault.accounts[0].account_key = stable_account_key("owner@example.test");
+        let request: StartRequest = serde_json::from_value(serde_json::json!({
+            "source": { "kind": "inline", "text": source_text },
+            "outputPath": "C:/synthetic/result.json",
+            "template": "Local-{random:16}",
+            "adapterId": "fixture-v1",
+            "operation": "change_password",
+            "proxySelection": { "mode": "specific", "proxy": "proxy-selected" },
+            "keepProfileRunning": false,
+            "pauseAfterCurrent": false
+        }))
+        .unwrap();
+
+        let checkpoint = merge_imports_and_checkpoint(
+            &runtime,
+            &mut vault,
+            &imports,
+            &request,
+            "batch-proxy-direct",
+            "2026-08-27T00:00:00Z",
+        )
+        .unwrap();
+        let value = serde_json::to_value(checkpoint).unwrap();
+
+        assert_eq!(value["accounts"][0]["assign_proxy"], true);
+        assert!(runtime.created.into_inner().unwrap().is_empty());
+    }
+
+    #[test]
+    fn existing_profile_none_proxy_selection_keeps_current_binding() {
+        let source_text = "owner@example.test|current-password|JBSWY3DPEHPK3PXP";
+        let imports = read_input_accounts(&InputSource::Inline {
+            text: source_text.into(),
+        })
+        .unwrap();
+        let runtime = FakeProfileRuntime {
+            existing_profiles: HashSet::from(["profile-1".to_string()]),
+            bound_proxies: StdMutex::new(HashMap::from([(
+                "profile-1".to_string(),
+                "proxy-existing".to_string(),
+            )])),
+            ..Default::default()
+        };
+        let mut vault = synthetic_vault();
+        vault.accounts[0].account_key = stable_account_key("owner@example.test");
+        let request: StartRequest = serde_json::from_value(serde_json::json!({
+            "source": { "kind": "inline", "text": source_text },
+            "outputPath": "C:/synthetic/result.json",
+            "template": "Local-{random:16}",
+            "adapterId": "fixture-v1",
+            "operation": "change_password",
+            "proxySelection": { "mode": "none" },
+            "keepProfileRunning": false,
+            "pauseAfterCurrent": false
+        }))
+        .unwrap();
+
+        let checkpoint = merge_imports_and_checkpoint(
+            &runtime,
+            &mut vault,
+            &imports,
+            &request,
+            "batch-proxy-none",
+            "2026-08-27T00:00:00Z",
+        )
+        .unwrap();
+
+        assert!(!checkpoint.accounts[0].assign_proxy);
+        assert_eq!(
+            runtime.bound_proxies.into_inner().unwrap(),
+            HashMap::from([("profile-1".to_string(), "proxy-existing".to_string())])
+        );
+        assert!(runtime.created.into_inner().unwrap().is_empty());
+    }
+
+    #[test]
     fn import_labels_new_profile_with_account_name_and_credential_notes() {
         let source_text = "owner@example.test|current-password|JBSWY3DPEHPK3PXP";
         let imports = read_input_accounts(&InputSource::Inline {
@@ -4393,6 +4716,7 @@ mod tests {
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
             operation: "change_password".into(),
+            proxy_selection: ProxySelection::None,
             keep_profile_running: false,
             pause_after_current: false,
         };
@@ -4649,16 +4973,18 @@ mod tests {
     }
 
     #[test]
-    fn defaults_output_path_is_in_project_output_dir() {
+    fn defaults_output_path_is_beside_running_executable() {
+        let executable_dir = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let expected_output_path = executable_dir
+            .join("output")
+            .join("account-keeper-result.json");
         let defaults = account_keeper_defaults().unwrap();
-        assert!(
-            defaults
-                .output_path
-                .replace('\\', "/")
-                .ends_with("/output/account-keeper-result.json"),
-            "unexpected output path: {}",
-            defaults.output_path
-        );
+
+        assert_eq!(PathBuf::from(defaults.output_path), expected_output_path);
     }
 
     #[test]
@@ -4722,6 +5048,7 @@ mod tests {
             output_path: String::new(),
             template: String::new(),
             adapter_id: "openai-chatgpt-v1".into(),
+            proxy_selection: ProxySelection::None,
             keep_profile_running: true,
             pause_after_current: false,
             operation: "change_password".to_string(),
@@ -4731,6 +5058,7 @@ mod tests {
                 AccountCheckpoint {
                     account_key: "unknown-key".into(),
                     profile_id: Some("unknown-profile".into()),
+                    assign_proxy: false,
                     state: "failed".into(),
                     attempts: 1,
                     updated_at: "2026-07-31T00:00:00Z".into(),
@@ -4739,6 +5067,7 @@ mod tests {
                 AccountCheckpoint {
                     account_key: "verified-key".into(),
                     profile_id: Some("verified-profile".into()),
+                    assign_proxy: false,
                     state: "success".into(),
                     attempts: 1,
                     updated_at: "2026-07-31T00:00:00Z".into(),
@@ -4798,6 +5127,10 @@ mod tests {
         created: StdMutex<Vec<(String, String)>>,
         folders: StdMutex<Vec<(String, String)>>,
         labels: StdMutex<Vec<(String, String, String)>>,
+        bound_proxies: StdMutex<HashMap<String, String>>,
+        proxy_binds: StdMutex<Vec<(String, String)>>,
+        running_profiles: StdMutex<HashSet<String>>,
+        killed_profiles: StdMutex<Vec<String>>,
     }
 
     impl ProfileRuntime for FakeProfileRuntime {
@@ -4833,6 +5166,147 @@ mod tests {
             ));
             Ok(())
         }
+
+        fn bound_proxy_id(&self, profile_id: &str) -> Result<Option<String>> {
+            Ok(self.bound_proxies.lock().unwrap().get(profile_id).cloned())
+        }
+
+        fn bind_proxy(&self, profile_id: &str, proxy_id: &str) -> Result<()> {
+            self.bound_proxies
+                .lock()
+                .unwrap()
+                .insert(profile_id.to_string(), proxy_id.to_string());
+            self.proxy_binds
+                .lock()
+                .unwrap()
+                .push((profile_id.to_string(), proxy_id.to_string()));
+            Ok(())
+        }
+
+        fn is_running(&self, profile_id: &str) -> bool {
+            self.running_profiles.lock().unwrap().contains(profile_id)
+        }
+
+        fn kill_profile<'a>(&'a self, profile_id: &'a str) -> BoxFuture<'a, Result<bool>> {
+            Box::pin(async move {
+                let was_running = self.running_profiles.lock().unwrap().remove(profile_id);
+                if was_running {
+                    self.killed_profiles
+                        .lock()
+                        .unwrap()
+                        .push(profile_id.to_string());
+                }
+                Ok(was_running)
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeProxyRuntime {
+        proxy_id: Option<String>,
+        resolved: StdMutex<Vec<ProxySelection>>,
+    }
+
+    impl ProxyRuntime for FakeProxyRuntime {
+        fn resolve_proxy_id<'a>(
+            &'a self,
+            selection: &'a ProxySelection,
+        ) -> BoxFuture<'a, Result<Option<String>>> {
+            Box::pin(async move {
+                self.resolved.lock().unwrap().push(selection.clone());
+                Ok(self.proxy_id.clone())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_proxy_assignment_binds_profile_and_clears_checkpoint_flag() {
+        let profiles = FakeProfileRuntime::default();
+        let proxies = FakeProxyRuntime {
+            proxy_id: Some("proxy-random".to_string()),
+            ..Default::default()
+        };
+        let mut checkpoint = synthetic_checkpoint();
+        checkpoint.proxy_selection = ProxySelection::Random;
+        checkpoint.accounts[0].assign_proxy = true;
+
+        assign_pending_profile_proxy(&profiles, &proxies, &mut checkpoint, 0)
+            .await
+            .unwrap();
+
+        assert!(!checkpoint.accounts[0].assign_proxy);
+        assert_eq!(
+            profiles.proxy_binds.into_inner().unwrap(),
+            vec![("profile-1".to_string(), "proxy-random".to_string())]
+        );
+        assert_eq!(
+            proxies.resolved.into_inner().unwrap(),
+            vec![ProxySelection::Random]
+        );
+    }
+
+    #[tokio::test]
+    async fn selected_proxy_replaces_existing_bound_proxy_and_stops_running_profile() {
+        let profiles = FakeProfileRuntime {
+            bound_proxies: StdMutex::new(HashMap::from([(
+                "profile-1".to_string(),
+                "proxy-existing".to_string(),
+            )])),
+            running_profiles: StdMutex::new(HashSet::from(["profile-1".to_string()])),
+            ..Default::default()
+        };
+        let proxies = FakeProxyRuntime {
+            proxy_id: Some("proxy-new".to_string()),
+            ..Default::default()
+        };
+        let mut checkpoint = synthetic_checkpoint();
+        checkpoint.proxy_selection = ProxySelection::Random;
+        checkpoint.accounts[0].assign_proxy = true;
+
+        assign_pending_profile_proxy(&profiles, &proxies, &mut checkpoint, 0)
+            .await
+            .unwrap();
+
+        assert!(!checkpoint.accounts[0].assign_proxy);
+        assert_eq!(
+            profiles.proxy_binds.into_inner().unwrap(),
+            vec![("profile-1".to_string(), "proxy-new".to_string())]
+        );
+        assert_eq!(
+            profiles.bound_proxies.into_inner().unwrap(),
+            HashMap::from([("profile-1".to_string(), "proxy-new".to_string())])
+        );
+        assert_eq!(
+            profiles.killed_profiles.into_inner().unwrap(),
+            vec!["profile-1".to_string()]
+        );
+        assert_eq!(
+            proxies.resolved.into_inner().unwrap(),
+            vec![ProxySelection::Random]
+        );
+    }
+
+    #[test]
+    fn proxy_assignment_failure_pauses_a_resumable_account() {
+        let mut checkpoint = synthetic_checkpoint();
+        checkpoint.status = "running".to_string();
+        checkpoint.accounts[0].state = "launching".to_string();
+        checkpoint.accounts[0].assign_proxy = true;
+
+        let outcome = pause_for_proxy_assignment_failure(
+            &mut checkpoint,
+            0,
+            "2026-08-27T00:00:00Z",
+        );
+
+        assert_eq!(outcome, AccountOutcome::Paused);
+        assert_eq!(checkpoint.status, "paused");
+        assert_eq!(checkpoint.accounts[0].state, "queued");
+        assert_eq!(
+            checkpoint.accounts[0].error.as_deref(),
+            Some("proxy_assignment_failed")
+        );
+        assert!(checkpoint.accounts[0].assign_proxy);
     }
 
     #[test]
@@ -4957,6 +5431,7 @@ mod tests {
             output_path: "C:/synthetic/result.json".into(),
             template: "Local-{random:16}".into(),
             adapter_id: "fixture-v1".into(),
+            proxy_selection: ProxySelection::None,
             keep_profile_running: false,
             pause_after_current: false,
             operation: "change_password".to_string(),
@@ -4965,6 +5440,7 @@ mod tests {
             accounts: vec![AccountCheckpoint {
                 account_key: "account-key".into(),
                 profile_id: Some("profile-1".into()),
+                assign_proxy: false,
                 state: "waiting_manual".into(),
                 attempts: 1,
                 updated_at: "2026-07-29T00:00:00Z".into(),
@@ -5471,6 +5947,7 @@ mod tests {
                 template: "Local-{random:16}".into(),
                 adapter_id: "fixture-v1".into(),
                 operation: "change_password".into(),
+                proxy_selection: ProxySelection::None,
                 keep_profile_running: false,
                 pause_after_current: false,
             },
@@ -5518,6 +5995,7 @@ mod tests {
                 template: "Local-{random:16}".into(),
                 adapter_id: "fixture-v1".into(),
                 operation: "change_password".into(),
+                proxy_selection: ProxySelection::None,
                 keep_profile_running: false,
                 pause_after_current: false,
             },

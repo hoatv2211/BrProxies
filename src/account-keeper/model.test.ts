@@ -23,6 +23,7 @@ const validDraft: DraftState = {
   inputValidationRevision: 1,
   outputPath: "C:\\fixtures\\result.json",
   templateText: "Local-{random:16}",
+  proxySelection: "none",
   keepProfileRunning: false,
   plaintextAcknowledged: true,
   inputValidation: {

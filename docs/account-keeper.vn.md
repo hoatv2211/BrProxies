@@ -181,14 +181,19 @@ Ví dụ không hợp lệ gồm thiếu placeholder, có hai placeholder, `{ran
 4. Với text dán, bấm **Validate Input** để validate rõ ràng. File được validate
    ngay sau khi chọn.
 5. Với operation thay đổi, giữ đường dẫn mặc định
-   `%USERPROFILE%\Documents\account-keeper-result.json`, hoặc bấm **Browse**
-   dưới **Output file** để chọn đường dẫn output JSON plaintext khác.
+   `<thư mục chứa BrProxies.exe>\output\account-keeper-result.json`, hoặc bấm
+   **Browse** dưới **Output file** để chọn đường dẫn output JSON plaintext khác.
 6. Chỉ với **Change password**, nhập password template rồi bấm **Validate Template**.
 7. Kiểm tra identity account đã mask, tổng số account đã parse và lỗi theo dòng.
 8. Xác nhận rằng input đang dùng chứa secret plaintext và output cũng vậy.
-9. Tùy chọn bật **Keep profile running after completion**. Mặc định toggle này
+9. Chọn **Browser proxy**: **None** (mặc định), **Random active proxy**, hoặc một
+   proxy đã lưu và test Active trong mục **Proxies**. **None** giữ nguyên proxy
+   hiện tại của profile đã tồn tại. **Random** hoặc proxy được chọn sẽ áp dụng
+   cho cả profile mới và profile đã tồn tại; profile đang chạy sẽ được khởi động
+   lại khi proxy thay đổi.
+10. Tùy chọn bật **Keep profile running after completion**. Mặc định toggle này
    tắt.
-10. Bấm **Start Batch** và xác nhận operation đã chọn.
+11. Bấm **Start Batch** và xác nhận operation đã chọn.
 
 ### Connector mailbox tùy chọn
 
@@ -223,6 +228,12 @@ trong process memory.
 Với mỗi tài khoản, Account Keeper:
 
 1. Resolve hoặc tạo profile BrProxies lâu dài của account.
+   Nếu batch chọn **Random** hoặc một proxy cụ thể, Account Keeper bind hoặc ghi
+   đè proxy của profile trước khi launch. **Random active proxy** được resolve
+   riêng cho từng account. Nếu proxy thay đổi khi profile đang chạy, Account
+   Keeper stop profile để lần launch tiếp theo dùng proxy mới. Nếu không resolve
+   hoặc bind được proxy, job pause mà không launch trực tiếp; test hoặc khôi phục
+   một proxy Active trong mục **Proxies** rồi bấm **Resume Job**.
 2. Launch profile với CDP được bật.
 3. Start một Node/Patchright worker mới cho account.
 4. Classify session hiện tại. Nếu profile đã đăng nhập, worker bỏ qua việc nhập
@@ -255,6 +266,10 @@ Stage bình thường còn có `changing_totp`, `verifying_new_totp`, `changing_
 - **Keep profile running after completion** quyết định process của profile hoàn
   tất bình thường có tiếp tục mở hay không. Profile lâu dài và user-data vẫn
   được ánh xạ kể cả khi process đã stop.
+- **Browser proxy** với **None** giữ nguyên proxy hiện tại của profile Account
+  Keeper đã tồn tại. Proxy cụ thể áp dụng cho mọi account trong batch; Random
+  được resolve độc lập cho từng account. Hai mode có chọn proxy đều ghi đè proxy
+  của profile đã tồn tại khi proxy resolve khác proxy hiện tại.
 - **Logs** hiển thị snapshot đã redact của job đang chọn: timestamp, account đã
   mask, stage, số lần thử và canonical error code.
 - **Clean** chỉ xóa progress checkpoint terminal có status `completed`,

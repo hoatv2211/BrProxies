@@ -61,6 +61,8 @@ async function defaultInvoke(command: string) {
   }
   if (command === "account_keeper_list_jobs") return [];
   if (command === "account_keeper_list_profiles") return [];
+  if (command === "proxy_list") return [];
+  if (command === "proxy_last_test") return null;
   if (command === "account_keeper_validate_input") {
     return { validCount: 2, maskedAccounts: ["o***r@example.test", "a***n@example.test"] };
   }
@@ -353,6 +355,7 @@ describe("AccountKeeper", () => {
           template: "Local-{random:16}",
           adapterId: "openai-chatgpt-v1",
           operation: "change_password",
+          proxySelection: { mode: "none" },
           keepProfileRunning: false,
           pauseAfterCurrent: false,
         },
@@ -361,6 +364,98 @@ describe("AccountKeeper", () => {
     await waitFor(() => expect(accountInput).toHaveValue(""));
     expect(confirm).toHaveBeenCalled();
     expect(mocks.invoke).not.toHaveBeenCalledWith("read_text_file", expect.anything());
+  });
+
+  it("loads active launcher proxies and sends the selected proxy id", async () => {
+    mocks.save.mockResolvedValue("C:\fixtures\result.json");
+    mocks.invoke.mockImplementation(async (command: string, payload?: unknown) => {
+      if (command === "proxy_list") {
+        return [
+          {
+            id: "proxy-active",
+            name: "Primary proxy",
+            kind: "http",
+            host: "1.2.3.4",
+            port: 8080,
+            username: "",
+            password: "",
+            country: "US",
+            notes: "",
+          },
+          {
+            id: "proxy-failed",
+            name: "Failed proxy",
+            kind: "http",
+            host: "5.6.7.8",
+            port: 3128,
+            username: "",
+            password: "",
+            country: "GB",
+            notes: "",
+          },
+        ];
+      }
+      if (command === "proxy_last_test") {
+        const id = (payload as { id?: string } | undefined)?.id;
+        return {
+          first_seen: "@1",
+          last_seen: "@2",
+          ip: id === "proxy-active" ? "1.2.3.4" : "",
+          country_code: id === "proxy-active" ? "US" : "",
+          country: id === "proxy-active" ? "United States" : "",
+          region: "",
+          city: "",
+          isp: "",
+          timezone: "",
+          latitude: 0,
+          longitude: 0,
+          tcp_ms: id === "proxy-active" ? 123 : null,
+          udp_ms: null,
+          udp_error: null,
+          provider: "unit",
+        };
+      }
+      return defaultInvoke(command);
+    });
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    const proxySelect = await screen.findByRole("combobox", { name: "Browser proxy" });
+    expect(proxySelect).toHaveValue("none");
+    expect(screen.getByRole("option", { name: /Primary proxy.*1\.2\.3\.4:8080.*123 ms/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /5\.6\.7\.8:3128/ })).not.toBeInTheDocument();
+    fireEvent.change(proxySelect, { target: { value: "proxy:proxy-active" } });
+
+    const { start } = await prepareInlineBatch();
+    fireEvent.click(start);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_start_batch",
+      expect.objectContaining({
+        request: expect.objectContaining({
+          proxySelection: { mode: "specific", proxy: "proxy-active" },
+        }),
+      }),
+    ));
+  });
+
+  it("sends random proxy selection for new profiles", async () => {
+    mocks.save.mockResolvedValue("C:\fixtures\result.json");
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    const proxySelect = await screen.findByRole("combobox", { name: "Browser proxy" });
+    fireEvent.change(proxySelect, { target: { value: "random" } });
+
+    const { start } = await prepareInlineBatch();
+    fireEvent.click(start);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_start_batch",
+      expect.objectContaining({
+        request: expect.objectContaining({
+          proxySelection: { mode: "random" },
+        }),
+      }),
+    ));
   });
 
   it("hides template and output in Login GPT mode and starts a login batch", async () => {
@@ -395,6 +490,7 @@ describe("AccountKeeper", () => {
           template: "",
           adapterId: "openai-chatgpt-v1",
           operation: "login",
+          proxySelection: { mode: "none" },
           keepProfileRunning: false,
           pauseAfterCurrent: false,
         },
@@ -672,6 +768,7 @@ describe("AccountKeeper", () => {
           template: "Local-{random:16}",
           adapterId: "fixture-v1",
           operation: "change_password",
+          proxySelection: { mode: "none" },
           keepProfileRunning: false,
           pauseAfterCurrent: false,
         },
@@ -710,6 +807,7 @@ describe("AccountKeeper", () => {
           template: "Local-{random:16}",
           adapterId: "fixture-v1",
           operation: "change_password",
+          proxySelection: { mode: "none" },
           keepProfileRunning: false,
           pauseAfterCurrent: false,
         },

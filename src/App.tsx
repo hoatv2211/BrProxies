@@ -5498,7 +5498,7 @@ function ProxiesView() {
               }}
             />
           </div>
-          <div>Name</div><div>Type</div><div>Host:Port</div><div>Country</div><div>Profiles</div><div>Test result</div><div></div>
+          <div>Name</div><div>Type</div><div>Host:Port</div><div>Latency</div><div>Country</div><div>Profiles</div><div>Test result</div><div></div>
         </div>
         {pagedProxies.map((p) => {
           const r = snapshots[p.id];
@@ -5561,6 +5561,9 @@ function ProxiesView() {
                   <span className="mono small cell-click" onClick={() => setEditing(p)} title="Edit proxy">
                     {p.host}:{p.port}
                   </span>
+                </div>
+                <div className="mono small">
+                  {r?.tcp_ms != null ? r.tcp_ms + " ms" : <span className="muted">—</span>}
                 </div>
                 <div>
                   {cc ? (

@@ -1,4 +1,4 @@
-use crate::{settings, store};
+use crate::{proxy, settings, store};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -8,6 +8,21 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
 static CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProxySelection {
+    #[default]
+    None,
+    Random,
+    Specific { proxy: String },
+}
+
+impl ProxySelection {
+    pub fn assigns_proxy(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
 
 fn child_slot() -> &'static Mutex<Option<Child>> {
     CHILD.get_or_init(|| Mutex::new(None))
@@ -233,6 +248,40 @@ pub async fn proxypool_delete(proxy: String) -> Result<Value, String> {
     proxypool_request("DELETE", &format!("/proxy/{}", path_encode(&proxy))).await
 }
 
+pub async fn resolve_proxy_entry(
+    selection: &ProxySelection,
+) -> Result<Option<proxy::ProxyEntry>, String> {
+    let active = proxy::active_entries().map_err(|error| error.to_string())?;
+    let random_index = uuid::Uuid::new_v4().as_u128() as usize;
+    select_active_proxy(selection, active, random_index)
+}
+
+fn select_active_proxy(
+    selection: &ProxySelection,
+    active: Vec<proxy::ProxyEntry>,
+    random_index: usize,
+) -> Result<Option<proxy::ProxyEntry>, String> {
+    match selection {
+        ProxySelection::None => Ok(None),
+        ProxySelection::Random => {
+            if active.is_empty() {
+                return Err(
+                "no active launcher proxies available; test proxies in Proxies and resume the job"
+                    .to_string(),
+                );
+            }
+            Ok(active.get(random_index % active.len()).cloned())
+        }
+        ProxySelection::Specific { proxy } => active
+            .into_iter()
+            .find(|entry| {
+                entry.id == *proxy || format!("{}:{}", entry.host, entry.port) == *proxy
+            })
+            .map(Some)
+            .ok_or_else(|| "selected launcher proxy is missing or no longer active".to_string()),
+    }
+}
+
 async fn proxypool_request(method: &str, path: &str) -> Result<Value, String> {
     let s = settings::load().map_err(|e| e.to_string())?;
     let clean_path = if path.starts_with('/') {
@@ -295,4 +344,56 @@ fn path_encode(value: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn launcher_proxy(id: &str, host: &str, port: u16) -> proxy::ProxyEntry {
+        proxy::ProxyEntry {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind: proxy::ProxyKind::Http,
+            host: host.to_string(),
+            port,
+            username: String::new(),
+            password: String::new(),
+            country: String::new(),
+            notes: String::new(),
+        }
+    }
+
+    #[test]
+    fn random_selection_uses_an_active_launcher_proxy() {
+        let selected = select_active_proxy(
+            &ProxySelection::Random,
+            vec![
+                launcher_proxy("proxy-a", "1.2.3.4", 8080),
+                launcher_proxy("proxy-b", "5.6.7.8", 3128),
+            ],
+            1,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(selected.id, "proxy-b");
+    }
+
+    #[test]
+    fn specific_selection_uses_the_launcher_proxy_id() {
+        let selected = select_active_proxy(
+            &ProxySelection::Specific {
+                proxy: "proxy-a".to_string(),
+            },
+            vec![launcher_proxy("proxy-a", "1.2.3.4", 8080)],
+            0,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(selected.host, "1.2.3.4");
+        assert_eq!(selected.port, 8080);
+    }
+
 }

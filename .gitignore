@@ -69,3 +69,6 @@ src-tauri/resources/account-keeper/
 account-keeper-result.json
 /src-tauri/target-deploy
 account-keeper-input.txt
+/.ua
+/.codex/understand-anything
+/graphify-out

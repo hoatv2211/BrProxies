@@ -165,6 +165,7 @@ pub async fn run_agent(args: AgentArgs) -> Result<AgentSummary> {
             template,
             adapter_id: "openai-chatgpt-v1".to_string(),
             operation: operation.clone(),
+            proxy_selection: crate::proxypool::ProxySelection::None,
             keep_profile_running: args.keep_profile_running,
             pause_after_current: false,
         };

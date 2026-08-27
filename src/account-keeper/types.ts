@@ -110,6 +110,7 @@ export interface DraftState {
   inputValidationRevision: number | null;
   outputPath: string;
   templateText: string;
+  proxySelection: string;
   keepProfileRunning: boolean;
   plaintextAcknowledged: boolean;
   inputValidation: InputValidationDto | null;
