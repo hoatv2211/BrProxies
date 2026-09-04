@@ -9,7 +9,6 @@ set "REDIS_CLI=%REDIS_DIR%\redis-cli.exe"
 set "REDIS_CONF=%REDIS_DIR%\redis.windows.conf"
 set "REDIS_HOST=127.0.0.1"
 set "REDIS_PORT=6380"
-if "%REDIS_PASSWORD%"=="" set "REDIS_PASSWORD=madpool"
 
 echo Starting Redis for BrProxies ProxyPool...
 echo Server: %REDIS_SERVER%
@@ -18,13 +17,13 @@ echo Port: %REDIS_PORT%
 if not exist "%REDIS_SERVER%" goto :missing
 if not exist "%REDIS_CONF%" goto :missing
 
-"%REDIS_CLI%" -h "%REDIS_HOST%" -p "%REDIS_PORT%" -a "%REDIS_PASSWORD%" ping 2>nul | findstr /x "PONG" >nul
+"%REDIS_CLI%" -h "%REDIS_HOST%" -p "%REDIS_PORT%" ping 2>nul | findstr /x "PONG" >nul
 if not errorlevel 1 goto :already_running
 
-start "BrProxies Redis" /min "%REDIS_SERVER%" "%REDIS_CONF%" --port "%REDIS_PORT%" --requirepass "%REDIS_PASSWORD%"
+start "BrProxies Redis" /min "%REDIS_SERVER%" "%REDIS_CONF%" --bind "%REDIS_HOST%" --protected-mode yes --port "%REDIS_PORT%"
 
 for /l %%i in (1,1,20) do (
-  "%REDIS_CLI%" -h "%REDIS_HOST%" -p "%REDIS_PORT%" -a "%REDIS_PASSWORD%" ping 2>nul | findstr /x "PONG" >nul
+  "%REDIS_CLI%" -h "%REDIS_HOST%" -p "%REDIS_PORT%" ping 2>nul | findstr /x "PONG" >nul
   if not errorlevel 1 goto :ok
   timeout /t 1 /nobreak >nul
 )
@@ -39,7 +38,7 @@ goto :ok
 echo.
 echo Redis is ready.
 echo ProxyPool Redis URL:
-echo redis://:%REDIS_PASSWORD%@127.0.0.1:%REDIS_PORT%/0
+echo redis://127.0.0.1:%REDIS_PORT%/0
 goto :done
 
 :missing

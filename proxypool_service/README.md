@@ -23,7 +23,7 @@ When started by BrProxies `smart launch\run.bat`, the desktop helper starts the
 bundled Windows Redis on:
 
 ```text
-redis://:madpool@127.0.0.1:6380/0
+redis://127.0.0.1:6380/0
 ```
 
 ## Config

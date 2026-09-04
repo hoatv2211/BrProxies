@@ -37,3 +37,24 @@ test("release CI provisions the pinned Python used to freeze ProxyPool", () => {
   assert.match(workflow, /actions\/setup-python@v5/);
   assert.match(workflow, /python-version:\s*['"]3\.11['"]/);
 });
+
+test("BrProxies-managed Redis stays loopback-only and passwordless", () => {
+  const bridge = readFileSync("src-tauri/src/proxypool.rs", "utf8");
+  const helper = readFileSync("smart launch/run-redis.bat", "utf8");
+  const integration = readFileSync(
+    "scripts/tests/packaged-proxypool-integration.ps1",
+    "utf8",
+  );
+
+  assert.match(bridge, /\.arg\("--bind"\)[\s\S]*\.arg\(&spec\.host\)/);
+  assert.match(bridge, /\.arg\("--protected-mode"\)[\s\S]*\.arg\("yes"\)/);
+  assert.doesNotMatch(bridge, /--requirepass/);
+
+  assert.match(helper, /set "REDIS_HOST=127\.0\.0\.1"/);
+  assert.match(helper, /redis:\/\/127\.0\.0\.1:%REDIS_PORT%\/0/);
+  assert.doesNotMatch(helper, /REDIS_PASSWORD|--requirepass|\s-a\s/);
+
+  assert.match(integration, /--bind", "127\.0\.0\.1"/);
+  assert.match(integration, /redis:\/\/127\.0\.0\.1:6399\/0/);
+  assert.doesNotMatch(integration, /--requirepass|\s-a\s|:integration@/);
+});

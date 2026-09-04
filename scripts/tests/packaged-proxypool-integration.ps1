@@ -10,14 +10,14 @@ $sidecar = $null
 New-Item -ItemType Directory -Force -Path $redisDir, $sidecarDir | Out-Null
 try {
   $redis = Start-Process -FilePath (Join-Path $repoRoot "redis\redis-server.exe") `
-    -ArgumentList @("--bind", "127.0.0.1", "--protected-mode", "yes", "--port", "6399", "--requirepass", "integration", "--dir", $redisDir, "--dbfilename", "integration.rdb", "--appendonly", "no") `
+    -ArgumentList @("--bind", "127.0.0.1", "--protected-mode", "yes", "--port", "6399", "--dir", $redisDir, "--dbfilename", "integration.rdb", "--appendonly", "no") `
     -WorkingDirectory $redisDir -WindowStyle Hidden -PassThru
 
   $redisCli = Join-Path $repoRoot "redis\redis-cli.exe"
   $redisReady = $false
   for ($i = 0; $i -lt 40; $i++) {
     try {
-      $pong = (& $redisCli -h 127.0.0.1 -p 6399 -a integration ping 2>$null).Trim()
+      $pong = (& $redisCli -h 127.0.0.1 -p 6399 ping 2>$null).Trim()
       if ($pong -eq "PONG") { $redisReady = $true; break }
     } catch {}
     Start-Sleep -Milliseconds 100
@@ -28,7 +28,7 @@ try {
   [ordered]@{
     host = "127.0.0.1"
     port = 40426
-    redis_url = "redis://:integration@127.0.0.1:6399/0"
+    redis_url = "redis://127.0.0.1:6399/0"
     initial_collect = $false
     collect_interval_seconds = 900
     check_interval_seconds = 300

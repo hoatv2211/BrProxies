@@ -197,7 +197,7 @@ Redis để debug:
 Redis URL mặc định của helper desktop:
 
 ```text
-redis://:madpool@127.0.0.1:6380/0
+redis://127.0.0.1:6380/0
 ```
 
 Nút trong UI:

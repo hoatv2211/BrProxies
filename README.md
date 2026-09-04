@@ -203,7 +203,7 @@ For source checkouts, Redis starts automatically when you launch the app with
 Default Redis URL used by the desktop helper:
 
 ```text
-redis://:madpool@127.0.0.1:6380/0
+redis://127.0.0.1:6380/0
 ```
 
 Typical UI flow:

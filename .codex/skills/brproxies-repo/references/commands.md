@@ -50,7 +50,7 @@ Redis helpers:
 Default Redis URL:
 
 ```text
-redis://:madpool@127.0.0.1:6380/0
+redis://127.0.0.1:6380/0
 ```
 
 ## Cleanup

@@ -60,7 +60,7 @@ Common ProxyPool endpoints:
 - `smart launch/build.bat`: build frontend and Tauri release.
 - `smart launch/run.bat`: run built `src-tauri\target\release\shardx-launcher.exe` after cleanup.
 - `smart launch/build-redis.bat`: pull/build Redis dependency for ProxyPool.
-- `smart launch/run-redis.bat`: run Redis container on port `6380` with password `madpool`.
+- `smart launch/run-redis.bat`: run passwordless Redis on loopback port `6380`.
 - `cleanup-proxypool.ps1`: kill stale Python sidecar processes holding ProxyPool API.
 
 Use quoted paths for `smart launch\*.bat` because folder name contains a space.

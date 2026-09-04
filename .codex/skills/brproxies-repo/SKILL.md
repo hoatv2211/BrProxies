@@ -34,7 +34,7 @@ For more detail, read `references/repo-map.md`.
 
 ## ProxyPool Rules
 
-- Redis default used by helper scripts: `redis://:madpool@127.0.0.1:6380/0`.
+- Redis default used by helper scripts: `redis://127.0.0.1:6380/0` (loopback-only, no password).
 - Sidecar API default: `http://127.0.0.1:40326`.
 - UI `Collect now` queues `/jobs/collect`; `Refresh` queues `/jobs/check` and polling reloads table.
 - Working proxies must come from stored, checked records. Keep `country`, `https`, `latency_ms`, `source`, `last_checked_at` visible when available.

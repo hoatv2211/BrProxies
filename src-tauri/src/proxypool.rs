@@ -10,13 +10,13 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
 static CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
-static REDIS_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+static REDIS_CHILD: OnceLock<Mutex<Option<ManagedRedisChild>>> = OnceLock::new();
 
 fn child_slot() -> &'static Mutex<Option<Child>> {
     CHILD.get_or_init(|| Mutex::new(None))
 }
 
-fn redis_child_slot() -> &'static Mutex<Option<Child>> {
+fn redis_child_slot() -> &'static Mutex<Option<ManagedRedisChild>> {
     REDIS_CHILD.get_or_init(|| Mutex::new(None))
 }
 
@@ -62,7 +62,18 @@ struct SidecarLaunch {
 struct LocalRedisSpec {
     host: String,
     port: u16,
-    password: Option<String>,
+    sidecar_url: String,
+}
+
+struct ManagedRedisChild {
+    child: Child,
+    host: String,
+    port: u16,
+}
+
+struct LocalRedisOutcome {
+    managed_url: Option<String>,
+    started_now: bool,
 }
 
 fn source_service_workdir() -> PathBuf {
@@ -114,18 +125,21 @@ fn resolve_bundled_redis_from(resource_root: &Path) -> Result<PathBuf, String> {
 }
 
 fn parse_local_redis_url(value: &str) -> Option<LocalRedisSpec> {
-    let parsed = url::Url::parse(value).ok()?;
+    let mut parsed = url::Url::parse(value).ok()?;
     if parsed.scheme() != "redis" {
         return None;
     }
-    let host = parsed.host_str()?;
-    if !matches!(host, "127.0.0.1" | "localhost" | "::1") {
+    let host = parsed.host_str()?.to_string();
+    if !matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1") {
         return None;
     }
+    let port = parsed.port().unwrap_or(6379);
+    parsed.set_password(None).ok()?;
+    parsed.set_username("").ok()?;
     Some(LocalRedisSpec {
-        host: host.to_string(),
-        port: parsed.port().unwrap_or(6379),
-        password: parsed.password().map(str::to_string),
+        host,
+        port,
+        sidecar_url: parsed.to_string(),
     })
 }
 
@@ -200,12 +214,12 @@ fn sidecar_attempts(
     Ok(attempts)
 }
 
-fn write_config(s: &settings::Settings) -> Result<PathBuf, String> {
+fn write_config(s: &settings::Settings, redis_url: &str) -> Result<PathBuf, String> {
     let path = store::proxypool_config_path().map_err(|e| e.to_string())?;
     let body = serde_json::json!({
         "host": s.proxypool_host,
         "port": s.proxypool_port,
-        "redis_url": s.proxypool_redis_url,
+        "redis_url": redis_url,
         "disabled_sources": s.proxypool_disabled_sources,
         "custom_sources": s.proxypool_custom_sources,
         "collect_interval_seconds": s.proxypool_collect_interval_seconds,
@@ -286,30 +300,71 @@ async fn redis_port_open(spec: &LocalRedisSpec) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-async fn ensure_local_redis(resource_root: Option<&Path>, redis_url: &str) -> Result<bool, String> {
+async fn ensure_local_redis(
+    resource_root: Option<&Path>,
+    redis_url: &str,
+) -> Result<LocalRedisOutcome, String> {
     let Some(spec) = parse_local_redis_url(redis_url) else {
-        return Ok(false);
+        return Ok(LocalRedisOutcome {
+            managed_url: None,
+            started_now: false,
+        });
     };
     if redis_port_open(&spec).await {
-        return Ok(false);
+        let mut guard = redis_child_slot().lock().await;
+        if let Some(managed) = guard.as_mut() {
+            if managed
+                .child
+                .try_wait()
+                .map_err(|e| e.to_string())?
+                .is_some()
+            {
+                *guard = None;
+            } else if managed.host == spec.host && managed.port == spec.port {
+                return Ok(LocalRedisOutcome {
+                    managed_url: Some(spec.sidecar_url),
+                    started_now: false,
+                });
+            }
+        }
+        return Ok(LocalRedisOutcome {
+            managed_url: None,
+            started_now: false,
+        });
     }
 
     let Some(root) = resource_root else {
         if cfg!(debug_assertions) {
-            return Ok(false);
+            return Ok(LocalRedisOutcome {
+                managed_url: None,
+                started_now: false,
+            });
         }
         return Err("ProxyPool resource directory is unavailable; reinstall BrProxies".to_string());
     };
     let server = match resolve_bundled_redis_from(root) {
         Ok(server) => server,
-        Err(_) if cfg!(debug_assertions) => return Ok(false),
+        Err(_) if cfg!(debug_assertions) => {
+            return Ok(LocalRedisOutcome {
+                managed_url: None,
+                started_now: false,
+            })
+        }
         Err(error) => return Err(error),
     };
 
     let mut guard = redis_child_slot().lock().await;
-    if let Some(child) = guard.as_mut() {
-        if child.try_wait().map_err(|e| e.to_string())?.is_none() {
-            return Ok(false);
+    if let Some(managed) = guard.as_mut() {
+        if managed
+            .child
+            .try_wait()
+            .map_err(|e| e.to_string())?
+            .is_none()
+        {
+            return Ok(LocalRedisOutcome {
+                managed_url: None,
+                started_now: false,
+            });
         }
         *guard = None;
     }
@@ -342,9 +397,6 @@ async fn ensure_local_redis(resource_root: Option<&Path>, redis_url: &str) -> Re
         .stderr(std::process::Stdio::from(err_log))
         .kill_on_drop(false)
         .creation_flags(0x08000000);
-    if let Some(password) = &spec.password {
-        cmd.arg("--requirepass").arg(password);
-    }
 
     let mut child = cmd.spawn().map_err(|error| {
         format!(
@@ -355,8 +407,15 @@ async fn ensure_local_redis(resource_root: Option<&Path>, redis_url: &str) -> Re
     })?;
     for _ in 0..40 {
         if redis_port_open(&spec).await {
-            *guard = Some(child);
-            return Ok(true);
+            *guard = Some(ManagedRedisChild {
+                child,
+                host: spec.host,
+                port: spec.port,
+            });
+            return Ok(LocalRedisOutcome {
+                managed_url: Some(spec.sidecar_url),
+                started_now: true,
+            });
         }
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             return Err(format!(
@@ -379,15 +438,18 @@ async fn ensure_local_redis(resource_root: Option<&Path>, redis_url: &str) -> Re
 async fn ensure_local_redis(
     _resource_root: Option<&Path>,
     _redis_url: &str,
-) -> Result<bool, String> {
-    Ok(false)
+) -> Result<LocalRedisOutcome, String> {
+    Ok(LocalRedisOutcome {
+        managed_url: None,
+        started_now: false,
+    })
 }
 
 async fn stop_managed_redis() {
     let mut guard = redis_child_slot().lock().await;
-    if let Some(mut child) = guard.take() {
-        let _ = child.kill().await;
-        let _ = child.wait().await;
+    if let Some(mut managed) = guard.take() {
+        let _ = managed.child.kill().await;
+        let _ = managed.child.wait().await;
     }
 }
 
@@ -395,7 +457,7 @@ async fn stop_managed_redis() {
 pub async fn proxypool_start(app: tauri::AppHandle) -> Result<ProxyPoolStatus, String> {
     let s = settings::load().map_err(|e| e.to_string())?;
     let resource_root = app.path().resource_dir().ok();
-    let redis_started =
+    let redis_outcome =
         ensure_local_redis(resource_root.as_deref(), &s.proxypool_redis_url).await?;
     let mut guard = child_slot().lock().await;
     if let Some(child) = guard.as_mut() {
@@ -405,11 +467,15 @@ pub async fn proxypool_start(app: tauri::AppHandle) -> Result<ProxyPoolStatus, S
         *guard = None;
     }
 
-    let config_path = write_config(&s)?;
+    let effective_redis_url = redis_outcome
+        .managed_url
+        .as_deref()
+        .unwrap_or(&s.proxypool_redis_url);
+    let config_path = write_config(&s, effective_redis_url)?;
     let child = match spawn_sidecar(resource_root.as_deref(), config_path).await {
         Ok(child) => child,
         Err(error) => {
-            if redis_started {
+            if redis_outcome.started_now {
                 stop_managed_redis().await;
             }
             return Err(error);
@@ -623,11 +689,11 @@ mod tests {
     }
 
     #[test]
-    fn local_redis_urls_are_eligible_for_bundled_startup() {
-        let spec = parse_local_redis_url("redis://:madpool@127.0.0.1:6380/0").unwrap();
+    fn local_redis_urls_are_sanitized_for_bundled_startup() {
+        let spec = parse_local_redis_url("redis://user:p%40ss@127.0.0.1:6380/2").unwrap();
         assert_eq!(spec.host, "127.0.0.1");
         assert_eq!(spec.port, 6380);
-        assert_eq!(spec.password.as_deref(), Some("madpool"));
+        assert_eq!(spec.sidecar_url, "redis://127.0.0.1:6380/2");
 
         assert!(parse_local_redis_url("redis://localhost:6379/0").is_some());
         assert!(parse_local_redis_url("redis://10.0.0.5:6379/0").is_none());
