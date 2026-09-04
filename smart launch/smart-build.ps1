@@ -53,7 +53,7 @@ function Get-ExistingFileList($Paths) {
     if ($item.PSIsContainer) {
       Get-ChildItem -LiteralPath $path -Recurse -File | ForEach-Object {
         $full = $_.FullName
-        if ($full -match '\\(node_modules|dist|target|\.venv|__pycache__|\.brproxies-build-cache|\.git)\\') { return }
+        if ($full -match '\\(node_modules|dist|target|\.venv|\.build-venv|\.pyinstaller|__pycache__|\.brproxies-build-cache|\.git)\\') { return }
         $files.Add($full)
       }
     } else {
@@ -252,6 +252,58 @@ function Sync-AccountKeeperResources {
   }
 }
 
+function Sync-ProxyPoolResources {
+  param(
+    [string]$Source,
+    [string]$Destination
+  )
+
+  $required = @(
+    "manifest.json",
+    "brproxies-proxypool.exe",
+    "redis/redis-server.exe"
+  )
+  foreach ($relative in $required) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Source $relative))) {
+      throw "ProxyPool build resource is missing: $relative"
+    }
+  }
+
+  $sourceManifest = Join-Path $Source "manifest.json"
+  $destinationManifest = Join-Path $Destination "manifest.json"
+  $destinationReady = Test-Path -LiteralPath $destinationManifest
+  if ($destinationReady) {
+    $destinationReady = (Get-FileHash -LiteralPath $sourceManifest).Hash -eq
+      (Get-FileHash -LiteralPath $destinationManifest).Hash
+  }
+  if ($destinationReady) {
+    foreach ($relative in $required) {
+      if (-not (Test-Path -LiteralPath (Join-Path $Destination $relative))) {
+        $destinationReady = $false
+        break
+      }
+    }
+  }
+  if ($destinationReady) {
+    Write-Host "Skipping ProxyPool resources; manifest unchanged."
+    return
+  }
+
+  Write-Host "Staging ProxyPool resources..."
+  New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  Get-ChildItem -LiteralPath $Source -Force | Copy-Item -Destination $Destination -Recurse -Force
+
+  foreach ($relative in $required) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Destination $relative))) {
+      throw "ProxyPool release resource is missing after staging: $relative"
+    }
+  }
+  if ((Get-FileHash -LiteralPath $sourceManifest).Hash -ne
+      (Get-FileHash -LiteralPath $destinationManifest).Hash) {
+    throw "ProxyPool release resource manifest does not match"
+  }
+}
+
 Require-Command "cargo" "Install Rust from https://rustup.rs/ then reopen terminal or VS Code."
 Require-Command "rustc" "Install Rust from https://rustup.rs/ then reopen terminal or VS Code."
 Require-Command "npm.cmd" "Install Node.js LTS, then reopen terminal or VS Code."
@@ -269,7 +321,7 @@ $androidPython = Join-Path $repoRoot "$androidVenv\Scripts\python.exe"
 $npmHash = Get-InputHash @("package.json", "package-lock.json")
 $androidDepsHash = Get-InputHash @("android_manager\pyproject.toml")
 $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
-$tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "scripts\prepare-account-keeper-worker.mjs", "smart launch\build.bat", "smart launch\smart-build.ps1")
+$tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "scripts\prepare-account-keeper-worker.mjs", "scripts\prepare-proxypool-sidecar.ps1", "proxypool_service", "redis", "smart launch\build.bat", "smart launch\smart-build.ps1")
 
 $needNpm = $Full -or $Deps -or -not (Test-Path -LiteralPath "node_modules") -or ((Get-Cache "npm") -ne $npmHash)
 if ($needNpm) {
@@ -298,14 +350,15 @@ if ($needAndroidDeps) {
 $needFrontend = $Full -or -not (Test-Path -LiteralPath "dist\index.html") -or ((Get-Cache "frontend") -ne $frontendHash)
 
 $exePath = "src-tauri\target\release\brproxies.exe"
-$needDesktop = $Full -or $needFrontend -or -not (Test-Path -LiteralPath $exePath) -or ((Get-Cache "tauri") -ne $tauriHash)
+$proxyPoolResource = "src-tauri\resources\proxypool\brproxies-proxypool.exe"
+$needDesktop = $Full -or $needFrontend -or -not (Test-Path -LiteralPath $exePath) -or -not (Test-Path -LiteralPath $proxyPoolResource) -or ((Get-Cache "tauri") -ne $tauriHash)
 if ($needDesktop) {
   if (-not (Stop-LockingBrProxies $exePath)) {
     throw "Another process is still locking $exePath after 90 seconds. Close the process holding the file, then run smart launch\build.bat again."
   }
   Run-Step "Building desktop app..." "npm.cmd" @("run", "tauri", "build", "--", "--no-bundle")
   $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
-  $tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "scripts\prepare-account-keeper-worker.mjs", "smart launch\build.bat", "smart launch\smart-build.ps1")
+  $tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "scripts\prepare-account-keeper-worker.mjs", "scripts\prepare-proxypool-sidecar.ps1", "proxypool_service", "redis", "smart launch\build.bat", "smart launch\smart-build.ps1")
   Set-Cache "frontend" $frontendHash
   Set-Cache "tauri" $tauriHash
 } else {
@@ -314,6 +367,7 @@ if ($needDesktop) {
 }
 
 Sync-AccountKeeperResources -Source "src-tauri/resources/account-keeper" -Destination "src-tauri/target/release/account-keeper"
+Sync-ProxyPoolResources -Source "src-tauri/resources/proxypool" -Destination "src-tauri/target/release/proxypool"
 
 Write-Host ""
 Write-Host "Build complete."

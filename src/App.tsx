@@ -4936,7 +4936,7 @@ function ProxyPoolView() {
         <div className="pp-head-row">
           <div>
             <h3>Local crawler API</h3>
-            <p className="muted small">Redis is external. Start Redis first, then start ProxyPool here.</p>
+            <p className="muted small">The Windows release starts its bundled Redis automatically. Custom remote Redis URLs remain external.</p>
           </div>
           <div className="pp-inline-actions">
             <button className={`ps-seg ${!httpsOnly ? "active" : ""}`} onClick={() => setHttpsOnly(false)}>All</button>

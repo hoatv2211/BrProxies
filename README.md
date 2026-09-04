@@ -120,7 +120,8 @@ setup, runs `npm.cmd run tauri build -- --no-bundle`, and auto-closes a running
 
 `run.bat` starts the bundled Windows Redis on `127.0.0.1:6380`, calls
 `cleanup-proxypool.ps1` to stop stale ProxyPool Python sidecars, then opens the
-app.
+app. This helper is for source checkouts; the Windows MSI bundles ProxyPool and
+Redis.
 
 ## Manual Build
 
@@ -186,12 +187,14 @@ usually not as smooth as LDPlayer for games.
 
 ## ProxyPool Workflow
 
-ProxyPool runs as a local Python sidecar. It collects proxies from enabled
-public sources, tests whether they work, saves passing records to Redis, and
-removes dead proxies during rechecks.
+ProxyPool runs as a local sidecar. It collects proxies from enabled public
+sources, tests whether they work, saves passing records to Redis, and removes
+dead proxies during rechecks. The Windows MSI includes both the frozen sidecar
+and Redis, so release users do not need Python or `run.bat`; **Start** launches
+local Redis automatically when it is not already running.
 
-Redis starts automatically when you launch the app with `run.bat`. To start only
-Redis for debugging:
+For source checkouts, Redis starts automatically when you launch the app with
+`run.bat`. To start only Redis for debugging:
 
 ```bat
 "smart launch\run-redis.bat"

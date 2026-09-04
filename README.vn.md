@@ -117,7 +117,8 @@ src-tauri\target\release\brproxies.exe
 chạy trước khi build release.
 
 `run.bat` chạy Redis Windows trên `127.0.0.1:6380`, gọi
-`cleanup-proxypool.ps1` để tắt Python ProxyPool sidecar cũ, rồi mở app.
+`cleanup-proxypool.ps1` để tắt Python ProxyPool sidecar cũ, rồi mở app. Đây là
+helper dành cho chạy từ source; Windows MSI đóng gói sẵn ProxyPool và Redis.
 
 ## Build thủ công
 
@@ -181,11 +182,13 @@ vẫn nặng hơn browser profile và thường không mượt bằng LDPlayer k
 
 ## ProxyPool
 
-ProxyPool chạy bằng Python sidecar cục bộ. Service lấy proxy từ các nguồn public
-đang bật, test proxy thật, lưu proxy pass vào Redis, và xoá proxy chết khi
-recheck.
+ProxyPool chạy bằng sidecar cục bộ. Service lấy proxy từ các nguồn public đang
+bật, test proxy thật, lưu proxy pass vào Redis, và xoá proxy chết khi recheck.
+Windows MSI đóng gói sidecar cùng Redis nên người dùng bản release không cần
+cài Python hoặc chạy `run.bat`; nút **Start** tự bật Redis local nếu chưa chạy.
 
-Redis tự chạy khi mở app bằng `run.bat`. Nếu chỉ muốn bật Redis để debug:
+Khi chạy từ source, Redis tự chạy nếu mở app bằng `run.bat`. Nếu chỉ muốn bật
+Redis để debug:
 
 ```bat
 "smart launch\run-redis.bat"

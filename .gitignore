@@ -54,6 +54,8 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 proxypool_service/.venv/
+proxypool_service/.build-venv/
+proxypool_service/.pyinstaller/
 proxypool_service/logs/
 android_manager/.venv/
 android_manager/data/
@@ -66,6 +68,8 @@ mcp/node_modules/
 
 # ===== Account Keeper generated runtime =====
 src-tauri/resources/account-keeper/
+src-tauri/resources/proxypool/*
+!src-tauri/resources/proxypool/.gitkeep
 account-keeper-result.json
 /src-tauri/target-deploy
 account-keeper-input.txt

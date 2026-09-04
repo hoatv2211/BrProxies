@@ -1,11 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "build": {
-    "beforeBuildCommand": "npm run build && npm run build:account-keeper-worker"
+    "beforeBuildCommand": "npm run build && npm run build:account-keeper-worker && npm run build:proxypool-sidecar"
   },
   "bundle": {
     "resources": {
-      "resources/account-keeper/": "account-keeper/"
+      "resources/account-keeper/": "account-keeper/",
+      "resources/proxypool/": "proxypool/"
     }
   }
 }

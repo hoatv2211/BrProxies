@@ -27,6 +27,9 @@ dev = [
   "fakeredis>=2.23,<3",
   "respx>=0.21,<1",
 ]
+build = [
+  "pyinstaller==6.16.0",
+]
 
 [project.scripts]
 brproxies-proxypool = "proxypool_service.__main__:main"

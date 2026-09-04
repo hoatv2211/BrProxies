@@ -45,6 +45,14 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Set up Python 3.11 for ProxyPool
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: proxypool_service/pyproject.toml
+
       - name: Set up Rust (stable, ${{ matrix.target }})
         uses: dtolnay/rust-toolchain@stable
         with:
