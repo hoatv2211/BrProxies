@@ -1,6 +1,7 @@
-use crate::{dpapi, store};
+use crate::{dpapi, proxypool::ProxySelection, store};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -39,9 +40,34 @@ pub struct VaultAccount {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexOAuthCredential {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub id_token: String,
+    pub account_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    pub last_refresh_at: String,
+    pub expires_at: String,
+    pub expires_in: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultFile {
     pub schema_version: u32,
     pub accounts: Vec<VaultAccount>,
+    #[serde(default)]
+    pub pending_security_changes: HashMap<String, PendingSecurityChange>,
+    #[serde(default)]
+    pub codex_oauth: HashMap<String, CodexOAuthCredential>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PendingSecurityChange {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_totp_secret: Option<String>,
 }
 
 impl Default for VaultFile {
@@ -49,6 +75,8 @@ impl Default for VaultFile {
         Self {
             schema_version: SCHEMA_VERSION,
             accounts: Vec::new(),
+            pending_security_changes: HashMap::new(),
+            codex_oauth: HashMap::new(),
         }
     }
 }
@@ -58,6 +86,8 @@ impl VaultFile {
         Self {
             schema_version: SCHEMA_VERSION,
             accounts: vec![account],
+            pending_security_changes: HashMap::new(),
+            codex_oauth: HashMap::new(),
         }
     }
 }
@@ -72,6 +102,8 @@ pub struct JobCheckpoint {
     pub template: String,
     #[serde(default = "default_adapter_id")]
     pub adapter_id: String,
+    #[serde(default)]
+    pub proxy_selection: ProxySelection,
     #[serde(default)]
     pub keep_profile_running: bool,
     #[serde(default)]
@@ -89,6 +121,8 @@ pub struct AccountCheckpoint {
     pub account_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
+    #[serde(default)]
+    pub assign_proxy: bool,
     pub state: String,
     pub attempts: u32,
     pub updated_at: String,
@@ -284,6 +318,7 @@ mod tests {
             output_path: "C:/synthetic/result.json".to_string(),
             template: "Local-{random:16}".to_string(),
             adapter_id: "fixture-v1".to_string(),
+            proxy_selection: ProxySelection::None,
             keep_profile_running: false,
             pause_after_current: false,
             operation: "change_password".to_string(),
@@ -292,6 +327,7 @@ mod tests {
             accounts: vec![AccountCheckpoint {
                 account_key: "acct-key".to_string(),
                 profile_id: Some("profile-id".to_string()),
+                assign_proxy: false,
                 state: "waiting_manual".to_string(),
                 attempts: 1,
                 updated_at: "2026-07-29T00:00:00Z".to_string(),
@@ -317,6 +353,35 @@ mod tests {
         });
         let checkpoint: JobCheckpoint = serde_json::from_value(legacy).unwrap();
         assert_eq!(checkpoint.operation, "change_password");
+    }
+
+    #[test]
+    fn legacy_checkpoint_defaults_to_no_proxy_assignment() {
+        let legacy = serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "batch_id": "legacy-proxy-batch",
+            "output_path": "C:/synthetic/result.json",
+            "template": "Local-{random:16}",
+            "adapter_id": "openai-chatgpt-v1",
+            "keep_profile_running": false,
+            "pause_after_current": false,
+            "operation": "change_password",
+            "status": "queued",
+            "updated_at": "@1",
+            "accounts": [{
+                "account_key": "account-key",
+                "profile_id": "profile-1",
+                "state": "queued",
+                "attempts": 0,
+                "updated_at": "@1"
+            }]
+        });
+
+        let checkpoint: JobCheckpoint = serde_json::from_value(legacy).unwrap();
+        let value = serde_json::to_value(checkpoint).unwrap();
+
+        assert_eq!(value["proxy_selection"]["mode"], "none");
+        assert_eq!(value["accounts"][0]["assign_proxy"], false);
     }
 
     #[test]

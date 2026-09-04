@@ -298,6 +298,12 @@ mod tests {
     }
 
     #[test]
+    fn redactor_allows_exact_totp_enrollment_event() {
+        let line = r#"{"protocol_version":1,"type":"totp_enrollment_secret","request_id":"req_1","value":"JBSWY3DPEHPK3PXP"}"#;
+        assert_eq!(redact_line(line), line);
+    }
+
+    #[test]
     fn redactor_rejects_noncanonical_failure_messages() {
         let line = r#"{"protocol_version":1,"type":"failed","request_id":"req_1","code":"flow_changed","message":"synthetic-password"}"#;
         assert_eq!(redact_line(line), "[redacted worker message]");

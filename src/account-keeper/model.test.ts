@@ -4,7 +4,6 @@ import {
   canResume,
   canStart,
   isCleanableJob,
-  profileImportJson,
   progressLogEntries,
   reduceProgress,
 } from "./model";
@@ -12,7 +11,6 @@ import type {
   AccountView,
   DraftState,
   JobView,
-  ManagedProfileView,
   ProgressEvent,
 } from "./types";
 
@@ -25,6 +23,7 @@ const validDraft: DraftState = {
   inputValidationRevision: 1,
   outputPath: "C:\\fixtures\\result.json",
   templateText: "Local-{random:16}",
+  proxySelection: "none",
   keepProfileRunning: false,
   plaintextAcknowledged: true,
   inputValidation: {
@@ -59,7 +58,6 @@ describe("activeInputSource", () => {
     expect(activeInputSource(validFileDraft)).toEqual({ kind: "file", path: validFileDraft.inputPath });
   });
 });
-
 const queuedAccount: AccountView = {
   account_key: "account-1",
   masked_account: "o***r@example.test",
@@ -136,7 +134,6 @@ describe("canStart", () => {
     expect(canStart(validDraft, [{ ...runningJob, status: "completed" }])).toBe(true);
   });
 });
-
 describe("canStart operation modes", () => {
   const loginDraft: DraftState = {
     ...validDraft,
@@ -163,6 +160,20 @@ describe("canStart operation modes", () => {
     expect(canStart({ ...loginDraft, plaintextAcknowledged: false }, [])).toBe(false);
     expect(canStart({ ...loginDraft, inputValidation: null }, [])).toBe(false);
   });
+
+  it.each(["change_totp", "change_email"] as const)(
+    "%s requires output but not a password template",
+    (operation) => {
+      const securityDraft: DraftState = {
+        ...validDraft,
+        operation,
+        templateText: "",
+        templateValidation: null,
+      };
+      expect(canStart(securityDraft, [])).toBe(true);
+      expect(canStart({ ...securityDraft, outputPath: "" }, [])).toBe(false);
+    },
+  );
 });
 
 describe("canResume", () => {
@@ -298,31 +309,5 @@ describe("progress management", () => {
       attempts: 1,
       error_code: "flow_changed",
     }]);
-  });
-});
-
-describe("profileImportJson", () => {
-  it("exports only the approved 9Router/Cockpit profile reference", () => {
-    const profile: ManagedProfileView = {
-      profile_id: "profile-1",
-      masked_account: "o***r@example.test",
-      status: "success",
-      last_verified_at: "2026-07-31T03:00:00Z",
-      running: false,
-      rotated: false,
-      import_payload: {
-        schema_version: 1,
-        kind: "brproxies-account-keeper-profile",
-        profile_id: "profile-1",
-        account_status: "success",
-        last_verified_at: "2026-07-31T03:00:00Z",
-        api_base_url: "http://127.0.0.1:40325",
-        vault_ref: "account-keeper://vault/account-key",
-      },
-    };
-
-    const exported = profileImportJson(profile);
-    expect(JSON.parse(exported)).toEqual(profile.import_payload);
-    expect(exported).not.toMatch(/password|totp|cookie|token/i);
   });
 });

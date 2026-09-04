@@ -1,0 +1,73 @@
+﻿# Repository metadata and local agent tooling
+.git/
+.worktrees/
+.codex/
+.claude/
+.superpowers/
+
+# Graphify and generated reports
+graphify-out/
+dist/
+dist-ssr/
+output/
+coverage/
+.cache/
+.brproxies-build-cache/
+src-tauri/gen/
+src-tauri/target/
+src-tauri/target-deploy/
+target/
+target-*/
+
+# Third-party dependencies and virtual environments
+node_modules/
+**/node_modules/
+vendor/
+**/vendor/
+redis/
+.venv/
+**/.venv/
+venv/
+**/venv/
+*.egg-info/
+**/*.egg-info/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+src-tauri/Cargo.lock
+
+# Runtime caches, logs, data, and downloaded bundles
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+logs/
+**/logs/
+android_manager/data/
+*.log
+dump.rdb
+*.rdb
+src-tauri/resources/account-keeper/
+
+# Secrets and local credentials
+.env
+.env.*
+account-keeper-input.txt
+account-keeper-result.json
+credentials*.json
+secrets*.json
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+
+# Documentation and non-code corpora
+docs/
+*.md
+*.mdx
+*.pdf
+*.doc
+*.docx
+*.ppt
+*.pptx

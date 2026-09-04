@@ -18,10 +18,13 @@ dùng:
 - Account Keeper không giải hoặc bypass CAPTCHA, device approval, cảnh báo đăng
   nhập bất thường, email verification hay cơ chế bảo mật khác.
 - Tính năng không đăng nhập inbox và không tự động lấy nội dung email.
+- Khi đổi email, có thể dùng connector mailbox loopback do người vận hành cấu hình
+  để lấy mã sáu chữ số. Nếu connector không hoạt động, profile vẫn mở để xác minh thủ công.
 - Social login qua Google, Microsoft, Apple hoặc identity provider khác chưa
   được hỗ trợ trong MVP.
-- Tính năng không export cookie, browser session, authorization header, access
-  token hoặc refresh token.
+- Tính năng không export cookie, browser session hoặc authorization header. Chỉ
+  chức năng export Codex rõ ràng ở section 04 mới export OAuth token sau khi người
+  vận hành authorize profile đã verify và xác nhận xử lý plaintext.
 - TOTP secret luôn ở local. Rust tạo code sáu chữ số có thời hạn ngắn và chỉ
   gửi code đó cho worker khi form TOTP mong đợi đang hiển thị.
 
@@ -86,6 +89,15 @@ với mỗi record trên một dòng:
 account|current_password|optional_totp_secret
 ```
 
+Riêng **Change email**, thêm email mới ở field thứ tư:
+
+```text
+current_email|current_password|optional_totp_secret|new_email
+```
+
+Email đầu tiên dùng để tìm profile hiện tại. Field thứ tư là email mới và chỉ
+được ghi nhận sau khi provider xác minh thành công.
+
 Ví dụ synthetic bắt buộc:
 
 ```text
@@ -114,6 +126,8 @@ Quy tắc parser:
   không phân biệt hoa thường; space và hyphen bị bỏ qua; padding `=` hợp lệ ở
   cuối được chấp nhận.
 - Lỗi validation báo số dòng nhưng không lặp lại password hoặc TOTP secret.
+- Field thứ tư chỉ hợp lệ với **Change email**, phải là email hợp lệ và phải khác
+  email hiện tại sau khi normalize.
 
 Ví dụ password có delimiter bên trong:
 
@@ -160,20 +174,40 @@ Ví dụ không hợp lệ gồm thiếu placeholder, có hai placeholder, `{ran
 ## Bắt Đầu Batch
 
 1. Mở **Account Keeper** trong BrProxies.
-2. Giữ mode **Paste text** mặc định và dán mỗi record trên một dòng, hoặc bấm
+2. Chọn **Login GPT**, **Change password**, **Change 2FA** hoặc **Change email**.
+3. Giữ mode **Paste text** mặc định và dán mỗi record trên một dòng, hoặc bấm
    **Choose file**, sau đó bấm **Browse** dưới **Input file** và chọn file input
    plaintext UTF-8.
-3. Với text dán, bấm **Validate Input** để validate rõ ràng. File được validate
+4. Với text dán, bấm **Validate Input** để validate rõ ràng. File được validate
    ngay sau khi chọn.
-4. Giữ đường dẫn mặc định
-   `%USERPROFILE%\Documents\account-keeper-result.json`, hoặc bấm **Browse**
-   dưới **Output file** để chọn đường dẫn output JSON plaintext khác.
-5. Nhập password template cho batch, rồi bấm **Validate Template**.
-6. Kiểm tra identity account đã mask, tổng số account đã parse và lỗi theo dòng.
-7. Xác nhận rằng input đang dùng chứa secret plaintext và output cũng vậy.
-8. Tùy chọn bật **Keep profile running after completion**. Mặc định toggle này
+5. Với operation thay đổi, giữ đường dẫn mặc định
+   `<thư mục chứa BrProxies.exe>\output\account-keeper-result.json`, hoặc bấm
+   **Browse** dưới **Output file** để chọn đường dẫn output JSON plaintext khác.
+6. Chỉ với **Change password**, nhập password template rồi bấm **Validate Template**.
+7. Kiểm tra identity account đã mask, tổng số account đã parse và lỗi theo dòng.
+8. Xác nhận rằng input đang dùng chứa secret plaintext và output cũng vậy.
+9. Chọn **Browser proxy**: **None** (mặc định), **Random active proxy**, hoặc một
+   proxy đã lưu và test Active trong mục **Proxies**. **None** giữ nguyên proxy
+   hiện tại của profile đã tồn tại. **Random** hoặc proxy được chọn sẽ áp dụng
+   cho cả profile mới và profile đã tồn tại; profile đang chạy sẽ được khởi động
+   lại khi proxy thay đổi.
+10. Tùy chọn bật **Keep profile running after completion**. Mặc định toggle này
    tắt.
-9. Bấm **Start Batch** và xác nhận thao tác đổi mật khẩu.
+11. Bấm **Start Batch** và xác nhận operation đã chọn.
+
+### Connector mailbox tùy chọn
+
+Cấu hình tại **Settings** > **Account Keeper email verification**. Endpoint phải
+dùng HTTP loopback và chỉ trả một trong các response sau:
+
+```json
+{"status":"code","code":"123456"}
+{"status":"pending"}
+{"status":"manual"}
+```
+
+Timeout, lỗi connector hoặc `manual` sẽ fallback sang **Continue** thủ công.
+Token connector chỉ nằm trong settings local, không gửi cho browser worker.
 
 Mỗi lần validate hoặc start đều gửi `request.source` qua IPC local từ React sang
 Tauri. Paste mode gửi `{ kind: "inline", text }`; file mode gửi
@@ -194,22 +228,31 @@ trong process memory.
 Với mỗi tài khoản, Account Keeper:
 
 1. Resolve hoặc tạo profile BrProxies lâu dài của account.
+   Nếu batch chọn **Random** hoặc một proxy cụ thể, Account Keeper bind hoặc ghi
+   đè proxy của profile trước khi launch. **Random active proxy** được resolve
+   riêng cho từng account. Nếu proxy thay đổi khi profile đang chạy, Account
+   Keeper stop profile để lần launch tiếp theo dùng proxy mới. Nếu không resolve
+   hoặc bind được proxy, job pause mà không launch trực tiếp; test hoặc khôi phục
+   một proxy Active trong mục **Proxies** rồi bấm **Resume Job**.
 2. Launch profile với CDP được bật.
 3. Start một Node/Patchright worker mới cho account.
 4. Classify session hiện tại. Nếu profile đã đăng nhập, worker bỏ qua việc nhập
-   credential và mở thẳng **Settings** > **Security and login** > **Password**.
+   credential và mở settings phù hợp với operation đã chọn.
    Nếu chưa đăng nhập, worker dùng email/password trực tiếp.
 5. Chỉ tạo TOTP local khi form TOTP đang hiển thị yêu cầu.
 6. Pause để người vận hành xử lý khi có security challenge.
-7. Submit password đã sinh qua provider flow được hỗ trợ.
-8. Đăng xuất rồi đăng nhập lại bằng password mới.
-9. Chỉ đánh dấu password là `changed` sau khi đăng nhập mới được verify.
-10. Update checkpoint và output plaintext theo cách atomic.
-11. Stop profile nếu keep-profile toggle không bật, rồi mới chạy account tiếp
+7. Với **Change 2FA**, authorize rồi xóa authenticator factor cũ, mở enrollment
+   mới và chỉ commit secret mới sau khi verify. Lỗi sau ranh giới authorize xóa
+   được xem là `critical` vì factor đang hoạt động có thể không còn xác định.
+8. Submit password đã sinh qua provider flow được hỗ trợ.
+9. Đăng xuất rồi đăng nhập lại bằng password mới.
+10. Chỉ đánh dấu password là `changed` sau khi đăng nhập mới được verify.
+11. Update checkpoint và output plaintext theo cách atomic.
+12. Stop profile nếu keep-profile toggle không bật, rồi mới chạy account tiếp
     theo.
 
-Stage bình thường gồm `queued`, `launching`, `logging_in`, `submitting_totp`,
-`changing_password`, `verifying_new_password` và `success`. State ngoại lệ gồm
+Stage bình thường còn có `changing_totp`, `verifying_new_totp`, `changing_email`,
+`waiting_email_verification`, `verifying_new_email` và `success`. State ngoại lệ gồm
 `waiting_manual`, `failed`, `critical` và `cancelled`.
 
 ## Điều Khiển Batch
@@ -223,6 +266,10 @@ Stage bình thường gồm `queued`, `launching`, `logging_in`, `submitting_tot
 - **Keep profile running after completion** quyết định process của profile hoàn
   tất bình thường có tiếp tục mở hay không. Profile lâu dài và user-data vẫn
   được ánh xạ kể cả khi process đã stop.
+- **Browser proxy** với **None** giữ nguyên proxy hiện tại của profile Account
+  Keeper đã tồn tại. Proxy cụ thể áp dụng cho mọi account trong batch; Random
+  được resolve độc lập cho từng account. Hai mode có chọn proxy đều ghi đè proxy
+  của profile đã tồn tại khi proxy resolve khác proxy hiện tại.
 - **Logs** hiển thị snapshot đã redact của job đang chọn: timestamp, account đã
   mask, stage, số lần thử và canonical error code.
 - **Clean** chỉ xóa progress checkpoint terminal có status `completed`,
@@ -231,19 +278,17 @@ Stage bình thường gồm `queued`, `launching`, `logging_in`, `submitting_tot
 
 ## Profile Đã Verify
 
-Section **04 Profiles** chỉ liệt kê record trong vault đã verify đăng nhập bằng
-password mới với `status: success` và `password_state: changed`.
+Section **04 Profiles** chỉ liệt kê record trong vault đã verify với
+`status: success`.
 
 - **Run** launch persistent profile đã ánh xạ.
 - **Delete** stop profile, xóa browser data local và xóa mapping trong Account
-  Keeper vault.
-- **Import Info** hiển thị metadata local cho 9Router hoặc Cockpit. **Copy JSON**
-  copy cùng payload đó.
-
-Payload import gồm `schema_version`, `kind`, `profile_id`, `account_status`,
-`last_verified_at`, `api_base_url` và `vault_ref` opaque. Payload không chứa
-account identifier, password, TOTP secret, cookie, access token, refresh token
-hoặc browser-session data.
+  Keeper vault, bao gồm Codex OAuth record được bảo vệ nếu có.
+- **Connect Codex** mở luồng authorize Codex chính thức trong profile đã ánh xạ.
+  **Reconnect Codex** chỉ thay credential cũ khi email token trả về khớp account
+  đã verify trong vault.
+- **Export** có action copy/lưu cho một account sẵn sàng. Action bulk ở đầu section
+  export mọi account sẵn sàng thành một mảng JSON cho 9Router hoặc Cockpit.
 
 ## Can Thiệp Thủ Công
 
@@ -447,10 +492,14 @@ và resume rõ ràng sau khi restart Tauri. Workflow cũng xác nhận filename 
 BrProxies bình thường không thay đổi. Cleanup xóa QA root và dừng child process.
 Không thay fixture bằng account hoặc provider production.
 
-## Ranh Giới Import 9Router Và Cockpit
+## Export Codex Cho 9Router Và Cockpit
 
-Payload import ở section 04 là local profile reference, không phải session
-export. Consumer có thể dùng stable `profile_id`, success metadata đã redact,
-local API base URL và opaque vault reference. Cookie export, browser-session
-export, credential export và token export vẫn nằm ngoài tính năng này. Provider
-OAuth hoặc gateway-token support cần design và authorization review riêng.
+Section 04 có thể authorize Codex OAuth ngay trong từng persistent profile đã
+verify. Bấm **Connect Codex** (hoặc **Reconnect Codex**) và hoàn tất xác nhận OpenAI
+nếu profile hiển thị. Khi trạng thái sẵn sàng, **Export** có thể copy hoặc lưu mảng
+JSON dùng trực tiếp cho 9Router hay Cockpit; dùng **Copy all** hoặc **Save all** để
+export toàn bộ profile sẵn sàng cùng lúc. Rust refresh credential còn tối đa năm
+phút trước khi tạo JSON. Nếu refresh lỗi, hãy reconnect profile thay vì export
+credential cũ. Token không được render trong UI và chỉ lưu trong local vault được
+bảo vệ. File JSON và clipboard là plaintext secret; hãy import sớm rồi bảo vệ hoặc
+xóa sau khi dùng.

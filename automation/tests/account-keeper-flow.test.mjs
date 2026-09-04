@@ -127,6 +127,422 @@ test("runs direct login, password change, logout, and verified re-login", async 
   assert.equal(page.actions[6].password, "Synthetic-New-Password-123!");
 });
 
+test("changes authenticator 2FA and verifies the new enrollment", async () => {
+  const page = createFixturePage(["login_ready", "signed_in"]);
+  const events = [];
+  await runAccountFlow({
+    page,
+    adapter: getAdapter("fixture-v1"),
+    request: { ...request(), operation: "change_totp", new_password: "" },
+    emit: (message) => events.push(message),
+    control: {
+      throwIfCancelled() {},
+      async waitFor(type) {
+        if (type === "submit_totp_disable") {
+          return { type, request_id: "req_1" };
+        }
+        assert.equal(type, "totp_enrollment_code");
+        return { type, request_id: "req_1", code: "123456" };
+      },
+    },
+  });
+  assert.deepEqual(page.actions.map((action) => action.type), [
+    "open_login", "submit_credentials", "open_totp_change",
+    "inspect_totp_change", "begin_totp_disable", "submit_totp_disable_identity",
+    "confirm_totp_disable", "inspect_totp_change", "open_totp_enrollment",
+    "read_totp_enrollment", "submit_totp_enrollment", "verify_totp_changed",
+  ]);
+  assert.equal(events.some((event) => event.type === "totp_disable_required"), true);
+  assert.equal(events.some((event) => event.type === "totp_enrollment_secret"), true);
+  assert.equal(events.at(-1).type, "verified");
+});
+
+test("reacquires the active page between TOTP disable phases", async () => {
+  const settingsPage = { url: () => "https://chatgpt.com/" };
+  const identityPage = { url: () => "https://auth.openai.com/log-in/password" };
+  const disabledPage = { url: () => "https://chatgpt.com/" };
+  const enrollmentPage = { url: () => "https://chatgpt.com/" };
+  let currentPage = settingsPage;
+  const actions = [];
+  const events = [];
+  const pageSession = {
+    async current() {
+      return currentPage;
+    },
+    adopt(page) {
+      currentPage = page;
+    },
+  };
+  const adapter = {
+    async openLogin(page) {
+      assert.equal(page, settingsPage);
+      return page;
+    },
+    async classify(page) {
+      assert.equal(page, settingsPage);
+      return "signed_in";
+    },
+    async openTotpChange(page) {
+      assert.equal(page, settingsPage);
+      actions.push("open_totp_change");
+    },
+    async inspectTotpChange(page) {
+      if (page === settingsPage) return "enabled";
+      if (page === disabledPage) return "disabled";
+      if (page === enrollmentPage) return "enrollment";
+      throw Object.assign(new Error("flow_changed"), { code: "flow_changed" });
+    },
+    async beginTotpDisable(page) {
+      assert.equal(page, settingsPage);
+      actions.push("begin_totp_disable");
+      return identityPage;
+    },
+    async submitTotpDisableIdentity(page, password) {
+      assert.equal(page, identityPage);
+      assert.equal(password, "synthetic-current");
+      actions.push("submit_totp_disable_identity");
+      return disabledPage;
+    },
+    async inspectTotpDisable(page) {
+      if (page === identityPage) return "identity_challenge";
+      if (page === disabledPage) return "disabled";
+      throw Object.assign(new Error("flow_changed"), { code: "flow_changed" });
+    },
+    async confirmTotpDisable(page) {
+      assert.equal(page, disabledPage);
+      actions.push("confirm_totp_disable");
+      return page;
+    },
+    async openTotpEnrollment(page) {
+      assert.equal(page, disabledPage);
+      actions.push("open_totp_enrollment");
+      return enrollmentPage;
+    },
+    async readTotpEnrollment(page) {
+      assert.equal(page, enrollmentPage);
+      return "JBSWY3DPEHPK3PXP";
+    },
+    async submitTotpEnrollment(page, code) {
+      assert.equal(page, enrollmentPage);
+      assert.equal(code, "123456");
+    },
+    async verifyTotpChanged(page) {
+      assert.equal(page, enrollmentPage);
+      return true;
+    },
+  };
+
+  await runAccountFlow({
+    pageSession,
+    adapter,
+    request: { ...request(), operation: "change_totp", new_password: "" },
+    emit: (message) => events.push(message),
+    control: {
+      throwIfCancelled() {},
+      async waitFor(type) {
+        if (type === "submit_totp_disable") {
+          return { type, request_id: "req_1" };
+        }
+        assert.equal(type, "totp_enrollment_code");
+        return { type, request_id: "req_1", code: "123456" };
+      },
+    },
+  });
+
+  assert.deepEqual(actions, [
+    "open_totp_change",
+    "begin_totp_disable",
+    "submit_totp_disable_identity",
+    "open_totp_enrollment",
+  ]);
+  assert.equal(events.at(-1).type, "verified");
+});
+
+test("uses the old TOTP challenge before confirming disable", async () => {
+  const settingsPage = { url: () => "https://chatgpt.com/" };
+  const identityPage = { url: () => "https://auth.openai.com/log-in/password" };
+  const oldTotpPage = { url: () => "https://auth.openai.com/mfa-challenge/synthetic" };
+  const confirmationPage = { url: () => "https://chatgpt.com/" };
+  const disabledPage = { url: () => "https://chatgpt.com/" };
+  const enrollmentPage = { url: () => "https://chatgpt.com/" };
+  let currentPage = settingsPage;
+  const actions = [];
+  const events = [];
+  const pageSession = {
+    async current() {
+      return currentPage;
+    },
+    adopt(page) {
+      currentPage = page;
+    },
+  };
+  const adapter = {
+    async openLogin(page) { return page; },
+    async classify() { return "signed_in"; },
+    async openTotpChange() {},
+    async inspectTotpChange(page) {
+      if (page === settingsPage) return "enabled";
+      if (page === disabledPage) return "disabled";
+      if (page === enrollmentPage) return "enrollment";
+      throw Object.assign(new Error("flow_changed"), { code: "flow_changed" });
+    },
+    async beginTotpDisable(page) {
+      assert.equal(page, settingsPage);
+      return identityPage;
+    },
+    async submitTotpDisableIdentity(page) {
+      assert.equal(page, identityPage);
+      return oldTotpPage;
+    },
+    async inspectTotpDisable(page) {
+      if (page === identityPage) return "identity_challenge";
+      if (page === oldTotpPage) return "totp_required";
+      if (page === confirmationPage) return "confirmation";
+      if (page === disabledPage) return "disabled";
+      throw Object.assign(new Error("flow_changed"), { code: "flow_changed" });
+    },
+    async submitTotpDisableChallenge(page, code) {
+      assert.equal(page, oldTotpPage);
+      assert.equal(code, "654321");
+      actions.push("submit_old_totp");
+      return confirmationPage;
+    },
+    async confirmTotpDisable(page) {
+      assert.equal(page, confirmationPage);
+      actions.push("confirm_totp_disable");
+      return disabledPage;
+    },
+    async openTotpEnrollment(page) {
+      assert.equal(page, disabledPage);
+      return enrollmentPage;
+    },
+    async readTotpEnrollment(page) {
+      assert.equal(page, enrollmentPage);
+      return "JBSWY3DPEHPK3PXP";
+    },
+    async submitTotpEnrollment(page, code) {
+      assert.equal(page, enrollmentPage);
+      assert.equal(code, "123456");
+    },
+    async verifyTotpChanged(page) {
+      assert.equal(page, enrollmentPage);
+      return true;
+    },
+  };
+
+  await runAccountFlow({
+    pageSession,
+    adapter,
+    request: { ...request(), operation: "change_totp", new_password: "" },
+    emit: (message) => events.push(message),
+    control: {
+      throwIfCancelled() {},
+      async waitFor(type) {
+        if (type === "submit_totp_disable") return { type, request_id: "req_1" };
+        if (type === "totp_code") return { type, request_id: "req_1", code: "654321" };
+        assert.equal(type, "totp_enrollment_code");
+        return { type, request_id: "req_1", code: "123456" };
+      },
+    },
+  });
+
+  assert.deepEqual(actions, ["submit_old_totp", "confirm_totp_disable"]);
+  assert.equal(events.some((event) => event.type === "totp_required"), true);
+  assert.equal(events.at(-1).type, "verified");
+});
+
+test("confirms disable before identity and old TOTP when provider requires that order", async () => {
+  const settingsPage = { url: () => "https://chatgpt.com/" };
+  const confirmationPage = { url: () => "https://chatgpt.com/" };
+  const identityPage = { url: () => "https://auth.openai.com/log-in/password" };
+  const oldTotpPage = { url: () => "https://auth.openai.com/mfa-challenge/synthetic" };
+  const disabledPage = { url: () => "https://chatgpt.com/" };
+  const enrollmentPage = { url: () => "https://chatgpt.com/" };
+  let currentPage = settingsPage;
+  const actions = [];
+  const events = [];
+  const pageSession = {
+    async current() { return currentPage; },
+    adopt(page) { currentPage = page; },
+  };
+  const adapter = {
+    async openLogin(page) { return page; },
+    async classify() { return "signed_in"; },
+    async openTotpChange(page) { return page; },
+    async inspectTotpChange(page) {
+      if (page === settingsPage) return "enabled";
+      if (page === disabledPage) return "disabled";
+      if (page === enrollmentPage) return "enrollment";
+      throw Object.assign(new Error("flow_changed"), { code: "flow_changed" });
+    },
+    async beginTotpDisable(page) {
+      assert.equal(page, settingsPage);
+      return confirmationPage;
+    },
+    async inspectTotpDisable(page) {
+      if (page === confirmationPage) return "confirmation";
+      if (page === identityPage) return "identity_challenge";
+      if (page === oldTotpPage) return "totp_required";
+      if (page === disabledPage) return "disabled";
+      throw Object.assign(new Error("flow_changed"), { code: "flow_changed" });
+    },
+    async confirmTotpDisable(page) {
+      assert.equal(page, confirmationPage);
+      actions.push("confirm_disable");
+      return identityPage;
+    },
+    async submitTotpDisableIdentity(page, password) {
+      assert.equal(page, identityPage);
+      assert.equal(password, "synthetic-current");
+      actions.push("submit_identity");
+      return oldTotpPage;
+    },
+    async submitTotpDisableChallenge(page, code) {
+      assert.equal(page, oldTotpPage);
+      assert.equal(code, "654321");
+      actions.push("submit_old_totp");
+      return disabledPage;
+    },
+    async openTotpEnrollment(page) {
+      assert.equal(page, disabledPage);
+      return enrollmentPage;
+    },
+    async readTotpEnrollment() { return "JBSWY3DPEHPK3PXP"; },
+    async submitTotpEnrollment(page, code) {
+      assert.equal(page, enrollmentPage);
+      assert.equal(code, "123456");
+    },
+    async verifyTotpChanged() { return true; },
+  };
+
+  await runAccountFlow({
+    pageSession,
+    adapter,
+    request: { ...request(), operation: "change_totp", new_password: "" },
+    emit: (message) => events.push(message),
+    control: {
+      throwIfCancelled() {},
+      async waitFor(type) {
+        if (type === "submit_totp_disable") return { type, request_id: "req_1" };
+        if (type === "totp_code") return { type, request_id: "req_1", code: "654321" };
+        return { type, request_id: "req_1", code: "123456" };
+      },
+    },
+  });
+
+  assert.deepEqual(actions, ["confirm_disable", "submit_identity", "submit_old_totp"]);
+  assert.equal(events.at(-1).type, "verified");
+});
+
+test("reopens TOTP settings after the old challenge returns signed in", async () => {
+  const settingsPage = { url: () => "https://chatgpt.com/" };
+  const identityPage = { url: () => "https://auth.openai.com/log-in/password" };
+  const oldTotpPage = { url: () => "https://auth.openai.com/mfa-challenge/synthetic" };
+  const signedInPage = { url: () => "https://chatgpt.com/" };
+  const disabledPage = { url: () => "https://chatgpt.com/" };
+  const enrollmentPage = { url: () => "https://chatgpt.com/" };
+  let currentPage = settingsPage;
+  const actions = [];
+  const events = [];
+  const pageSession = {
+    async current() { return currentPage; },
+    adopt(page) { currentPage = page; },
+  };
+  const adapter = {
+    async openLogin(page) { return page; },
+    async classify() { return "signed_in"; },
+    async openTotpChange(page) {
+      if (page === settingsPage) return page;
+      assert.equal(page, signedInPage);
+      actions.push("reopen_totp_settings");
+      return page;
+    },
+    async inspectTotpChange(page) {
+      if (page === settingsPage || page === signedInPage) return "enabled";
+      if (page === disabledPage) return "disabled";
+      if (page === enrollmentPage) return "enrollment";
+      throw Object.assign(new Error("flow_changed"), { code: "flow_changed" });
+    },
+    async beginTotpDisable(page) {
+      if (page === settingsPage) return identityPage;
+      assert.equal(page, signedInPage);
+      actions.push("retry_totp_disable");
+      return disabledPage;
+    },
+    async submitTotpDisableIdentity() { return oldTotpPage; },
+    async inspectTotpDisable(page) {
+      if (page === identityPage) return "identity_challenge";
+      if (page === oldTotpPage) return "totp_required";
+      if (page === signedInPage) return "signed_in";
+      if (page === disabledPage) return "disabled";
+      throw Object.assign(new Error("flow_changed"), { code: "flow_changed" });
+    },
+    async submitTotpDisableChallenge(page, code) {
+      assert.equal(page, oldTotpPage);
+      assert.equal(code, "654321");
+      return signedInPage;
+    },
+    async confirmTotpDisable(page) { return page; },
+    async openTotpEnrollment(page) {
+      assert.equal(page, disabledPage);
+      return enrollmentPage;
+    },
+    async readTotpEnrollment() { return "JBSWY3DPEHPK3PXP"; },
+    async submitTotpEnrollment(page, code) {
+      assert.equal(page, enrollmentPage);
+      assert.equal(code, "123456");
+    },
+    async verifyTotpChanged() { return true; },
+  };
+
+  await runAccountFlow({
+    pageSession,
+    adapter,
+    request: { ...request(), operation: "change_totp", new_password: "" },
+    emit: (message) => events.push(message),
+    control: {
+      throwIfCancelled() {},
+      async waitFor(type) {
+        if (type === "submit_totp_disable") return { type, request_id: "req_1" };
+        if (type === "totp_code") return { type, request_id: "req_1", code: "654321" };
+        return { type, request_id: "req_1", code: "123456" };
+      },
+    },
+  });
+
+  assert.deepEqual(actions, ["reopen_totp_settings", "retry_totp_disable"]);
+  assert.equal(events.at(-1).type, "verified");
+});
+
+test("changes email with connector code and verifies the new address", async () => {
+  const page = createFixturePage(["login_ready", "signed_in"]);
+  const events = [];
+  await runAccountFlow({
+    page,
+    adapter: getAdapter("fixture-v1"),
+    request: {
+      ...request(),
+      operation: "change_email",
+      new_password: "",
+      new_email: "synthetic-new@example.test",
+    },
+    emit: (message) => events.push(message),
+    control: {
+      throwIfCancelled() {},
+      async waitForAny(types) {
+        assert.deepEqual(types, ["email_verification_code", "resume"]);
+        return { type: "email_verification_code", request_id: "req_1", code: "654321" };
+      },
+    },
+  });
+  assert.deepEqual(page.actions.map((action) => action.type), [
+    "open_login", "submit_credentials", "open_email_change",
+    "submit_email_change", "submit_email_verification", "verify_email_changed",
+  ]);
+  assert.equal(events.some((event) => event.type === "email_verification_required"), true);
+  assert.equal(events.at(-1).type, "verified");
+});
+
 test("continues login when the email step has not submitted the password", async () => {
   const page = createFixturePage([
     "login_ready",
@@ -2410,6 +2826,392 @@ test("OpenAI password change uses an already-open account menu", async () => {
   await openaiChatgptAdapter.openPasswordChange(page);
 
   assert.deepEqual(actions, ["settings", "security", "password"]);
+});
+
+test("OpenAI adapter reuses an already-open Security settings dialog", async () => {
+  const clicks = [];
+  const locator = ({ visible = false, checked = false, onClick } = {}) => ({
+    first() { return this; },
+    filter() { return this; },
+    async isVisible() { return visible; },
+    async count() { return visible ? 1 : 0; },
+    async isChecked() { return checked; },
+    async getAttribute(name) {
+      if (name === "aria-checked") return String(checked);
+      if (name === "data-state") return checked ? "checked" : "unchecked";
+      return null;
+    },
+    async click() { onClick?.(); },
+  });
+  const hidden = () => locator();
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) return locator({ visible: true });
+      if (selector.includes('data-testid="security-tab"')) return locator({ visible: true, onClick: () => clicks.push("security") });
+      if (selector.includes('data-testid="mfa-authenticator-toggle"')) return locator({ visible: true, checked: true });
+      return hidden();
+    },
+    getByRole() { return hidden(); },
+    getByText() { return hidden(); },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.openTotpChange(page);
+  assert.deepEqual(clicks, []);
+});
+
+test("OpenAI adapter waits for delayed MFA controls after opening Security", async () => {
+  let stage = "profile_menu";
+  let polls = 0;
+  const locator = ({ visible = () => false, checked = false, onClick } = {}) => ({
+    first() { return this; },
+    filter() { return this; },
+    async isVisible() { return Boolean(visible()); },
+    async count() { return visible() ? 1 : 0; },
+    async isChecked() { return checked; },
+    async getAttribute(name) {
+      if (name === "aria-checked") return String(checked);
+      if (name === "data-state") return checked ? "checked" : "unchecked";
+      return null;
+    },
+    async click() { onClick?.(); },
+  });
+  const hidden = () => locator();
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) {
+        return locator({ visible: () => stage === "profile_menu" });
+      }
+      if (selector.includes('data-testid="settings-menu-item"')) {
+        return locator({
+          visible: () => stage === "profile_menu",
+          onClick: () => { stage = "settings"; },
+        });
+      }
+      if (selector.includes('data-testid="security-tab"')) {
+        return locator({
+          visible: () => stage === "settings",
+          onClick: () => { stage = "security_pending"; },
+        });
+      }
+      if (selector.includes('data-testid="mfa-authenticator-toggle"')) {
+        return locator({ visible: () => stage === "security_ready", checked: true });
+      }
+      return hidden();
+    },
+    getByRole() { return hidden(); },
+    getByText() { return hidden(); },
+    async waitForTimeout() {
+      polls += 1;
+      if (stage === "security_pending" && polls >= 2) stage = "security_ready";
+    },
+  };
+
+  await openaiChatgptAdapter.openTotpChange(page);
+  assert.equal(await openaiChatgptAdapter.inspectTotpChange(page), "enabled");
+  assert.ok(polls >= 2);
+});
+
+test("OpenAI adapter recognizes the current MFA authenticator toggle test id", async () => {
+  const locator = ({ visible = false, checked = false } = {}) => ({
+    first() { return this; },
+    async isVisible() { return visible; },
+    async count() { return visible ? 1 : 0; },
+    async isChecked() { return checked; },
+    async getAttribute(name) {
+      if (name === "aria-checked") return String(checked);
+      if (name === "data-state") return checked ? "checked" : "unchecked";
+      return null;
+    },
+  });
+  const hidden = () => locator();
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="mfa-authenticator-toggle"')) {
+        return locator({ visible: true, checked: true });
+      }
+      return hidden();
+    },
+    getByRole() { return hidden(); },
+    getByText() { return hidden(); },
+  };
+
+  assert.equal(await openaiChatgptAdapter.inspectTotpChange(page), "enabled");
+});
+
+test("OpenAI adapter reads an unmarked authenticator enrollment dialog", async () => {
+  let submittedCode = null;
+  let verified = false;
+  const locator = ({ visible = false, checked = false, onClick, onFill } = {}) => ({
+    first() { return this; },
+    filter() { return this; },
+    async isVisible() { return visible; },
+    async count() { return visible ? 1 : 0; },
+    nth() { return this; },
+    async isChecked() { return checked; },
+    async getAttribute(name) {
+      if (name === "aria-checked") return String(checked);
+      if (name === "data-state") return checked ? "checked" : "unchecked";
+      return null;
+    },
+    async fill(value) { onFill?.(value); },
+    async click() { onClick?.(); },
+    locator() { return this; },
+    getByRole() { return this; },
+  });
+  const hidden = () => locator();
+  const codeInput = locator({ visible: true, onFill: (value) => { submittedCode = value; } });
+  const verifyButton = locator({ visible: true, onClick: () => { verified = true; } });
+  const enrollmentDialog = {
+    first() { return this; },
+    async isVisible() { return true; },
+    async count() { return 1; },
+    nth() { return this; },
+    locator(selector) {
+      if (selector.includes("input")) return codeInput;
+      return hidden();
+    },
+    getByRole(role, options = {}) {
+      if (role === "button" && options.name instanceof RegExp && options.name.test("Xác minh")) {
+        return verifyButton;
+      }
+      return hidden();
+    },
+  };
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="mfa-authenticator-toggle"')) {
+        return locator({ visible: true, checked: true });
+      }
+      return hidden();
+    },
+    getByRole(role) {
+      if (role === "dialog") return enrollmentDialog;
+      return hidden();
+    },
+    getByText() { return hidden(); },
+    async evaluate() { return "JBSWY3DPEHPK3PXP"; },
+  };
+
+  assert.equal(await openaiChatgptAdapter.inspectTotpChange(page), "enrollment");
+  assert.equal(await openaiChatgptAdapter.readTotpEnrollment(page), "JBSWY3DPEHPK3PXP");
+  await openaiChatgptAdapter.submitTotpEnrollment(page, "123456");
+  assert.equal(submittedCode, "123456");
+  assert.equal(verified, true);
+});
+
+test("OpenAI adapter reveals the manual TOTP secret when the QR dialog hides it", async () => {
+  let revealed = false;
+  const locator = ({ visible = false, onClick } = {}) => ({
+    first() { return this; },
+    filter() { return this; },
+    async isVisible() { return visible; },
+    async count() { return visible ? 1 : 0; },
+    async click() { onClick?.(); },
+    async inputValue() { return ""; },
+    async textContent() { return ""; },
+  });
+  const hidden = () => locator();
+  const page = {
+    locator() { return hidden(); },
+    getByRole(role, options = {}) {
+      if ((role === "link" || role === "button") && options.name?.test("Bạn gặp vấn đề khi quét?")) {
+        return locator({ visible: true, onClick: () => { revealed = true; } });
+      }
+      return hidden();
+    },
+    async evaluate() { return revealed ? "MFRGGZDFMZTWQ2LK" : "SECURITYSETTINGS"; },
+    async waitForTimeout() {},
+  };
+
+  assert.equal(await openaiChatgptAdapter.readTotpEnrollment(page), "MFRGGZDFMZTWQ2LK");
+  assert.equal(revealed, true);
+});
+
+test("OpenAI adapter rejects TOTP verification while enrollment error remains visible", async () => {
+  const locator = ({ visible = false, checked = false } = {}) => ({
+    first() { return this; },
+    filter() { return this; },
+    async isVisible() { return visible; },
+    async count() { return visible ? 1 : 0; },
+    nth() { return this; },
+    async isChecked() { return checked; },
+    async getAttribute(name) {
+      if (name === "aria-checked") return String(checked);
+      if (name === "data-state") return checked ? "checked" : "unchecked";
+      return null;
+    },
+    locator() { return this; },
+    getByRole() { return this; },
+  });
+  const hidden = () => locator();
+  const page = {
+    locator(selector) {
+      if (selector.includes('data-testid="mfa-authenticator-toggle"')) {
+        return locator({ visible: true, checked: true });
+      }
+      return hidden();
+    },
+    getByRole(role) { return role === "dialog" ? locator({ visible: true }) : hidden(); },
+    getByText(text) {
+      return text?.test?.("Không xác minh được mã. Vui lòng thử lại.")
+        ? locator({ visible: true })
+        : hidden();
+    },
+    async waitForTimeout() {},
+  };
+
+  assert.equal(await openaiChatgptAdapter.verifyTotpChanged(page), false);
+});
+
+test("OpenAI adapter rotates TOTP through the Authenticator app switch", async () => {
+  let stage = "profile_menu";
+  const actions = [];
+  let submittedCode = null;
+  let submittedCurrentPassword = null;
+  const locator = ({ visible = () => false, checked = () => false, onClick, value = "", text = "", onFill } = {}) => ({
+    first() { return this; },
+    filter() { return this; },
+    async isVisible() { return Boolean(visible()); },
+    async count() { return 0; },
+    async click(options) { onClick?.(options); },
+    async isChecked() { return Boolean(checked()); },
+    async getAttribute(name) { return name === "aria-checked" ? String(Boolean(checked())) : null; },
+    async fill(next) { onFill?.(next); },
+    async inputValue() { return value; },
+    async textContent() { return text; },
+  });
+  const hidden = () => locator();
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) {
+        return locator({ visible: () => stage === "profile_menu" });
+      }
+      if (selector.includes('data-testid="settings-menu-item"')) {
+        return locator({ visible: () => stage === "profile_menu", onClick: () => { actions.push("settings"); stage = "settings"; } });
+      }
+      if (selector.includes('data-testid="security-tab"')) {
+        return locator({ visible: () => stage === "settings", onClick: () => { actions.push("security"); stage = "enabled"; } });
+      }
+      if (selector.includes('data-testid="totp-secret"')) {
+        return locator({ visible: () => stage === "enrollment", value: "JBSW Y3DP EHPK 3PXP" });
+      }
+      if (selector.includes('autocomplete="current-password"')) {
+        return locator({
+          visible: () => stage === "identity",
+          onFill: (password) => { submittedCurrentPassword = password; },
+        });
+      }
+      if (selector.includes('autocomplete="one-time-code"')) {
+        return locator({ visible: () => stage === "enrollment", onFill: (code) => { submittedCode = code; } });
+      }
+      if (selector.includes('button[type="submit"]')) {
+        return locator({
+          visible: () => stage === "identity" || stage === "enrollment",
+          onClick: () => {
+            if (stage === "identity") {
+              actions.push("submit_identity");
+              stage = "confirm_disable";
+            } else {
+              stage = "enabled";
+            }
+          },
+        });
+      }
+      return hidden();
+    },
+    getByRole(role, options = {}) {
+      if (
+        role === "switch"
+        && options.name instanceof RegExp
+        && options.name.test("Authenticator app")
+      ) {
+        return locator({
+          visible: () => stage === "enabled" || stage === "disabled",
+          checked: () => stage === "enabled",
+          onClick: (options) => {
+            assert.equal(options?.force, true);
+            if (stage === "enabled") {
+              actions.push("toggle_off");
+              stage = "identity";
+            } else if (stage === "disabled") {
+              actions.push("toggle_on");
+              stage = "enrollment";
+            }
+          },
+        });
+      }
+      if (
+        role === "button"
+        && stage === "confirm_disable"
+        && options.name instanceof RegExp
+        && options.name.test("Xóa")
+      ) {
+        return locator({ visible: () => true, onClick: () => { actions.push("confirm_disable"); stage = "disabled"; } });
+      }
+      return hidden();
+    },
+    getByText() { return hidden(); },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.openTotpChange(page);
+  assert.equal(await openaiChatgptAdapter.inspectTotpChange(page), "enabled");
+  await openaiChatgptAdapter.beginTotpDisable(page);
+  await openaiChatgptAdapter.submitTotpDisableIdentity(page, "synthetic-current");
+  await openaiChatgptAdapter.confirmTotpDisable(page);
+  assert.equal(submittedCurrentPassword, "synthetic-current");
+  await openaiChatgptAdapter.openTotpEnrollment(page);
+  assert.equal(await openaiChatgptAdapter.readTotpEnrollment(page), "JBSWY3DPEHPK3PXP");
+  await openaiChatgptAdapter.submitTotpEnrollment(page, "123456");
+  assert.equal(submittedCode, "123456");
+  assert.equal(await openaiChatgptAdapter.verifyTotpChanged(page), true);
+  assert.deepEqual(actions, ["settings", "security", "toggle_off", "submit_identity", "confirm_disable", "toggle_on"]);
+});
+
+test("OpenAI adapter changes email through explicit account settings", async () => {
+  let stage = "profile_menu";
+  const actions = [];
+  let enteredEmail = null;
+  let enteredCode = null;
+  const locator = ({ visible = () => false, onClick, onFill } = {}) => ({
+    first() { return this; },
+    filter() { return this; },
+    async isVisible() { return Boolean(visible()); },
+    async count() { return 0; },
+    async click(options) { onClick?.(options); },
+    async fill(value) { onFill?.(value); },
+  });
+  const hidden = () => locator();
+  const page = {
+    url: () => "https://chatgpt.com/",
+    locator(selector) {
+      if (selector.includes('data-testid="accounts-profile-button"')) return locator({ visible: () => stage === "profile_menu" });
+      if (selector.includes('data-testid="settings-menu-item"')) return locator({ visible: () => stage === "profile_menu", onClick: () => { actions.push("settings"); stage = "settings"; } });
+      if (selector.includes('data-testid="account-tab"')) return locator({ visible: () => stage === "settings", onClick: () => { actions.push("account"); stage = "account"; } });
+      if (selector.includes('data-testid="email-setting"')) return locator({ visible: () => stage === "account", onClick: () => { actions.push("email"); stage = "email_form"; } });
+      if (selector.includes('autocomplete="username"')) return locator({ visible: () => stage === "email_form", onFill: (value) => { enteredEmail = value; } });
+      if (selector.includes('autocomplete="one-time-code"')) return locator({ visible: () => stage === "verification", onFill: (value) => { enteredCode = value; } });
+      if (selector.includes('button[type="submit"]')) return locator({ visible: () => stage === "email_form" || stage === "verification", onClick: () => { stage = stage === "email_form" ? "verification" : "changed"; } });
+      return hidden();
+    },
+    getByRole() { return hidden(); },
+    getByText(text) { return locator({ visible: () => stage === "changed" && text === "new@example.test" }); },
+    async waitForTimeout() {},
+  };
+
+  await openaiChatgptAdapter.openEmailChange(page);
+  await openaiChatgptAdapter.submitEmailChange(page, "new@example.test");
+  await openaiChatgptAdapter.submitEmailVerification(page, "654321");
+  assert.equal(await openaiChatgptAdapter.verifyEmailChanged(page, "new@example.test"), true);
+  assert.equal(enteredEmail, "new@example.test");
+  assert.equal(enteredCode, "654321");
+  assert.deepEqual(actions, ["settings", "account", "email"]);
 });
 
 test("emitted worker messages contain no credentials, tokens, HTML, or account", async () => {

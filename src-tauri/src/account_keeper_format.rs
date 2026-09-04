@@ -134,9 +134,15 @@ pub struct ImportedAccount {
     pub normalized_account: String,
     pub current_password: String,
     pub totp_secret: String,
+    pub new_email: Option<String>,
 }
 
 pub fn parse_input(text: &str) -> Result<Vec<ImportedAccount>> {
+    parse_input_for_operation(text, "change_password")
+}
+
+pub fn parse_input_for_operation(text: &str, operation: &str) -> Result<Vec<ImportedAccount>> {
+    let change_email = operation == "change_email";
     let mut accounts = Vec::new();
     let mut normalized_accounts = HashSet::new();
 
@@ -146,15 +152,44 @@ pub fn parse_input(text: &str) -> Result<Vec<ImportedAccount>> {
             continue;
         }
 
+        let expected = if change_email {
+            "account|password|totp|new_email"
+        } else {
+            "account|password|totp"
+        };
         let Some(first_delimiter) = line.find('|') else {
-            bail!("line {line_number}: expected account|password|totp");
+            bail!("line {line_number}: expected {expected}");
         };
         let Some(last_delimiter) = line.rfind('|') else {
-            bail!("line {line_number}: expected account|password|totp");
+            bail!("line {line_number}: expected {expected}");
         };
         if first_delimiter == last_delimiter {
-            bail!("line {line_number}: expected account|password|totp");
+            bail!("line {line_number}: expected {expected}");
         }
+
+        let (current_password, totp_secret, new_email) = if change_email {
+            let Some(totp_delimiter) = line[..last_delimiter].rfind('|') else {
+                bail!("line {line_number}: expected {expected}");
+            };
+            if totp_delimiter == first_delimiter {
+                bail!("line {line_number}: expected {expected}");
+            }
+            let value = line[last_delimiter + 1..].trim();
+            if value.is_empty() {
+                bail!("line {line_number}: new email is empty");
+            }
+            (
+                line[first_delimiter + 1..totp_delimiter].to_string(),
+                line[totp_delimiter + 1..last_delimiter].trim().to_string(),
+                Some(value.to_string()),
+            )
+        } else {
+            (
+                line[first_delimiter + 1..last_delimiter].to_string(),
+                line[last_delimiter + 1..].trim().to_string(),
+                None,
+            )
+        };
 
         let account = line[..first_delimiter].trim().to_string();
         if account.is_empty() {
@@ -168,10 +203,12 @@ pub fn parse_input(text: &str) -> Result<Vec<ImportedAccount>> {
             );
         }
 
-        let current_password = line[first_delimiter + 1..last_delimiter].to_string();
-        let totp_secret = line[last_delimiter + 1..].trim().to_string();
         if !totp_secret.is_empty() && decode_base32(&totp_secret).is_err() {
             bail!("line {line_number}: invalid TOTP secret");
+        }
+        let new_email = new_email.map(|value| normalize_account(&value));
+        if new_email.as_deref() == Some(normalized_account.as_str()) {
+            bail!("line {line_number}: new email must differ from current email");
         }
 
         accounts.push(ImportedAccount {
@@ -180,6 +217,7 @@ pub fn parse_input(text: &str) -> Result<Vec<ImportedAccount>> {
             normalized_account,
             current_password,
             totp_secret,
+            new_email,
         });
     }
 
@@ -358,6 +396,46 @@ mod tests {
         let rows = parse_input("owner@example.test|password|JBSW Y3DP-EHPK3PXP").unwrap();
 
         assert_eq!(rows[0].totp_secret, "JBSW Y3DP-EHPK3PXP");
+    }
+
+    #[test]
+    fn change_email_accepts_new_email_as_fourth_field() {
+        let rows = parse_input_for_operation(
+            "owner@example.test|password|JBSWY3DPEHPK3PXP|new@example.test",
+            "change_email",
+        )
+        .unwrap();
+
+        assert_eq!(rows[0].account, "owner@example.test");
+        assert_eq!(rows[0].new_email.as_deref(), Some("new@example.test"));
+    }
+
+    #[test]
+    fn change_email_rejects_same_normalized_email_without_echoing_it() {
+        let email = "Owner@Example.Test";
+        let error = parse_input_for_operation(
+            &format!("owner@example.test|password||{email}"),
+            "change_email",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("new email must differ"));
+        assert!(!error.contains(email));
+    }
+
+    #[test]
+    fn non_email_operations_reject_four_fields_without_echoing_input() {
+        let email = "new@example.test";
+        let error = parse_input_for_operation(
+            &format!("owner@example.test|password||{email}"),
+            "change_totp",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("invalid TOTP secret"));
+        assert!(!error.contains(email));
     }
 
     #[test]

@@ -4,7 +4,6 @@ import type {
   InputSource,
   JobStatus,
   JobView,
-  ManagedProfileView,
   ProgressLogEntry,
   ProgressEvent,
 } from "./types";
@@ -23,6 +22,11 @@ const resumableAccountStages = new Set<AccountStage>([
   "submitting_totp",
   "changing_password",
   "verifying_new_password",
+  "changing_totp",
+  "verifying_new_totp",
+  "changing_email",
+  "waiting_email_verification",
+  "verifying_new_email",
 ]);
 
 export function activeInputSource(draft: DraftState): InputSource {
@@ -37,7 +41,6 @@ export function activeInputSource(draft: DraftState): InputSource {
     }
   }
 }
-
 export function canStart(draft: DraftState, jobs: readonly JobView[]): boolean {
   const source = activeInputSource(draft);
   const hasActiveInput = source.kind === "inline"
@@ -47,8 +50,8 @@ export function canStart(draft: DraftState, jobs: readonly JobView[]): boolean {
   if (!draft.plaintextAcknowledged) return false;
   if (!draft.inputValidation || draft.inputValidation.validCount < 1) return false;
   if (draft.inputValidationRevision !== draft.inputRevision) return false;
+  if (draft.operation !== "login" && !draft.outputPath.trim()) return false;
   if (draft.operation === "change_password") {
-    if (!draft.outputPath.trim()) return false;
     if (!draft.templateValidation?.valid) return false;
   }
   return !jobs.some((job) => job.batchBlocked || !terminalJobStatuses.has(job.status));
@@ -97,8 +100,4 @@ export function progressLogEntries(job: JobView | null): ProgressLogEntry[] {
       error_code: account.error_code,
     }))
     .sort((left, right) => left.updated_at.localeCompare(right.updated_at));
-}
-
-export function profileImportJson(profile: ManagedProfileView): string {
-  return JSON.stringify(profile.import_payload, null, 2);
 }

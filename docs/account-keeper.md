@@ -2,8 +2,8 @@
 
 [README](../README.md) | [Tiếng Việt](account-keeper.vn.md)
 
-Account Keeper is the Windows 10/11 BrProxies workflow for rotating passwords
-on accounts you own or are explicitly authorized to manage. The MVP processes
+Account Keeper is the Windows 10/11 BrProxies workflow for logging in and changing
+passwords, authenticator 2FA, or account email on accounts you own or are explicitly authorized to manage. It processes
 one account at a time and maps every account to one persistent BrProxies
 profile.
 
@@ -17,10 +17,13 @@ Account Keeper changes credentials. Read these boundaries before using it:
 - Account Keeper does not solve or bypass CAPTCHA, device approval, unusual
   login warnings, email verification, or other security controls.
 - It does not log in to inboxes or automate email-message retrieval.
+- Change email can call an optional operator-provided loopback mailbox connector
+  for a six-digit verification code. If unavailable, the profile stays open for manual verification.
 - Social login through Google, Microsoft, Apple, or another identity provider
   is not supported in the MVP.
-- It does not export cookies, browser sessions, authorization headers, access
-  tokens, or refresh tokens.
+- It does not export cookies, browser sessions, or authorization headers. The
+  explicit Codex export in section 04 can export OAuth tokens only after the
+  operator authorizes that verified profile and acknowledges plaintext handling.
 - TOTP secrets remain local. Rust generates a short-lived six-digit code and
   sends only that code to the worker when the expected TOTP form is visible.
 
@@ -84,6 +87,15 @@ this format, with one record per line:
 account|current_password|optional_totp_secret
 ```
 
+For **Change email**, append the new email as the fourth field:
+
+```text
+current_email|current_password|optional_totp_secret|new_email
+```
+
+The first email identifies the existing profile. The fourth field is the new
+email and is committed only after provider verification.
+
 Required synthetic example:
 
 ```text
@@ -114,6 +126,8 @@ Parser rules:
   `=` padding is accepted.
 - Validation errors report the line number but do not echo passwords or TOTP
   secrets.
+- The fourth field is accepted only for **Change email**, must be a valid email,
+  and must differ from the normalized current email.
 
 Example with an internal password delimiter:
 
@@ -163,21 +177,42 @@ length is outside 12-128 characters.
 ## Start A Batch
 
 1. Open **Account Keeper** in BrProxies.
-2. Keep the default **Paste text** mode selected and paste one record per line,
+2. Select **Login GPT**, **Change password**, **Change 2FA**, or **Change email**.
+3. Keep the default **Paste text** mode selected and paste one record per line,
    or click **Choose file**, then **Browse** under **Input file**, and select a
    UTF-8 plaintext input file.
-3. For pasted text, click **Validate Input** explicitly. A selected file is
+4. For pasted text, click **Validate Input** explicitly. A selected file is
    validated immediately after selection.
-4. Keep the default `%USERPROFILE%\Documents\account-keeper-result.json`, or
-   click **Browse** under **Output file** and choose another plaintext output
-   JSON path.
-5. Enter the batch password template, then click **Validate Template**.
-6. Review the masked account identities, parsed account count, and any
+5. For change operations, keep the default
+   `<BrProxies.exe directory>\output\account-keeper-result.json`, or click
+   **Browse** under **Output file** and choose another plaintext output JSON
+   path.
+6. For **Change password** only, enter the batch password template, then click **Validate Template**.
+7. Review the masked account identities, parsed account count, and any
    line-specific errors.
-7. Acknowledge that the active input and output contain plaintext secrets.
-8. Optionally enable **Keep profile running after completion**. It is disabled
+8. Acknowledge that the active input and output contain plaintext secrets.
+9. Choose **Browser proxy**: **None** (default), **Random active proxy**, or one
+   active proxy already stored and tested under **Proxies**. **None** keeps an
+   existing profile's current proxy. **Random** or a selected proxy applies to
+   both new and existing profiles; a running profile is restarted when its
+   proxy changes.
+10. Optionally enable **Keep profile running after completion**. It is disabled
    by default.
-9. Click **Start Batch** and confirm the password-changing operation.
+11. Click **Start Batch** and confirm the selected operation.
+
+### Optional mailbox connector
+
+Configure it under **Settings** > **Account Keeper email verification**. The
+endpoint must use loopback HTTP and may return one of these strict responses:
+
+```json
+{"status":"code","code":"123456"}
+{"status":"pending"}
+{"status":"manual"}
+```
+
+Timeouts, connector errors, or `manual` fall back to manual **Continue**. The
+connector token stays in local settings and is never sent to the browser worker.
 
 Validation and start each send `request.source` through local React-to-Tauri
 IPC. Paste mode sends `{ kind: "inline", text }`; file mode sends
@@ -198,22 +233,34 @@ does not erase or zeroize copies that may remain in process memory.
 For each account, Account Keeper:
 
 1. Resolves or creates the account's persistent BrProxies profile.
+   If the batch selected **Random** or a specific proxy, Account Keeper binds or
+   replaces the profile proxy before launch. **Random active proxy** resolves
+   separately for each account. If the proxy changes while the profile is
+   running, Account Keeper stops it so the next launch uses the new proxy.
+   Failure to resolve or bind the proxy pauses the job without launching it
+   directly; test or restore an active proxy under **Proxies**, then use
+   **Resume Job**.
 2. Launches that profile with CDP enabled.
 3. Starts a fresh Node/Patchright worker for the account.
 4. Classifies the current session. If the profile is already signed in, it
-   skips credential submission and opens **Settings** > **Security and login**
-   > **Password** directly. Otherwise it signs in with direct email/password.
+   skips credential submission and opens the settings surface for the selected operation.
+   Otherwise it signs in with direct email/password.
 5. Generates a local TOTP code only when requested by the visible TOTP form.
 6. Pauses for manual action when a security challenge appears.
-7. Submits the generated password through the supported provider flow.
-8. Signs out and signs in again with the new password.
-9. Marks the password `changed` only after the new sign-in is verified.
-10. Atomically updates the checkpoint and plaintext output.
-11. Stops the profile unless the keep-profile toggle is enabled, then starts
+7. For **Change 2FA**, authorizes and disables the old authenticator factor,
+   opens a fresh enrollment, and commits the new secret only after verification.
+   A failure after disable authorization is treated as `critical` because the
+   active factor may be unknown.
+8. Submits the generated password through the supported provider flow.
+9. Signs out and signs in again with the new password.
+10. Marks the password `changed` only after the new sign-in is verified.
+11. Atomically updates the checkpoint and plaintext output.
+12. Stops the profile unless the keep-profile toggle is enabled, then starts
     the next account.
 
-Normal stages are `queued`, `launching`, `logging_in`, `submitting_totp`,
-`changing_password`, `verifying_new_password`, and `success`. Exceptional
+Normal stages also include `changing_totp`, `verifying_new_totp`,
+`changing_email`, `waiting_email_verification`, and `verifying_new_email`.
+Exceptional
 states are `waiting_manual`, `failed`, `critical`, and `cancelled`.
 
 ## Batch Controls
@@ -227,6 +274,10 @@ states are `waiting_manual`, `failed`, `critical`, and `cancelled`.
 - **Keep profile running after completion** controls whether a normally
   completed profile process remains open. The persistent profile and its
   user-data directory remain mapped even when the process is stopped.
+- **Browser proxy** with **None** preserves the current proxy of an existing
+  Account Keeper profile. A specific selection applies to every account in the
+  batch; Random resolves independently for each account. Either selected mode
+  replaces an existing profile proxy when the resolved proxy differs.
 - **Logs** shows a redacted snapshot for the selected job: timestamp, masked
   account, stage, attempt count, and canonical error code only.
 - **Clean** removes a selected terminal progress checkpoint with status
@@ -237,19 +288,16 @@ states are `waiting_manual`, `failed`, `critical`, and `cancelled`.
 
 ## Verified Profiles
 
-Section **04 Profiles** lists only vault records that completed new-password
-verification with `status: success` and `password_state: changed`.
+Section **04 Profiles** lists verified vault records with `status: success`.
 
 - **Run** launches the persistent mapped profile.
 - **Delete** stops the profile, removes its local browser data, and deletes its
-  Account Keeper vault mapping.
-- **Import Info** exposes local metadata for 9Router or Cockpit. **Copy JSON**
-  copies the same payload.
-
-The import payload contains `schema_version`, `kind`, `profile_id`,
-`account_status`, `last_verified_at`, `api_base_url`, and an opaque `vault_ref`.
-It never contains the account identifier, password, TOTP secret, cookies,
-access tokens, refresh tokens, or browser-session data.
+  Account Keeper vault mapping, including any protected Codex OAuth record.
+- **Connect Codex** opens the official Codex authorization flow in that mapped
+  profile. **Reconnect Codex** replaces an expired or unusable authorization only
+  after the returned account email matches the verified vault account.
+- **Export** provides copy/save actions for one ready account. The section-level
+  bulk actions export every ready account to one JSON array for 9Router or Cockpit.
 
 ## Manual Intervention
 
@@ -484,11 +532,14 @@ normal BrProxies profile filenames remain unchanged. Cleanup removes the QA
 root and stops its child processes. Never substitute a production account or
 provider for this fixture.
 
-## 9Router And Cockpit Import Boundary
+## 9Router And Cockpit Codex Export
 
-The section 04 import payload is a local profile reference, not a session
-export. Consumers may use the stable `profile_id`, redacted success metadata,
-local API base URL, and opaque vault reference. Cookie export, browser-session
-export, credential export, and token export remain outside this feature.
-Provider OAuth or gateway-token support requires a separate design and
-authorization review.
+Section 04 can authorize Codex OAuth inside each verified persistent profile.
+Use **Connect Codex** (or **Reconnect Codex**) and complete any visible OpenAI
+confirmation in that profile. Once ready, **Export** can copy or save a JSON array
+for 9Router or Cockpit; use the **Copy all** or **Save all** actions to export all
+ready profiles together. Rust refreshes credentials that are within five minutes
+of expiry before producing JSON. If refresh fails, reconnect that profile instead
+of exporting stale credentials. Token values never render in the Account Keeper UI
+and are stored only in the protected local vault. Saved JSON files and clipboard
+contents are plaintext secrets; import them promptly and protect or delete them.

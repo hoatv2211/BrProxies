@@ -20,13 +20,18 @@ const FAILURE_MESSAGES = new Map([
   ["worker_not_ready", "Browser flow is not provisioned"],
 ]);
 const ADAPTER_IDS = new Set(["fixture-v1", "openai-chatgpt-v1"]);
-const OPERATIONS = new Set(["change_password", "verify_credentials"]);
+const OPERATIONS = new Set(["change_password", "verify_credentials", "change_totp", "change_email", "codex_oauth"]);
 const STAGES = new Set([
   "launching",
   "logging_in",
   "submitting_totp",
   "changing_password",
   "verifying_new_password",
+  "changing_totp",
+  "verifying_new_totp",
+  "changing_email",
+  "waiting_email_verification",
+  "verifying_new_email",
   "waiting_manual",
 ]);
 const MANUAL_REASONS = new Set([
@@ -62,8 +67,13 @@ const INBOUND_FIELDS = {
     "account",
     "current_password",
     "new_password",
+    "new_email",
+    "oauth_url",
   ]),
   totp_code: new Set(["protocol_version", "type", "request_id", "code"]),
+  submit_totp_disable: new Set(["protocol_version", "type", "request_id"]),
+  totp_enrollment_code: new Set(["protocol_version", "type", "request_id", "code"]),
+  email_verification_code: new Set(["protocol_version", "type", "request_id", "code"]),
   submit_password: new Set(["protocol_version", "type", "request_id"]),
   resume: new Set(["protocol_version", "type", "request_id"]),
   cancel: new Set(["protocol_version", "type", "request_id"]),
@@ -80,8 +90,14 @@ const OUTBOUND_FIELDS = {
     "url",
   ]),
   password_submit_required: new Set(["protocol_version", "type", "request_id"]),
+  totp_disable_required: new Set(["protocol_version", "type", "request_id"]),
   password_changed: new Set(["protocol_version", "type", "request_id"]),
+  totp_enrollment_secret: new Set(["protocol_version", "type", "request_id", "value"]),
+  totp_changed: new Set(["protocol_version", "type", "request_id"]),
+  email_verification_required: new Set(["protocol_version", "type", "request_id"]),
+  email_changed: new Set(["protocol_version", "type", "request_id"]),
   verified: new Set(["protocol_version", "type", "request_id"]),
+  oauth_opened: new Set(["protocol_version", "type", "request_id"]),
   failed: new Set([
     "protocol_version",
     "type",
@@ -117,21 +133,36 @@ export function parseInbound(line) {
       );
       assertAllowedValue(message.adapter_id, ADAPTER_IDS, "adapter_id");
       assertString(message.cdp_endpoint, "cdp_endpoint", 1, 256);
+      if (message.operation === "codex_oauth") {
+        assertString(message.oauth_url, "oauth_url", 1, 4096);
+        for (const field of ["account", "current_password", "new_password", "new_email"]) {
+          if (message[field] !== undefined) throw new Error(`${field} is not valid for codex_oauth`);
+        }
+        break;
+      }
       assertString(message.account, "account", 1, 320);
       assertString(message.current_password, "current_password", 1, 128);
       assertString(
         message.new_password,
         "new_password",
-        message.operation === "verify_credentials" ? 0 : 12,
+        (message.operation ?? "change_password") === "change_password" ? 12 : 0,
         128,
       );
+      if (message.operation === "change_email") {
+        assertString(message.new_email, "new_email", 3, 320);
+      } else if (message.new_email !== undefined) {
+        throw new Error("new_email is only valid for change_email");
+      }
       break;
     case "totp_code":
+    case "totp_enrollment_code":
+    case "email_verification_code":
       if (typeof message.code !== "string" || !/^\d{6}$/.test(message.code)) {
-        throw new Error("code must be a six-digit TOTP value");
+        throw new Error("code must be a six-digit value");
       }
       break;
     case "submit_password":
+    case "submit_totp_disable":
     case "resume":
     case "cancel":
       break;
@@ -169,8 +200,16 @@ export function sanitizeOutbound(message) {
       break;
     case "totp_required":
     case "password_submit_required":
+    case "totp_disable_required":
     case "password_changed":
+    case "totp_changed":
+    case "email_verification_required":
+    case "email_changed":
     case "verified":
+    case "oauth_opened":
+      break;
+    case "totp_enrollment_secret":
+      assertString(message.value, "value", 16, 256);
       break;
     default:
       throw new Error("unsupported outbound message type");
@@ -236,12 +275,16 @@ export function withPasswordSubmitAuthorization(control) {
   ) {
     throw new Error("command control is required");
   }
+  const authorizationTypes = new Set(["submit_password", "submit_totp_disable"]);
   let authorizationWaiter = null;
 
   return {
     throwIfCancelled: () => control.throwIfCancelled(),
+    waitForAny(expectedTypes) {
+      return control.waitForAny(expectedTypes);
+    },
     waitFor(expectedType) {
-      if (expectedType !== "submit_password") {
+      if (!authorizationTypes.has(expectedType)) {
         return control.waitFor(expectedType);
       }
       control.throwIfCancelled();
@@ -249,7 +292,7 @@ export function withPasswordSubmitAuthorization(control) {
         return Promise.reject(codedProtocolError());
       }
       return new Promise((resolve) => {
-        authorizationWaiter = { resolve };
+        authorizationWaiter = { expectedType, resolve };
       });
     },
     push(message) {
@@ -262,13 +305,17 @@ export function withPasswordSubmitAuthorization(control) {
         }
         return accepted;
       }
-      if (message?.type === "submit_password") {
+      if (authorizationTypes.has(message?.type)) {
         try {
           control.throwIfCancelled();
         } catch {
           return false;
         }
-        if (!authorizationWaiter || message.request_id !== control.requestId) {
+        if (
+          !authorizationWaiter
+          || message.type !== authorizationWaiter.expectedType
+          || message.request_id !== control.requestId
+        ) {
           return false;
         }
         const { resolve } = authorizationWaiter;

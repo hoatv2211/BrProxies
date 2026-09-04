@@ -154,6 +154,152 @@ export const fixtureAdapter = {
     control?.throwIfCancelled?.();
   },
 
+  async openTotpChange(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "open_totp_change" });
+      return;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async inspectTotpChange(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "inspect_totp_change" });
+      if (page.actions.some((action) => action.type === "open_totp_enrollment")) {
+        return "enrollment";
+      }
+      if (page.actions.some((action) => action.type === "confirm_totp_disable")) {
+        return "disabled";
+      }
+      return "enabled";
+    }
+    throw codedError("flow_changed");
+  },
+
+  async beginTotpDisable(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "begin_totp_disable" });
+      return page;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async submitTotpDisableIdentity(page, password, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "submit_totp_disable_identity", password });
+      return page;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async inspectTotpDisable(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      if (page.actions.some((action) => action.type === "confirm_totp_disable")) {
+        return "disabled";
+      }
+      if (!page.actions.some((action) => action.type === "submit_totp_disable_identity")) {
+        return "identity_challenge";
+      }
+      return "confirmation";
+    }
+    throw codedError("flow_changed");
+  },
+
+  async submitTotpDisableChallenge(page, code, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "submit_totp_disable_challenge", code });
+      return page;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async confirmTotpDisable(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "confirm_totp_disable" });
+      return page;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async openTotpEnrollment(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "open_totp_enrollment" });
+      return;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async readTotpEnrollment(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "read_totp_enrollment" });
+      return "JBSWY3DPEHPK3PXP";
+    }
+    throw codedError("flow_changed");
+  },
+
+  async submitTotpEnrollment(page, code, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "submit_totp_enrollment", code });
+      return;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async verifyTotpChanged(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "verify_totp_changed" });
+      return true;
+    }
+    return false;
+  },
+
+  async openEmailChange(page, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "open_email_change" });
+      return;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async submitEmailChange(page, email, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "submit_email_change", email });
+      return;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async submitEmailVerification(page, code, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "submit_email_verification", code });
+      return;
+    }
+    throw codedError("flow_changed");
+  },
+
+  async verifyEmailChanged(page, email, { control } = {}) {
+    control?.throwIfCancelled?.();
+    if (isSyntheticPage(page)) {
+      page.actions.push({ type: "verify_email_changed", email });
+      return true;
+    }
+    return false;
+  },
+
   async logout(page, { control } = {}) {
     if (isSyntheticPage(page)) {
       page.actions.push({ type: "logout" });

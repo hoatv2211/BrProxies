@@ -48,14 +48,10 @@ const managedProfile = {
   status: "success",
   last_verified_at: "2026-07-31T03:00:00Z",
   running: false,
-  import_payload: {
-    schema_version: 1,
-    kind: "brproxies-account-keeper-profile",
-    profile_id: "profile-1",
-    account_status: "success",
-    last_verified_at: "2026-07-31T03:00:00Z",
-    api_base_url: "http://127.0.0.1:40325",
-    vault_ref: "account-keeper://vault/account-key",
+  codex_auth: {
+    status: "ready",
+    expires_at: "2026-08-27T03:00:00Z",
+    has_account_id: true,
   },
 };
 
@@ -65,6 +61,8 @@ async function defaultInvoke(command: string) {
   }
   if (command === "account_keeper_list_jobs") return [];
   if (command === "account_keeper_list_profiles") return [];
+  if (command === "proxy_list") return [];
+  if (command === "proxy_last_test") return null;
   if (command === "account_keeper_validate_input") {
     return { validCount: 2, maskedAccounts: ["o***r@example.test", "a***n@example.test"] };
   }
@@ -142,6 +140,17 @@ describe("AccountKeeper", () => {
     await waitFor(() => expect(start).toBeEnabled());
     return { accountInput, start };
   }
+
+  it("describes GPT account management operations", async () => {
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    await screen.findByText("0 resumable jobs");
+    expect(screen.getByText("GPT ACCOUNT MANAGEMENT")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Account Keeper" })).toBeInTheDocument();
+    expect(screen.getByText(
+      "Manage and update GPT accounts in one place — log in, change passwords, rotate 2FA, and update account emails with isolated browser profiles.",
+    )).toBeInTheDocument();
+  });
 
   it("subscribes before loading and cleans up under Strict Mode", async () => {
     const view = render(
@@ -346,6 +355,7 @@ describe("AccountKeeper", () => {
           template: "Local-{random:16}",
           adapterId: "openai-chatgpt-v1",
           operation: "change_password",
+          proxySelection: { mode: "none" },
           keepProfileRunning: false,
           pauseAfterCurrent: false,
         },
@@ -356,6 +366,98 @@ describe("AccountKeeper", () => {
     expect(mocks.invoke).not.toHaveBeenCalledWith("read_text_file", expect.anything());
   });
 
+  it("loads active launcher proxies and sends the selected proxy id", async () => {
+    mocks.save.mockResolvedValue("C:\fixtures\result.json");
+    mocks.invoke.mockImplementation(async (command: string, payload?: unknown) => {
+      if (command === "proxy_list") {
+        return [
+          {
+            id: "proxy-active",
+            name: "Primary proxy",
+            kind: "http",
+            host: "1.2.3.4",
+            port: 8080,
+            username: "",
+            password: "",
+            country: "US",
+            notes: "",
+          },
+          {
+            id: "proxy-failed",
+            name: "Failed proxy",
+            kind: "http",
+            host: "5.6.7.8",
+            port: 3128,
+            username: "",
+            password: "",
+            country: "GB",
+            notes: "",
+          },
+        ];
+      }
+      if (command === "proxy_last_test") {
+        const id = (payload as { id?: string } | undefined)?.id;
+        return {
+          first_seen: "@1",
+          last_seen: "@2",
+          ip: id === "proxy-active" ? "1.2.3.4" : "",
+          country_code: id === "proxy-active" ? "US" : "",
+          country: id === "proxy-active" ? "United States" : "",
+          region: "",
+          city: "",
+          isp: "",
+          timezone: "",
+          latitude: 0,
+          longitude: 0,
+          tcp_ms: id === "proxy-active" ? 123 : null,
+          udp_ms: null,
+          udp_error: null,
+          provider: "unit",
+        };
+      }
+      return defaultInvoke(command);
+    });
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    const proxySelect = await screen.findByRole("combobox", { name: "Browser proxy" });
+    expect(proxySelect).toHaveValue("none");
+    expect(screen.getByRole("option", { name: /Primary proxy.*1\.2\.3\.4:8080.*123 ms/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /5\.6\.7\.8:3128/ })).not.toBeInTheDocument();
+    fireEvent.change(proxySelect, { target: { value: "proxy:proxy-active" } });
+
+    const { start } = await prepareInlineBatch();
+    fireEvent.click(start);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_start_batch",
+      expect.objectContaining({
+        request: expect.objectContaining({
+          proxySelection: { mode: "specific", proxy: "proxy-active" },
+        }),
+      }),
+    ));
+  });
+
+  it("sends random proxy selection for new profiles", async () => {
+    mocks.save.mockResolvedValue("C:\fixtures\result.json");
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+
+    const proxySelect = await screen.findByRole("combobox", { name: "Browser proxy" });
+    fireEvent.change(proxySelect, { target: { value: "random" } });
+
+    const { start } = await prepareInlineBatch();
+    fireEvent.click(start);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_start_batch",
+      expect.objectContaining({
+        request: expect.objectContaining({
+          proxySelection: { mode: "random" },
+        }),
+      }),
+    ));
+  });
+
   it("hides template and output in Login GPT mode and starts a login batch", async () => {
     mocks.save.mockResolvedValue("C:\\fixtures\\result.json");
     const confirm = vi.fn().mockResolvedValue(true);
@@ -363,6 +465,11 @@ describe("AccountKeeper", () => {
 
     const { start } = await prepareInlineBatch();
     fireEvent.click(screen.getByRole("button", { name: "Login GPT" }));
+    fireEvent.click(screen.getByRole("button", { name: "Validate Input" }));
+    await screen.findByText("Input valid");
+    fireEvent.click(screen.getByLabelText(
+      "I understand pasted input and the output file contain plaintext secrets",
+    ));
 
     expect(screen.queryByLabelText("Template")).toBeNull();
     expect(screen.queryByLabelText("Output file")).toBeNull();
@@ -383,12 +490,64 @@ describe("AccountKeeper", () => {
           template: "",
           adapterId: "openai-chatgpt-v1",
           operation: "login",
+          proxySelection: { mode: "none" },
           keepProfileRunning: false,
           pauseAfterCurrent: false,
         },
       },
     ));
     expect(confirm).toHaveBeenCalled();
+  });
+
+  it("starts a Change 2FA batch without a password template", async () => {
+    const confirm = vi.fn().mockResolvedValue(true);
+    render(<AccountKeeper confirm={confirm} />);
+
+    const { start } = await prepareInlineBatch();
+    fireEvent.click(screen.getByRole("button", { name: "Change 2FA" }));
+    fireEvent.click(screen.getByRole("button", { name: "Validate Input" }));
+    await screen.findByText("Input valid");
+    fireEvent.click(screen.getByLabelText(
+      "I understand pasted input and the output file contain plaintext secrets",
+    ));
+
+    expect(screen.queryByLabelText("Template")).toBeNull();
+    expect(screen.getByLabelText("Output file")).toBeInTheDocument();
+    await waitFor(() => expect(start).toBeEnabled());
+    fireEvent.click(start);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_start_batch",
+      { request: expect.objectContaining({ operation: "change_totp", template: "" }) },
+    ));
+  });
+
+  it("shows four-field guidance and starts a Change email batch", async () => {
+    const confirm = vi.fn().mockResolvedValue(true);
+    render(<AccountKeeper confirm={confirm} />);
+
+    const { start } = await prepareInlineBatch();
+    fireEvent.click(screen.getByRole("button", { name: "Change email" }));
+    fireEvent.change(screen.getByLabelText("Account input"), {
+      target: { value: "owner@example.test|current-password|JBSWY3DPEHPK3PXP|new@example.test" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Validate Input" }));
+    await screen.findByText("Input valid");
+    fireEvent.click(screen.getByLabelText(
+      "I understand pasted input and the output file contain plaintext secrets",
+    ));
+
+    expect(screen.getByText("current_email|current_password|totp_secret|new_email"))
+      .toBeInTheDocument();
+    expect(screen.queryByLabelText("Template")).toBeNull();
+    expect(screen.getByLabelText("Output file")).toBeInTheDocument();
+    await waitFor(() => expect(start).toBeEnabled());
+    fireEvent.click(start);
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_start_batch",
+      { request: expect.objectContaining({ operation: "change_email", template: "" }) },
+    ));
   });
 
   it("keeps pasted input when starting fails", async () => {
@@ -529,10 +688,11 @@ describe("AccountKeeper", () => {
     expect(screen.getByText("Progress cleaned. Unknown recovery state forgotten; browser profile was preserved.")).toBeInTheDocument();
   });
 
-  it("lists successful profiles with run, delete, and import actions", async () => {
+  it("lists successful profiles with run, delete, and Codex export actions", async () => {
     mocks.invoke.mockImplementation(async (command: string) => {
       if (command === "account_keeper_list_profiles") return [managedProfile];
       if (command === "account_keeper_open_profile") return { launched: true, already_running: false };
+      if (command === "account_keeper_copy_codex_export") return { exportedCount: 1, skippedCount: 0, refreshedCount: 0 };
       if (command === "account_keeper_delete_profile") return { profile_id: "profile-1", deleted: true };
       return defaultInvoke(command);
     });
@@ -541,18 +701,27 @@ describe("AccountKeeper", () => {
     expect(await screen.findByRole("heading", { name: "Profiles" })).toBeInTheDocument();
     expect(screen.getByText("o***r@example.test")).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "Copy all ready accounts for 9Router" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_copy_codex_export",
+      { request: { profileIds: ["profile-1"], format: "nine_router" } },
+    ));
+
     fireEvent.click(screen.getByRole("button", { name: "Run profile o***r@example.test" }));
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
       "account_keeper_open_profile",
       { request: { profileId: "profile-1" } },
     ));
 
-    fireEvent.click(screen.getByRole("button", { name: "Import info o***r@example.test" }));
-    const importInfo = await screen.findByRole("region", { name: "9Router/Cockpit import info" });
-    const importPayload = importInfo.querySelector("pre")?.textContent ?? "";
-    expect(importPayload).toContain("brproxies-account-keeper-profile");
-    expect(importPayload).not.toContain("password");
-    expect(importPayload).not.toContain("totp");
+    fireEvent.click(screen.getByRole("button", { name: "Export o***r@example.test" }));
+    const exportInfo = await screen.findByRole("region", { name: "9Router/Cockpit Codex export" });
+    expect(exportInfo).toHaveTextContent("Tokens stay hidden");
+    expect(exportInfo).not.toHaveTextContent("synthetic-access");
+    fireEvent.click(screen.getByRole("button", { name: "Copy 9Router JSON" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_copy_codex_export",
+      { request: { profileIds: ["profile-1"], format: "nine_router" } },
+    ));
 
     fireEvent.click(screen.getByRole("button", { name: "Delete profile o***r@example.test" }));
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
@@ -599,6 +768,7 @@ describe("AccountKeeper", () => {
           template: "Local-{random:16}",
           adapterId: "fixture-v1",
           operation: "change_password",
+          proxySelection: { mode: "none" },
           keepProfileRunning: false,
           pauseAfterCurrent: false,
         },
@@ -637,6 +807,7 @@ describe("AccountKeeper", () => {
           template: "Local-{random:16}",
           adapterId: "fixture-v1",
           operation: "change_password",
+          proxySelection: { mode: "none" },
           keepProfileRunning: false,
           pauseAfterCurrent: false,
         },

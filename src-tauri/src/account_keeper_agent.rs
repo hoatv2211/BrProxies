@@ -9,6 +9,7 @@ use std::path::PathBuf;
 pub struct AgentArgs {
     pub input_path: PathBuf,
     pub output_path: Option<PathBuf>,
+    pub operation: String,
     pub template: Option<String>,
     pub keep_profile_running: bool,
     pub timeout_seconds: u64,
@@ -52,6 +53,7 @@ where
 {
     let mut input_path = None;
     let mut output_path = None;
+    let mut operation = "change_password".to_string();
     let mut template = None;
     let mut keep_profile_running = true;
     let mut timeout_seconds = 600;
@@ -77,6 +79,16 @@ where
                 if output_path.replace(PathBuf::from(value)).is_some() {
                     bail!("--output may be provided only once");
                 }
+            }
+            "--operation" => {
+                let value = values
+                    .next()
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("--operation requires a value"))?;
+                if !matches!(value.as_str(), "change_password" | "change_totp") {
+                    bail!("unsupported Account Keeper agent operation");
+                }
+                operation = value;
             }
             "--template" => {
                 let value = values
@@ -108,6 +120,7 @@ where
     Ok(AgentArgs {
         input_path: input_path.ok_or_else(|| anyhow::anyhow!("--input is required"))?,
         output_path,
+        operation,
         template,
         keep_profile_running,
         timeout_seconds,
@@ -123,12 +136,15 @@ pub async fn run_agent(args: AgentArgs) -> Result<AgentSummary> {
         args.output_path
             .unwrap_or_else(|| PathBuf::from(defaults.output_path)),
     )?;
+    let operation = args.operation;
     let template = args.template.unwrap_or(defaults.template);
     let source = InputSource::File {
         path: path_string(&input_path, "input")?,
     };
-    let validation = account_keeper::validate_input_source(&source)?;
-    account_keeper::validate_template_value(&template)?;
+    let validation = account_keeper::validate_input_source_for_operation(&source, &operation)?;
+    if operation == "change_password" {
+        account_keeper::validate_template_value(&template)?;
+    }
     let output_path_string = path_string(&output_path, "output")?;
 
     if args.dry_run {
@@ -148,7 +164,8 @@ pub async fn run_agent(args: AgentArgs) -> Result<AgentSummary> {
             output_path: output_path_string.clone(),
             template,
             adapter_id: "openai-chatgpt-v1".to_string(),
-            operation: "change_password".to_string(),
+            operation: operation.clone(),
+            proxy_selection: crate::proxypool::ProxySelection::None,
             keep_profile_running: args.keep_profile_running,
             pause_after_current: false,
         };
@@ -160,7 +177,8 @@ pub async fn run_agent(args: AgentArgs) -> Result<AgentSummary> {
     {
         Ok(result) => result,
         Err(error)
-            if validation.valid_count == 1
+            if operation == "change_password"
+                && validation.valid_count == 1
                 && error
                     .to_string()
                     .contains("credential recovery is required") =>
@@ -183,7 +201,8 @@ pub async fn run_agent(args: AgentArgs) -> Result<AgentSummary> {
         }
         Err(error) => return Err(error),
     };
-    if result.job.status == JobStatus::Critical
+    if operation == "change_password"
+        && result.job.status == JobStatus::Critical
         && account_keeper::inspect_headless_recovery(&source)?
             .is_some_and(|state| state.has_pending_password)
     {
@@ -257,6 +276,8 @@ mod tests {
             "C:\\private\\account-keeper-input.txt",
             "--output",
             "C:\\private\\account-keeper-result.json",
+            "--operation",
+            "change_totp",
             "--template",
             "BrP@{random:20}!",
             "--timeout-seconds",
@@ -274,6 +295,7 @@ mod tests {
             args.output_path,
             Some(PathBuf::from("C:\\private\\account-keeper-result.json"))
         );
+        assert_eq!(args.operation, "change_totp");
         assert_eq!(args.template.as_deref(), Some("BrP@{random:20}!"));
         assert_eq!(args.timeout_seconds, 900);
         assert!(args.keep_profile_running);
@@ -285,6 +307,7 @@ mod tests {
         let args = parse_agent_args(["--input", "input.txt"]).unwrap();
 
         assert_eq!(args.output_path, None);
+        assert_eq!(args.operation, "change_password");
         assert_eq!(args.template, None);
         assert_eq!(args.timeout_seconds, 600);
         assert!(args.keep_profile_running);
@@ -295,6 +318,7 @@ mod tests {
     fn rejects_inline_credentials_and_unknown_flags() {
         assert!(parse_agent_args(["--inline", "secret"]).is_err());
         assert!(parse_agent_args(["--input", "input.txt", "--password", "secret"]).is_err());
+        assert!(parse_agent_args(["--input", "input.txt", "--operation", "delete_account"]).is_err());
         assert!(parse_agent_args(["--input"]).is_err());
     }
 

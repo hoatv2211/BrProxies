@@ -739,6 +739,25 @@ pub fn latest_test(proxy_id: &str) -> Option<TestSnapshot> {
         .and_then(|hs| hs.by_proxy.get(proxy_id).and_then(|v| v.last().cloned()))
 }
 
+fn active_entries_from(store: ProxyStore, history: HistoryStore) -> Vec<ProxyEntry> {
+    store
+        .proxies
+        .into_iter()
+        .filter(|entry| {
+            history
+                .by_proxy
+                .get(&entry.id)
+                .and_then(|snapshots| snapshots.last())
+                .and_then(|snapshot| snapshot.tcp_ms)
+                .is_some()
+        })
+        .collect()
+}
+
+pub fn active_entries() -> Result<Vec<ProxyEntry>> {
+    Ok(active_entries_from(load()?, load_history()?))
+}
+
 fn unix_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let s = SystemTime::now()
@@ -872,5 +891,62 @@ pub fn country_to_timezone(cc: &str) -> &'static str {
         "SA" => "Asia/Riyadh",
         "AE" => "Asia/Dubai",
         _ => "UTC",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn launcher_proxy(id: &str) -> ProxyEntry {
+        ProxyEntry {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind: ProxyKind::Http,
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            username: String::new(),
+            password: String::new(),
+            country: String::new(),
+            notes: String::new(),
+        }
+    }
+
+    fn snapshot(tcp_ms: Option<u128>) -> TestSnapshot {
+        TestSnapshot {
+            first_seen: "@1".to_string(),
+            last_seen: "@2".to_string(),
+            ip: String::new(),
+            country_code: String::new(),
+            country: String::new(),
+            region: String::new(),
+            city: String::new(),
+            isp: String::new(),
+            timezone: String::new(),
+            latitude: 0.0,
+            longitude: 0.0,
+            tcp_ms,
+            udp_ms: None,
+            udp_error: None,
+            provider: String::new(),
+        }
+    }
+
+    #[test]
+    fn active_entries_only_include_proxies_with_a_successful_latest_tcp_test() {
+        let store = ProxyStore {
+            proxies: vec![launcher_proxy("active"), launcher_proxy("failed")],
+        };
+        let history = HistoryStore {
+            by_proxy: HashMap::from([
+                ("active".to_string(), vec![snapshot(Some(87))]),
+                ("failed".to_string(), vec![snapshot(None)]),
+            ]),
+        };
+
+        let active = active_entries_from(store, history);
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, "active");
     }
 }

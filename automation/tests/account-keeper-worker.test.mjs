@@ -6,6 +6,7 @@ import {
   CommandControl,
   createControlledPageSession,
   validateCdpEndpoint,
+  validateCodexOAuthUrl,
 } from "../account-keeper-worker-runtime.mjs";
 import * as protocol from "../account-keeper-protocol.mjs";
 
@@ -20,6 +21,16 @@ test("accepts only exact loopback HTTP CDP endpoints", () => {
   ]) {
     assert.throws(() => validateCdpEndpoint(endpoint), /protocol_error/);
   }
+});
+
+test("accepts only exact Codex OAuth authorization URLs", () => {
+  const valid = "https://auth.openai.com/oauth/authorize?client_id=synthetic&state=synthetic";
+  assert.equal(validateCodexOAuthUrl(valid), valid);
+  for (const value of [
+    "https://example.test/oauth/authorize?client_id=x&state=y",
+    "http://auth.openai.com/oauth/authorize?client_id=x&state=y",
+    "https://auth.openai.com/other?client_id=x&state=y",
+  ]) assert.throws(() => validateCodexOAuthUrl(value), /protocol_error/);
 });
 
 test("command control rejects early and duplicate phase commands", async () => {
@@ -44,6 +55,17 @@ test("cancellation has priority over expected commands", async () => {
   assert.throws(() => control.throwIfCancelled(), /cancelled/);
 });
 
+test("command control accepts email code or manual resume", async () => {
+  const control = new CommandControl("req_1");
+  const waiting = control.waitForAny(["email_verification_code", "resume"]);
+  assert.equal(control.push({
+    request_id: "req_1",
+    type: "email_verification_code",
+    code: "123456",
+  }), true);
+  assert.equal((await waiting).code, "123456");
+});
+
 test("extends worker control with explicit password submit authorization", async () => {
   assert.equal(typeof protocol.withPasswordSubmitAuthorization, "function");
   const control = protocol.withPasswordSubmitAuthorization(
@@ -56,6 +78,27 @@ test("extends worker control with explicit password submit authorization", async
     true,
   );
   assert.equal((await waiting).type, "submit_password");
+});
+
+test("extends worker control with explicit TOTP disable authorization", async () => {
+  const control = protocol.withPasswordSubmitAuthorization(
+    new CommandControl("req_1"),
+  );
+  const waiting = control.waitFor("submit_totp_disable");
+  assert.equal(
+    control.push({ request_id: "req_1", type: "submit_totp_disable" }),
+    true,
+  );
+  assert.equal((await waiting).type, "submit_totp_disable");
+});
+
+test("password authorization wrapper preserves multi-command waits", async () => {
+  const control = protocol.withPasswordSubmitAuthorization(
+    new CommandControl("req_1"),
+  );
+  const waiting = control.waitForAny(["email_verification_code", "resume"]);
+  assert.equal(control.push({ request_id: "req_1", type: "resume" }), true);
+  assert.equal((await waiting).type, "resume");
 });
 
 test("creates dedicated page and switches to allowed-origin popup", async () => {

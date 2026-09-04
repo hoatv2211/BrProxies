@@ -782,6 +782,7 @@ textarea { resize: vertical; min-height: 60px; line-height: 1.5; }
     minmax(160px, 1.4fr)       /* name */
     80px                       /* type */
     minmax(140px, 1.2fr)       /* host:port */
+    82px                       /* latency */
     minmax(110px, 0.8fr)       /* country */
     64px                       /* profiles count */
     minmax(180px, 1.4fr)       /* test result */
@@ -790,7 +791,7 @@ textarea { resize: vertical; min-height: 60px; line-height: 1.5; }
   padding: 10px 16px;
   align-items: center;
 }
-/* At narrow widths the sum of minimums (~1146px content + sidebar
+/* At narrow widths the sum of minimums plus the sidebar
    240px) overflows the 1280px min-window, pushing the action column
    off-screen.  Shrink the widest cells just enough to fit — the
    8-column structure stays intact; long values truncate via the
@@ -802,6 +803,7 @@ textarea { resize: vertical; min-height: 60px; line-height: 1.5; }
       minmax(120px, 1.4fr)     /* name */
       72px                     /* type */
       minmax(120px, 1.2fr)     /* host:port */
+      72px                     /* latency */
       minmax(80px, 0.8fr)      /* country (drops city text, keeps flag+code) */
       56px                     /* profiles count */
       minmax(140px, 1.2fr)     /* test result */

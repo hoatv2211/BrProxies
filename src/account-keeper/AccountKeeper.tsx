@@ -7,7 +7,6 @@ import {
   canResume,
   canStart,
   isCleanableJob,
-  profileImportJson,
   progressLogEntries,
   reduceProgress,
 } from "./model";
@@ -21,7 +20,6 @@ import type {
   JobStatus,
   JobView,
   ManagedProfileView,
-  ProfileImportPayload,
   ProgressEvent,
   TemplateValidationDto,
 } from "./types";
@@ -38,9 +36,19 @@ type AccountKeeperProps = {
   confirm: (options: ConfirmOptions) => Promise<any>;
 };
 
+type ActiveProxyOption = {
+  id: string;
+  name: string;
+  proxy: string;
+  country: string;
+  latencyMs: number;
+};
+
 const accountStages = new Set<AccountStage>([
   "queued", "launching", "logging_in", "submitting_totp", "changing_password",
-  "verifying_new_password", "waiting_manual", "success", "failed", "critical", "cancelled",
+  "verifying_new_password", "changing_totp", "verifying_new_totp", "changing_email",
+  "waiting_email_verification", "verifying_new_email", "waiting_manual", "success",
+  "failed", "critical", "cancelled",
 ]);
 
 const jobStatuses = new Set<JobStatus>([
@@ -59,6 +67,7 @@ const initialDraft: DraftState = {
   inputValidationRevision: null,
   outputPath: "",
   templateText: "",
+  proxySelection: "none",
   keepProfileRunning: false,
   plaintextAcknowledged: false,
   inputValidation: null,
@@ -186,41 +195,14 @@ function normalizeProgress(value: unknown): ProgressEvent | null {
   return revision < 0 || !job ? null : { revision, job };
 }
 
-function normalizeProfileImportPayload(value: unknown): ProfileImportPayload | null {
-  const record = asRecord(value);
-  if (
-    asNumber(record?.schema_version) !== 1
-    || asString(record?.kind) !== "brproxies-account-keeper-profile"
-    || asString(record?.account_status) !== "success"
-  ) {
-    return null;
-  }
-  const profileId = asString(record?.profile_id);
-  const apiBaseUrl = asString(record?.api_base_url);
-  const vaultRef = asString(record?.vault_ref);
-  if (!profileId || !apiBaseUrl || !vaultRef) return null;
-  return {
-    schema_version: 1,
-    kind: "brproxies-account-keeper-profile",
-    profile_id: profileId,
-    account_status: "success",
-    last_verified_at: asNullableString(record?.last_verified_at),
-    api_base_url: apiBaseUrl,
-    vault_ref: vaultRef,
-  };
-}
-
 function normalizeManagedProfile(value: unknown): ManagedProfileView | null {
   const record = asRecord(value);
   const profileId = asString(record?.profile_id);
   const maskedAccount = asString(record?.masked_account);
-  const importPayload = normalizeProfileImportPayload(record?.import_payload);
   if (
     !profileId
     || !maskedAccount
     || asString(record?.status) !== "success"
-    || !importPayload
-    || importPayload.profile_id !== profileId
   ) {
     return null;
   }
@@ -231,7 +213,15 @@ function normalizeManagedProfile(value: unknown): ManagedProfileView | null {
     last_verified_at: asNullableString(record?.last_verified_at),
     running: asBoolean(record?.running),
     rotated: asBoolean(record?.rotated),
-    import_payload: importPayload,
+    codex_auth: (() => {
+      const auth = asRecord(record?.codex_auth);
+      const status = asString(auth?.status);
+      return {
+        status: status === "ready" || status === "reconnect_required" ? status : "missing",
+        expires_at: asNullableString(auth?.expires_at),
+        has_account_id: asBoolean(auth?.has_account_id),
+      };
+    })(),
   };
 }
 
@@ -257,6 +247,8 @@ function labelFor(value: string): string {
 
 export function AccountKeeper({ confirm }: AccountKeeperProps) {
   const [draft, setDraft] = useState<DraftState>(initialDraft);
+  const [activeProxies, setActiveProxies] = useState<ActiveProxyOption[]>([]);
+  const [proxyListUnavailable, setProxyListUnavailable] = useState(false);
   const [jobs, setJobs] = useState<JobView[]>([]);
   const [profiles, setProfiles] = useState<ManagedProfileView[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -401,6 +393,52 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
 
   useEffect(() => {
     let disposed = false;
+    const loadActiveProxies = async () => {
+      try {
+        const value = await invoke<unknown>("proxy_list");
+        const entries = Array.isArray(value) ? value : [];
+        const candidates = entries.flatMap((entry) => {
+          const record = asRecord(entry);
+          const id = asString(record?.id).trim();
+          const host = asString(record?.host).trim();
+          const port = asNumber(record?.port);
+          if (!id || !host || !Number.isInteger(port) || port <= 0) return [];
+          return [{
+            id,
+            name: asString(record?.name).trim(),
+            proxy: host + ":" + port,
+            country: asString(record?.country).trim().toUpperCase(),
+          }];
+        });
+        const proxies = (await Promise.all(candidates.map(async (candidate) => {
+          try {
+            const snapshot = asRecord(await invoke<unknown>("proxy_last_test", {
+              id: candidate.id,
+            }));
+            const latencyMs = snapshot?.tcp_ms;
+            if (typeof latencyMs !== "number" || !Number.isFinite(latencyMs)) return null;
+            return { ...candidate, latencyMs };
+          } catch {
+            return null;
+          }
+        }))).filter((proxy): proxy is ActiveProxyOption => proxy !== null);
+        if (disposed) return;
+        proxies.sort((left, right) => left.latencyMs - right.latencyMs
+          || left.proxy.localeCompare(right.proxy));
+        setActiveProxies(proxies);
+        setProxyListUnavailable(false);
+      } catch {
+        if (!disposed) setProxyListUnavailable(true);
+      }
+    };
+    void loadActiveProxies();
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
     let stopListening: (() => void) | undefined;
     let hydrated = false;
     const pending: ProgressEvent[] = [];
@@ -489,6 +527,10 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
   const resumableJobs = jobs.filter((job) => !terminalJobStatuses.has(job.status));
   const selectedLogs = useMemo(() => progressLogEntries(selectedJob), [selectedJob]);
   const importProfile = profiles.find((profile) => profile.profile_id === importProfileId) ?? null;
+  const readyCodexProfileIds = useMemo(
+    () => profiles.filter((profile) => profile.codex_auth.status === "ready").map((profile) => profile.profile_id),
+    [profiles],
+  );
 
   const replaceJob = (value: unknown) => {
     const job = normalizeJob(value);
@@ -556,7 +598,10 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     try {
       const validation = normalizeInputValidation(
         await invoke<unknown>("account_keeper_validate_input", {
-          request: { source: { kind: "file", path } },
+          request: {
+            source: { kind: "file", path },
+            ...(draft.operation === "change_password" ? {} : { operation: draft.operation }),
+          },
         }),
       );
       setDraft((current) => current.inputMode === "file"
@@ -583,7 +628,10 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     try {
       const validation = normalizeInputValidation(
         await invoke<unknown>("account_keeper_validate_input", {
-          request: { source },
+          request: {
+            source,
+            ...(draft.operation === "change_password" ? {} : { operation: draft.operation }),
+          },
         }),
       );
       setDraft((current) => current.inputRevision === inputRevision
@@ -650,9 +698,14 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
         request: {
           source: activeInputSource(draft),
           outputPath: draft.operation === "login" ? "" : draft.outputPath,
-          template: draft.operation === "login" ? "" : draft.templateText,
+          template: draft.operation === "change_password" ? draft.templateText : "",
           adapterId: qaAdapterId.current,
           operation: draft.operation,
+          proxySelection: draft.proxySelection === "random"
+            ? { mode: "random" }
+            : draft.proxySelection.startsWith("proxy:")
+              ? { mode: "specific", proxy: draft.proxySelection.slice("proxy:".length) }
+              : { mode: "none" },
           keepProfileRunning: draft.keepProfileRunning,
           pauseAfterCurrent: false,
         },
@@ -895,13 +948,63 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     }
   };
 
-  const copyImportInfo = async (profile: ManagedProfileView) => {
-    setBusyAction(`copy-profile-${profile.profile_id}`);
+  const connectCodex = async (profile: ManagedProfileView) => {
+    setBusyAction(`connect-codex-${profile.profile_id}`);
     setError(null);
     setNotice(null);
     try {
-      await invoke("clipboard_write", { text: profileImportJson(profile) });
-      setNotice("9Router/Cockpit import info copied.");
+      const codexAuth = await invoke<NonNullable<ManagedProfileView["codex_auth"]>>(
+        "account_keeper_connect_codex",
+        { request: { profileId: profile.profile_id } },
+      );
+      setProfiles((current) => current.map((item) => item.profile_id === profile.profile_id
+        ? { ...item, codex_auth: codexAuth }
+        : item));
+      setImportProfileId(profile.profile_id);
+      setNotice("Codex OAuth connected. Export JSON is ready.");
+    } catch (actionError) {
+      setError(String(actionError));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const exportCodex = async (
+    profileIds: string[],
+    format: "nine_router" | "cockpit",
+    destination: "copy" | "save",
+  ) => {
+    const approved = await confirm({
+      title: "Export plaintext Codex credentials",
+      message: `${destination === "copy" ? "Copy" : "Save"} ${profileIds.length} Codex account credential${profileIds.length === 1 ? "" : "s"} for ${format === "nine_router" ? "9Router" : "Cockpit"}? The JSON contains plaintext OAuth tokens.`,
+      buttons: [
+        { label: "Cancel", value: false },
+        { label: destination === "copy" ? "Copy JSON" : "Save JSON", value: true, primary: true },
+      ],
+    });
+    if (approved !== true) return;
+    const action = `${destination}-${format}-${profileIds.join("-")}`;
+    setBusyAction(action);
+    setError(null);
+    setNotice(null);
+    try {
+      if (destination === "copy") {
+        const result = await invoke<{ exportedCount: number }>("account_keeper_copy_codex_export", {
+          request: { profileIds, format },
+        });
+        setNotice(`${result.exportedCount} Codex account(s) copied for ${format === "nine_router" ? "9Router" : "Cockpit"}.`);
+      } else {
+        const outputPath = await saveDialog({
+          title: `Save ${format === "nine_router" ? "9Router" : "Cockpit"} Codex JSON`,
+          defaultPath: format === "nine_router" ? "9router-codex-accounts.json" : "cockpit-codex-accounts.json",
+          filters: [{ name: "JSON", extensions: ["json"] }],
+        });
+        if (!outputPath) return;
+        const result = await invoke<{ exportedCount: number }>("account_keeper_save_codex_export", {
+          request: { profileIds, format, outputPath },
+        });
+        setNotice(`${result.exportedCount} Codex account(s) saved.`);
+      }
     } catch (actionError) {
       setError(String(actionError));
     } finally {
@@ -913,10 +1016,10 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     <section className="account-keeper page" aria-labelledby="account-keeper-title">
       <div className="account-keeper__header">
         <div>
-          <p className="account-keeper__eyebrow">Windows account operations</p>
+          <p className="account-keeper__eyebrow">GPT ACCOUNT MANAGEMENT</p>
           <h1 id="account-keeper-title">Account Keeper</h1>
           <p className="account-keeper__subtitle">
-            Validate local input, run one profile at a time, and keep secrets out of job views and logs.
+            Manage and update GPT accounts in one place — log in, change passwords, rotate 2FA, and update account emails with isolated browser profiles.
           </p>
         </div>
         <div className="account-keeper__header-status" aria-live="polite">
@@ -977,6 +1080,8 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
               {([
                 ["change_password", "Change pass"],
                 ["login", "Login GPT"],
+                ["change_totp", "Change 2FA"],
+                ["change_email", "Change email"],
               ] as const).map(([mode, label]) => (
                 <button
                   key={mode}
@@ -984,7 +1089,14 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
                   aria-pressed={draft.operation === mode}
                   onClick={() => setDraft((current) => current.operation === mode
                     ? current
-                    : { ...current, operation: mode })}
+                    : {
+                      ...current,
+                      operation: mode,
+                      inputRevision: current.inputRevision + 1,
+                      inputValidation: null,
+                      inputValidationRevision: null,
+                      plaintextAcknowledged: false,
+                    })}
                   disabled={busyAction !== null}
                 >
                   {label}
@@ -1040,7 +1152,9 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
                   }))}
                 />
                 <small id="account-keeper-input-help">
-                  One account per line: account|current_password|totp_secret
+                  {draft.operation === "change_email"
+                    ? "current_email|current_password|totp_secret|new_email"
+                    : "One account per line: account|current_password|totp_secret"}
                 </small>
                 <div className="account-keeper__input-actions">
                   <button
@@ -1136,7 +1250,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           </div>
           )}
 
-          {draft.operation === "change_password" && (
+          {draft.operation !== "login" && (
           <div className="account-keeper__field">
             <label htmlFor="account-keeper-output">Output file</label>
             <div className="account-keeper__picker">
@@ -1161,6 +1275,35 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
             </div>
           </div>
           )}
+
+          <div className="account-keeper__field">
+            <label htmlFor="account-keeper-proxy">Browser proxy</label>
+            <select
+              id="account-keeper-proxy"
+              value={draft.proxySelection}
+              onChange={(event) => setDraft((current) => ({
+                ...current,
+                proxySelection: event.target.value,
+              }))}
+            >
+              <option value="none">None</option>
+              <option value="random">Random active proxy</option>
+              {activeProxies.map((proxy) => (
+                <option key={proxy.id} value={"proxy:" + proxy.id}>
+                  {[proxy.country, proxy.name, proxy.proxy, proxy.latencyMs + " ms"]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </option>
+              ))}
+            </select>
+            <small>
+              {proxyListUnavailable
+                ? "Active launcher proxy list unavailable. None and Random remain available."
+                : activeProxies.length === 0
+                  ? "No active proxies found. Run Test all in Proxies, then reopen Account Keeper."
+                  : "None keeps the current proxy. Random or a selected proxy applies to new and existing profiles."}
+            </small>
+          </div>
 
           <label className="account-keeper__toggle">
             <input
@@ -1385,6 +1528,18 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           <span className="account-keeper__panel-note">{profiles.length} verified</span>
         </div>
 
+        {readyCodexProfileIds.length > 0 && (
+          <div className="account-keeper__bulk-export" role="group" aria-label="Bulk Codex export">
+            <span>{readyCodexProfileIds.length} Codex account{readyCodexProfileIds.length === 1 ? "" : "s"} ready</span>
+            <div className="account-keeper__profile-actions">
+              <button type="button" className="btn-sm" aria-label="Copy all ready accounts for 9Router" onClick={() => void exportCodex(readyCodexProfileIds, "nine_router", "copy")} disabled={busyAction !== null}>Copy all to 9Router</button>
+              <button type="button" className="btn-sm" aria-label="Save all ready accounts for 9Router" onClick={() => void exportCodex(readyCodexProfileIds, "nine_router", "save")} disabled={busyAction !== null}>Save all to 9Router</button>
+              <button type="button" className="btn-sm" aria-label="Copy all ready accounts for Cockpit" onClick={() => void exportCodex(readyCodexProfileIds, "cockpit", "copy")} disabled={busyAction !== null}>Copy all to Cockpit</button>
+              <button type="button" className="btn-sm" aria-label="Save all ready accounts for Cockpit" onClick={() => void exportCodex(readyCodexProfileIds, "cockpit", "save")} disabled={busyAction !== null}>Save all to Cockpit</button>
+            </div>
+          </div>
+        )}
+
         {profiles.length === 0 ? (
           <p className="account-keeper__empty">Successful Account Keeper profiles appear here after new-password verification.</p>
         ) : (
@@ -1418,11 +1573,15 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
                   <button
                     type="button"
                     className="btn-sm"
-                    aria-label={`Import info ${profile.masked_account}`}
-                    onClick={() => setImportProfileId((current) => current === profile.profile_id ? null : profile.profile_id)}
+                    aria-label={`${profile.codex_auth?.status === "ready" ? "Export" : "Connect Codex"} ${profile.masked_account}`}
+                    onClick={() => profile.codex_auth?.status === "ready"
+                      ? setImportProfileId((current) => current === profile.profile_id ? null : profile.profile_id)
+                      : void connectCodex(profile)}
                     disabled={busyAction !== null}
                   >
-                    Import Info
+                    {profile.codex_auth?.status === "ready"
+                      ? "Export"
+                      : profile.codex_auth?.status === "reconnect_required" ? "Reconnect Codex" : "Connect Codex"}
                   </button>
                   <button
                     type="button"
@@ -1440,20 +1599,18 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
         )}
 
         {importProfile && (
-          <div className="account-keeper__import" role="region" aria-label="9Router/Cockpit import info">
+          <div className="account-keeper__import" role="region" aria-label="9Router/Cockpit Codex export">
             <div>
-              <strong>9Router/Cockpit import reference</strong>
-              <p>Contains profile metadata only. No password, TOTP, cookie, or session token.</p>
+              <strong>Codex OAuth export</strong>
+              <p>Tokens stay hidden. Copy or save a directly importable JSON array.</p>
             </div>
-            <pre>{profileImportJson(importProfile)}</pre>
-            <button
-              type="button"
-              className="btn-sm"
-              onClick={() => void copyImportInfo(importProfile)}
-              disabled={busyAction !== null}
-            >
-              Copy JSON
-            </button>
+            <p className="account-keeper__mono">Expires: {importProfile.codex_auth?.expires_at ?? "unknown"}</p>
+            <div className="account-keeper__profile-actions">
+              <button type="button" className="btn-sm" onClick={() => void exportCodex([importProfile.profile_id], "nine_router", "copy")} disabled={busyAction !== null}>Copy 9Router JSON</button>
+              <button type="button" className="btn-sm" onClick={() => void exportCodex([importProfile.profile_id], "nine_router", "save")} disabled={busyAction !== null}>Save 9Router JSON</button>
+              <button type="button" className="btn-sm" onClick={() => void exportCodex([importProfile.profile_id], "cockpit", "copy")} disabled={busyAction !== null}>Copy Cockpit JSON</button>
+              <button type="button" className="btn-sm" onClick={() => void exportCodex([importProfile.profile_id], "cockpit", "save")} disabled={busyAction !== null}>Save Cockpit JSON</button>
+            </div>
           </div>
         )}
       </section>

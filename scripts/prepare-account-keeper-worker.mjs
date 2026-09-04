@@ -12,6 +12,8 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { prepareExtractedRuntime } from "./account-keeper-runtime-cache.mjs";
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const automationDir = path.join(repoRoot, "automation");
@@ -47,15 +49,21 @@ if (!(await fileHasSha(archivePath, runtime.sha256))) {
 }
 
 const extractRoot = path.join(cacheRoot, `${runtime.version}-${runtime.platform}-${runtime.arch}`);
-await safeRemove(extractRoot);
-await mkdir(extractRoot, { recursive: true });
-expandZip(archivePath, extractRoot);
-
-const extractedNodeRoot = path.join(extractRoot, path.basename(runtime.archive, ".zip"));
-const nodeExecutable = path.join(extractedNodeRoot, "node.exe");
-const nodeLicense = path.join(extractedNodeRoot, "LICENSE");
-await requireFile(nodeExecutable, "Node executable");
-await requireFile(nodeLicense, "Node license");
+const {
+  nodeExecutable,
+  nodeLicense,
+  reused: reusedNodeRuntime,
+} = await prepareExtractedRuntime({
+  archivePath,
+  archiveName: runtime.archive,
+  extractRoot,
+  sha256: runtime.sha256,
+  expandArchive: expandZip,
+  resetDestination: safeRemove,
+});
+if (reusedNodeRuntime) {
+  console.log(`Reusing cached Node runtime at ${extractRoot}`);
+}
 
 await safeRemove(resourceRoot);
 const bundledNodeDir = path.join(resourceRoot, "node");

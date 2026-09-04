@@ -39,6 +39,16 @@ pub struct Settings {
     #[serde(default)]
     pub api_secret: String,
 
+    // ---- Account Keeper mailbox verification connector ----
+    #[serde(default)]
+    pub account_keeper_mailbox_endpoint: String,
+    #[serde(default)]
+    pub account_keeper_mailbox_token: String,
+    #[serde(default = "default_account_keeper_mailbox_timeout")]
+    pub account_keeper_mailbox_timeout_seconds: u64,
+    #[serde(default = "default_account_keeper_mailbox_poll_interval")]
+    pub account_keeper_mailbox_poll_interval_ms: u64,
+
     // ---- ProxyPool sidecar ----
     #[serde(default = "default_proxypool_host")]
     pub proxypool_host: String,
@@ -84,6 +94,14 @@ fn default_api_enabled() -> bool {
 
 fn default_api_port() -> u16 {
     40325
+}
+
+fn default_account_keeper_mailbox_timeout() -> u64 {
+    30
+}
+
+fn default_account_keeper_mailbox_poll_interval() -> u64 {
+    1_000
 }
 
 fn default_proxypool_host() -> String {
@@ -141,6 +159,10 @@ pub fn load() -> Result<Settings> {
             api_enabled: default_api_enabled(),
             api_port: default_api_port(),
             api_secret: String::new(),
+            account_keeper_mailbox_endpoint: String::new(),
+            account_keeper_mailbox_token: String::new(),
+            account_keeper_mailbox_timeout_seconds: default_account_keeper_mailbox_timeout(),
+            account_keeper_mailbox_poll_interval_ms: default_account_keeper_mailbox_poll_interval(),
             proxypool_host: default_proxypool_host(),
             proxypool_port: default_proxypool_port(),
             proxypool_redis_url: default_proxypool_redis_url(),

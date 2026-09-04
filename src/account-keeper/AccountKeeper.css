@@ -139,6 +139,18 @@
 .account-keeper .account-keeper__field-label,
 .account-keeper .account-keeper__field > small { color: var(--tx-3); font-size: 10.5px; }
 
+.account-keeper .account-keeper__field > select {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--bd-1);
+  border-radius: 7px;
+  background: var(--bg-1);
+  color: var(--tx-1);
+  font-family: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+}
+
 .account-keeper .account-keeper__source-modes {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -309,7 +321,11 @@
 .account-keeper .account-keeper__stage.is-logging_in,
 .account-keeper .account-keeper__stage.is-submitting_totp,
 .account-keeper .account-keeper__stage.is-changing_password,
-.account-keeper .account-keeper__stage.is-verifying_new_password {
+.account-keeper .account-keeper__stage.is-verifying_new_password,
+.account-keeper .account-keeper__stage.is-changing_totp,
+.account-keeper .account-keeper__stage.is-verifying_new_totp,
+.account-keeper .account-keeper__stage.is-changing_email,
+.account-keeper .account-keeper__stage.is-verifying_new_email {
   border-color: #60a5fa55;
   background: #2563eb1a;
   color: #93c5fd;
@@ -317,7 +333,8 @@
 
 .account-keeper .account-keeper__status.is-waiting_manual,
 .account-keeper .account-keeper__status.is-paused,
-.account-keeper .account-keeper__stage.is-waiting_manual {
+.account-keeper .account-keeper__stage.is-waiting_manual,
+.account-keeper .account-keeper__stage.is-waiting_email_verification {
   border-color: #f59e0b55;
   background: #b4530918;
   color: #fcd34d;
@@ -393,6 +410,20 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.account-keeper .account-keeper__bulk-export {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 9px 10px;
+  border: 1px solid #34d39944;
+  border-radius: 8px;
+  background: #0596690f;
+  color: #6ee7b7;
+  font-size: 10.5px;
 }
 
 .account-keeper .account-keeper__logs {
