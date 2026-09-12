@@ -882,6 +882,13 @@ pub struct CodexSaveExportRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CodexConverterSaveRequest {
+    pub output_path: String,
+    pub json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexExportResult {
     pub exported_count: usize,
     pub skipped_count: usize,
@@ -2397,6 +2404,20 @@ pub async fn account_keeper_save_codex_export(
     crate::store::atomic_write_bytes(Path::new(&request.output_path), json.as_bytes())
         .map_err(|error| error.to_string())?;
     Ok(result)
+}
+
+#[tauri::command]
+pub fn account_keeper_save_converted_codex_json(
+    request: CodexConverterSaveRequest,
+) -> std::result::Result<(), String> {
+    if request.output_path.trim().is_empty() {
+        return Err("converter output path is required".into());
+    }
+    if request.json.trim().is_empty() {
+        return Err("converted Codex JSON is empty".into());
+    }
+    crate::store::atomic_write_bytes(Path::new(&request.output_path), request.json.as_bytes())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -4420,6 +4441,31 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn converted_codex_json_save_writes_selected_path() {
+        let path = test_dir("converter-save").join("nested").join("converted.json");
+        let json = "[{\"accessToken\":\"synthetic-token\"}]\n";
+
+        account_keeper_save_converted_codex_json(CodexConverterSaveRequest {
+            output_path: path.display().to_string(),
+            json: json.to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(path).unwrap(), json);
+    }
+
+    #[test]
+    fn converted_codex_json_save_rejects_empty_payload() {
+        let error = account_keeper_save_converted_codex_json(CodexConverterSaveRequest {
+            output_path: test_dir("converter-empty").join("converted.json").display().to_string(),
+            json: "   ".to_string(),
+        })
+        .unwrap_err();
+
+        assert_eq!(error, "converted Codex JSON is empty");
     }
 
     #[cfg(windows)]

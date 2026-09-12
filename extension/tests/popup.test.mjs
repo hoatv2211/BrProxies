@@ -127,12 +127,14 @@ test("missing Codex credentials remain selectable and open the connect flow", as
     assert.equal(checkbox.disabled, false);
     assert.equal(checkbox.checked, true);
     assert.match(document.getElementById("profileList").textContent, /Connect automatically/);
+    assert.equal(document.getElementById("useCurrentChatGptSession").checked, true);
 
     document.getElementById("exportButton").click();
     const flowUrl = new URL(openedUrl);
     assert.equal(flowUrl.pathname, "/codex-flow.html");
     assert.deepEqual(flowUrl.searchParams.getAll("profile"), ["synthetic-missing-profile"]);
     assert.equal(flowUrl.searchParams.get("format"), "nine_router");
+    assert.equal(flowUrl.searchParams.get("session"), "current_chatgpt");
     assert.equal(flowUrl.searchParams.has("token"), false);
   } finally {
     globalThis.window = previous.window;

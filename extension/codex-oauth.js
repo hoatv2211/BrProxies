@@ -31,6 +31,7 @@ export async function connectAndExportCodex({
   profileIds,
   format,
   listProfiles,
+  beforeOAuth,
   startOAuth,
   openAuthorization,
   readOAuth,
@@ -64,6 +65,7 @@ export async function connectAndExportCodex({
       index,
       total: selectedProfiles.length
     });
+    if (typeof beforeOAuth === "function") await beforeOAuth(profile);
     const operation = await startOAuth(profile.profile_id);
     await openAuthorization(operation.authorize_url);
     report(onProgress, {

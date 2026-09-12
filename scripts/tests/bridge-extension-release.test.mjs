@@ -11,6 +11,7 @@ test("Windows releases bundle BrProxies Bridge for profile auto-load", () => {
     "background.js",
     "codex-converter.js",
     "codex-export.js",
+    "codex-session.js",
     "codex-oauth.js",
     "codex-flow.html",
     "codex-flow.css",

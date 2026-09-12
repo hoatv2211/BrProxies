@@ -7,7 +7,11 @@
   "permissions": ["proxy", "storage"],
   "host_permissions": [
     "http://127.0.0.1/*",
-    "http://localhost/*"
+    "http://localhost/*",
+    "https://chatgpt.com/*",
+    "https://www.chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://www.chat.openai.com/*"
   ],
   "background": {
     "service_worker": "background.js",

@@ -54,6 +54,14 @@
         <p id="codexStatusText" class="status-line">Not connected</p>
         <div id="profileList" class="profile-list" role="list"></div>
 
+        <label class="session-toggle" for="useCurrentChatGptSession">
+          <input id="useCurrentChatGptSession" type="checkbox" checked />
+          <span>
+            <strong>Use current ChatGPT session</strong>
+            <small>Reuse the signed-in Chrome profile through official OpenAI OAuth. No cookies or tokens are read.</small>
+          </span>
+        </label>
+
         <section class="export-dock" aria-label="Export options">
           <label class="field compact">
             <span>Target format</span>

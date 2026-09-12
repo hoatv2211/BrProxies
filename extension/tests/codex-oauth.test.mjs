@@ -63,6 +63,40 @@ test("missing credential opens OAuth and exports after callback is ready", async
   });
 });
 
+test("runs the current-session guard before starting OAuth", async () => {
+  const events = [];
+  const profile = {
+    profile_id: "profile-current-session",
+    codex_auth: { status: "missing" }
+  };
+
+  await connectAndExportCodex({
+    profileIds: [profile.profile_id],
+    format: "nine_router",
+    listProfiles: async () => [profile],
+    beforeOAuth: async (selectedProfile) => events.push(`guard:${selectedProfile.profile_id}`),
+    startOAuth: async () => {
+      events.push("start");
+      return {
+        operation_id: "operation-current-session",
+        authorize_url: "https://auth.openai.com/oauth/authorize?synthetic=1",
+        expires_in_seconds: 300
+      };
+    },
+    openAuthorization: async () => events.push("open"),
+    readOAuth: async () => ({ status: "ready" }),
+    exportAccounts: async () => ({ ok: true }),
+    sleep: async () => {},
+    now: () => 0
+  });
+
+  assert.deepEqual(events, [
+    "guard:profile-current-session",
+    "start",
+    "open"
+  ]);
+});
+
 test("failed OAuth stops before secret-bearing export", async () => {
   const profile = {
     profile_id: "profile-reconnect",

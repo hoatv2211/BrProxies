@@ -5,6 +5,7 @@ const params = new URLSearchParams(window.location.search);
 const profileIds = Array.from(new Set(params.getAll("profile").filter(Boolean)));
 const format = params.get("format") || "nine_router";
 const apiUrl = normalizeLoopbackApiUrl(params.get("apiUrl"), DEFAULT_BRPROXIES_API_URL);
+const useCurrentSession = params.get("session") === "current_chatgpt";
 
 const els = {
   statusMark: document.getElementById("statusMark"),
@@ -35,6 +36,7 @@ function friendlyError(error) {
   if (message === "codex_oauth_timed_out") return "OAuth timed out. Start again and finish the OpenAI approval within five minutes.";
   if (message === "codex_profile_not_verified") return "This profile is not a verified Account Keeper profile.";
   if (message === "codex_oauth_in_progress") return "An OAuth request is already open for this profile. Finish it, then try again.";
+  if (message === "chatgpt_session_required") return "Open a signed-in ChatGPT tab in this Chrome window, then retry. No browser cookies or tokens are read.";
   if (message === "codex_oauth_failed") return "OAuth failed. Confirm the signed-in ChatGPT account matches the selected Account Keeper profile.";
   return message;
 }
@@ -63,14 +65,17 @@ async function run() {
     "working",
     "OAuth in progress",
     "Keep this page open",
-    "Approve any OpenAI tab that opens. Each selected account must match its Account Keeper profile."
+    useCurrentSession
+      ? "Keep the signed-in ChatGPT tab open. Approve the official OpenAI OAuth tab that opens; each selected account must match its Account Keeper profile."
+      : "Approve the official OpenAI OAuth tab that opens. Each selected account must match its Account Keeper profile."
   );
   try {
     const data = await sendMessage({
       type: "connectAndExportCodex",
       apiUrl,
       profileIds,
-      format
+      format,
+      useCurrentSession
     });
     downloadJson(data);
     const refreshed = data.refreshedCount ? ` ${data.refreshedCount} credential(s) were refreshed.` : "";

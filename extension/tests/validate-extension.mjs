@@ -19,7 +19,14 @@ if (!fs.existsSync(manifestPath)) {
   for (const permission of ["proxy", "storage"]) {
     if (!manifest.permissions?.includes(permission)) fail(`missing permission: ${permission}`);
   }
-  for (const host of ["http://127.0.0.1/*", "http://localhost/*"]) {
+  for (const host of [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "https://chatgpt.com/*",
+    "https://www.chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://www.chat.openai.com/*"
+  ]) {
     if (!manifest.host_permissions?.includes(host)) fail(`missing host permission: ${host}`);
   }
   for (const broad of ["http://*/*", "https://*/*", "<all_urls>"]) {
@@ -34,6 +41,7 @@ for (const file of [
   "background.js",
   "codex-export.js",
   "codex-converter.js",
+  "codex-session.js",
   "codex-oauth.js",
   "codex-flow.html",
   "codex-flow.css",
@@ -58,6 +66,7 @@ for (const required of [
   "nine_router",
   "cockpit",
   "exportButton",
+  "useCurrentChatGptSession",
   "converterInput",
   "converterFileInput",
   "convertButton"
@@ -74,6 +83,13 @@ const flowScript = fs.readFileSync(path.join(extensionDir, "codex-flow.js"), "ut
 if (!flowScript.includes('type: "connectAndExportCodex"')) {
   fail("Codex flow must request connect-and-export orchestration");
 }
-if (/cookie|localStorage/i.test(flowScript)) {
+if (/document\.cookie|localStorage/i.test(flowScript)) {
   fail("Codex flow must not read cookies or persistent browser storage");
+}
+
+if (!background.includes("requireActiveChatGPTTab")) {
+  fail("background must validate the active ChatGPT session before OAuth");
+}
+if (/chrome\.cookies|localStorage/i.test(background)) {
+  fail("background must not read cookies or page storage for Codex export");
 }

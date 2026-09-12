@@ -72,9 +72,14 @@ ProxyPool API mặc định chạy tại `http://127.0.0.1:40326`.
 6. Chọn một hoặc nhiều profile. Profile chưa có hoặc hết hạn credential vẫn chọn được.
 7. Chọn định dạng **9Router** hoặc **Cockpit**.
 8. Bấm **Connect & Export**.
-9. Nếu tab OpenAI OAuth mở ra, xác nhận bằng tài khoản ChatGPT đang đăng nhập
+9. Giữ bật **Use current ChatGPT session** nếu trong cùng cửa sổ Chrome đã có
+   tab ChatGPT đang đăng nhập đúng tài khoản. Extension chỉ kiểm tra tab thuộc
+   `chatgpt.com` hoặc `chat.openai.com`, sau đó mở OAuth chính thức của OpenAI
+   trong cùng Chrome profile; extension không đọc cookie, local storage hoặc
+   raw token của trình duyệt.
+10. Nếu tab OpenAI OAuth mở ra, xác nhận bằng tài khoản ChatGPT đang đăng nhập
    và phải khớp với profile Account Keeper đã chọn.
-10. Chờ trang tiến trình tải JSON xuống, rồi import file đó vào 9Router/Cockpit.
+11. Chờ trang tiến trình tải JSON xuống, rồi import file đó vào 9Router/Cockpit.
 
 Bearer token chỉ được giữ trong `chrome.storage.session` và mất khi session
 Chrome kết thúc. Extension chỉ kết nối tới loopback `127.0.0.1` hoặc
@@ -154,9 +159,12 @@ Mở ProxyPool trong BrProxies, chạy collect/check và xác nhận service t�
 
 ## Giới hạn và bảo mật
 
-- Bridge chỉ cho phép API loopback; không kết nối API BrProxies ở máy từ xa.
+- Bridge chỉ cho phép API BrProxies qua loopback; quyền đọc URL tab chỉ giới hạn
+  ở các domain ChatGPT chính thức nêu trên, không kết nối API từ xa.
 - JSON OAuth export là secret dạng plaintext.
 - Extension tự khởi động OAuth nhưng không thay thế bước xác minh Account Keeper.
 - Tài khoản OAuth phải khớp profile được chọn; nhiều profile được xử lý lần lượt.
+- Nếu không có tab ChatGPT đang đăng nhập trong cửa sổ Chrome, bỏ chọn **Use
+  current ChatGPT session** để dùng flow OAuth độc lập như trước.
 - Automation/CDP launch không nạp extension.
 - BrProxies và service tương ứng phải đang chạy khi dùng Codex Export hoặc ProxyPool.

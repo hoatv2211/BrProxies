@@ -1283,6 +1283,7 @@ pub fn run() {
             account_keeper::account_keeper_connect_codex,
             account_keeper::account_keeper_copy_codex_export,
             account_keeper::account_keeper_save_codex_export,
+            account_keeper::account_keeper_save_converted_codex_json,
             account_keeper::account_keeper_get_job,
             account_keeper::account_keeper_pause_after_current,
             account_keeper::account_keeper_cancel_batch,

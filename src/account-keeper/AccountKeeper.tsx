@@ -271,6 +271,9 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
   const [converterInput, setConverterInput] = useState("");
   const [converterFileName, setConverterFileName] = useState("");
   const [converterResult, setConverterResult] = useState<CodexConversionResult | null>(null);
+  const [converterOutputJson, setConverterOutputJson] = useState<string | null>(null);
+  const [converterOutputFilename, setConverterOutputFilename] = useState("");
+  const [converterOutputPath, setConverterOutputPath] = useState("");
   const [converterError, setConverterError] = useState<string | null>(null);
   const [converterNotice, setConverterNotice] = useState<string | null>(null);
   const converterFileRef = useRef<HTMLInputElement>(null);
@@ -1030,6 +1033,9 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
 
   const resetConverterFeedback = () => {
     setConverterResult(null);
+    setConverterOutputJson(null);
+    setConverterOutputFilename("");
+    setConverterOutputPath("");
     setConverterError(null);
     setConverterNotice(null);
   };
@@ -1065,7 +1071,11 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     }
     try {
       const result = convertCodexJson(converterInput, converterDirection);
+      const download = createConvertedDownload(result);
       setConverterResult(result);
+      setConverterOutputJson(download.json);
+      setConverterOutputFilename(download.filename);
+      setConverterOutputPath("");
       setConverterNotice(
         `${result.accounts.length} account${result.accounts.length === 1 ? "" : "s"} ready for ${result.targetFormat === "nine_router" ? "9Router" : "Cockpit"}.`,
       );
@@ -1077,8 +1087,41 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     }
   };
 
+  const chooseConverterOutputPath = async () => {
+    if (!converterOutputJson) return;
+    try {
+      const outputPath = await saveDialog({
+        title: "Save converted Codex JSON",
+        defaultPath: converterOutputPath || converterOutputFilename,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (outputPath) setConverterOutputPath(outputPath);
+    } catch {
+      setConverterError("Could not choose a converter output path.");
+    }
+  };
+
+  const copyConvertedJson = async () => {
+    if (!converterOutputJson) return;
+    const approved = await confirm({
+      title: "Copy plaintext Codex credentials",
+      message: "Copy the converted JSON to the system clipboard? It contains plaintext OAuth tokens.",
+      buttons: [
+        { label: "Cancel", value: false },
+        { label: "Copy JSON", value: true, primary: true },
+      ],
+    });
+    if (approved !== true) return;
+    try {
+      await invoke("clipboard_write", { text: converterOutputJson });
+      setConverterNotice("Converted JSON copied to clipboard.");
+    } catch {
+      setConverterError("Could not copy the converted JSON to the clipboard.");
+    }
+  };
+
   const downloadConvertedJson = async () => {
-    if (!converterResult) return;
+    if (!converterResult || !converterOutputJson) return;
     const approved = await confirm({
       title: "Download plaintext Codex credentials",
       message: `Download ${converterResult.accounts.length} converted Codex account${converterResult.accounts.length === 1 ? "" : "s"}? The JSON contains plaintext OAuth tokens.`,
@@ -1089,24 +1132,23 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     });
     if (approved !== true) return;
     try {
-      const download = createConvertedDownload(converterResult);
-      const url = URL.createObjectURL(new Blob([download.json], { type: "application/json" }));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = download.filename;
-      anchor.rel = "noopener";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const outputPath = converterOutputPath || await saveDialog({
+        title: "Save converted Codex JSON",
+        defaultPath: converterOutputFilename,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!outputPath) return;
+      await invoke("account_keeper_save_converted_codex_json", {
+        request: { outputPath, json: converterOutputJson },
+      });
 
       const count = converterResult.accounts.length;
+      setConverterOutputPath(outputPath);
       setConverterInput("");
       setConverterFileName("");
-      setConverterResult(null);
       setConverterError(null);
       setConverterNotice(
-        `Downloaded ${count} converted account${count === 1 ? "" : "s"}. Source JSON cleared from this form.`,
+        `Saved converted JSON to ${outputPath}. ${count} account${count === 1 ? "" : "s"} written. Source JSON cleared from this form.`,
       );
       if (converterFileRef.current) converterFileRef.current.value = "";
     } catch {
@@ -1803,6 +1845,44 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
               </div>
             )}
 
+            {converterOutputJson && (
+              <div className="account-keeper__converter-output">
+                <div className="account-keeper__converter-output-head">
+                  <label htmlFor="account-keeper-converted-json">Converted JSON preview</label>
+                  <button type="button" className="btn-sm" onClick={() => void copyConvertedJson()}>
+                    Copy converted JSON
+                  </button>
+                </div>
+                <textarea
+                  id="account-keeper-converted-json"
+                  aria-label="Converted JSON preview"
+                  value={converterOutputJson}
+                  readOnly
+                  spellCheck={false}
+                />
+                <div className="account-keeper__converter-output-path">
+                  <label htmlFor="account-keeper-converter-output-path">Download path</label>
+                  <div>
+                    <input
+                      id="account-keeper-converter-output-path"
+                      aria-label="Converter output path"
+                      value={converterOutputPath}
+                      placeholder={converterOutputFilename || "Choose a local JSON file path"}
+                      readOnly
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      aria-label="Choose converter output path"
+                      onClick={() => void chooseConverterOutputPath()}
+                    >
+                      Choose path
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="account-keeper__converter-actions">
               <button type="button" className="btn-primary" onClick={runCodexConversion}>
                 Convert JSON
@@ -1836,7 +1916,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
             <p>Use one account object, an account array, or an object with an <code>accounts</code> array.</p>
             <strong>Secret-safe behavior</strong>
             <p>Conversion stays in this WebView. It does not call the Automation API, write to the Account Keeper vault, persist input, or log tokens.</p>
-            <p>The source field is cleared after a successful download. The downloaded file still contains plaintext OAuth credentials.</p>
+            <p>The converted JSON remains visible for review and copying. Saving clears the source field; the saved file still contains plaintext OAuth credentials.</p>
           </aside>
         </div>
       </section>

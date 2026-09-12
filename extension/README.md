@@ -45,7 +45,12 @@ unpacked Chrome extension.
    click **Connect BrProxies**.
 6. Select one or more profiles, choose **9Router** or **Cockpit**, and click
    **Connect & Export**.
-7. If an OpenAI authorization tab opens, approve access with the account that
+7. Leave **Use current ChatGPT session** enabled when the same Chrome window
+   already has the matching ChatGPT account signed in. The extension checks for
+   a `chatgpt.com` or `chat.openai.com` tab, then opens the official OpenAI OAuth
+   page in that Chrome profile. It does not read cookies, local storage, or raw
+   browser tokens.
+8. If an OpenAI authorization tab opens, approve access with the account that
    matches the selected Account Keeper profile. The JSON downloads after OAuth
    completes. Profiles with a ready credential skip the OAuth step.
 
@@ -81,8 +86,11 @@ After a successful download, the source text is cleared from the popup.
 
 ## Limits
 
-- Local loopback use only; remote host permissions are intentionally excluded.
+- Automation API use is loopback-only; browser-session host permissions are limited
+  to the official ChatGPT domains listed above.
 - OAuth succeeds only when the account authorized in the current browser
   session matches the selected verified Account Keeper profile.
+- If no signed-in ChatGPT tab is available, uncheck **Use current ChatGPT
+  session** to keep the existing standalone OAuth flow.
 - Username/password proxy authentication is not implemented.
 - BrProxies and its local services must be running.

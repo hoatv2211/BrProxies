@@ -195,6 +195,34 @@ textarea:focus { border-color: var(--cyan); }
 .codex-actions,
 .export-dock { gap: 8px; }
 
+.session-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 12px 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  cursor: pointer;
+}
+
+.session-toggle input {
+  margin-top: 2px;
+  accent-color: var(--cyan);
+}
+
+.session-toggle span {
+  display: grid;
+  gap: 3px;
+}
+
+.session-toggle small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 button {
   height: 36px;
   border: 1px solid var(--line);

@@ -15,6 +15,7 @@ const els = {
   selectAllButton: document.getElementById("selectAllButton"),
   exportButton: document.getElementById("exportButton"),
   formatSelect: document.getElementById("formatSelect"),
+  useCurrentChatGptSession: document.getElementById("useCurrentChatGptSession"),
   codexStatusText: document.getElementById("codexStatusText"),
   codexCountBadge: document.getElementById("codexCountBadge"),
   profileList: document.getElementById("profileList"),
@@ -232,13 +233,18 @@ function exportCodexJson() {
     setError(new Error("Select at least one Codex profile"));
     return;
   }
-  if (!window.confirm(
-    "BrProxies may open an OpenAI OAuth tab for profiles that need connection. The downloaded JSON contains plaintext OAuth tokens. Continue?"
-  )) return;
+  const sessionMessage = els.useCurrentChatGptSession.checked
+    ? "A ChatGPT tab in this Chrome window must be signed in to the matching account. BrProxies will reuse that Chrome session through official OpenAI OAuth without reading cookies or tokens."
+    : "BrProxies will open an official OpenAI OAuth tab. The downloaded JSON contains plaintext OAuth tokens. Continue?";
+  if (!window.confirm(`${sessionMessage} The downloaded JSON contains plaintext OAuth tokens. Continue?`)) return;
 
   const flowUrl = new URL(chrome.runtime.getURL("codex-flow.html"));
   for (const profileId of profileIds) flowUrl.searchParams.append("profile", profileId);
   flowUrl.searchParams.set("format", els.formatSelect.value);
+  flowUrl.searchParams.set(
+    "session",
+    els.useCurrentChatGptSession.checked ? "current_chatgpt" : "oauth_only"
+  );
   flowUrl.searchParams.set(
     "apiUrl",
     els.brApiUrlInput.value.trim() || DEFAULT_BRPROXIES_API_URL

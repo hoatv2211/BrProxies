@@ -1,5 +1,6 @@
 import { normalizeLoopbackApiUrl } from "./codex-export.js";
 import { connectAndExportCodex } from "./codex-oauth.js";
+import { requireActiveChatGPTTab } from "./codex-session.js";
 
 const DEFAULT_POOL_API_URL = "http://127.0.0.1:40326";
 const DEFAULT_BRPROXIES_API_URL = "http://127.0.0.1:40325";
@@ -201,6 +202,16 @@ function tabsCreate(details) {
   });
 }
 
+function tabsQuery(queryInfo) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.query(queryInfo, (tabs) => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve(tabs);
+    });
+  });
+}
+
 function trustedCodexAuthorizeUrl(value) {
   const url = new URL(String(value || ""));
   if (
@@ -216,12 +227,19 @@ function trustedCodexAuthorizeUrl(value) {
 async function connectAndExportCodexAccounts(message) {
   const apiUrl = normalizeLoopbackApiUrl(message.apiUrl, DEFAULT_BRPROXIES_API_URL);
   const token = await resolveBrProxiesToken();
+  const useCurrentSession = message.useCurrentSession === true;
+  let currentSessionChecked = false;
   await storageSet({ brApiUrl: apiUrl });
   return connectAndExportCodex({
     profileIds: message.profileIds,
     format: message.format,
     listProfiles: () =>
       fetchAuthorizedJson(apiUrl, token, "/account-keeper/profiles"),
+    beforeOAuth: async () => {
+      if (!useCurrentSession || currentSessionChecked) return;
+      await requireActiveChatGPTTab((queryInfo) => tabsQuery(queryInfo));
+      currentSessionChecked = true;
+    },
     startOAuth: (profileId) =>
       fetchAuthorizedJson(apiUrl, token, "/account-keeper/codex/oauth", {
         method: "POST",

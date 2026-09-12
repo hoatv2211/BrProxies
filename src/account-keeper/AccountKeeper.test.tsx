@@ -106,14 +106,6 @@ describe("AccountKeeper", () => {
     window.history.pushState({}, "", "/");
     delete document.documentElement.dataset.accountKeeperQaConfig;
     delete document.documentElement.dataset.accountKeeperQaStatus;
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: vi.fn(() => "blob:synthetic-converter-download"),
-    });
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: vi.fn(),
-    });
     mocks.listen.mockResolvedValue(mocks.unlisten);
     mocks.invoke.mockImplementation(defaultInvoke);
   });
@@ -738,9 +730,9 @@ describe("AccountKeeper", () => {
     ));
   });
 
-  it("converts pasted Cockpit JSON locally, downloads it, and clears the source", async () => {
-    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  it("converts pasted Cockpit JSON locally, saves it, and clears the source", async () => {
     const confirm = vi.fn().mockResolvedValue(true);
+    mocks.save.mockResolvedValue("C:\\fixtures\\converted-codex.json");
     render(<AccountKeeper confirm={confirm} />);
     await screen.findByRole("heading", { name: "Codex JSON Converter" });
 
@@ -763,15 +755,65 @@ describe("AccountKeeper", () => {
     expect(await screen.findByText("1 account ready for 9Router.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Download converted JSON" }));
 
-    await waitFor(() => expect(anchorClick).toHaveBeenCalledOnce());
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_save_converted_codex_json",
+      expect.objectContaining({
+        request: expect.objectContaining({ outputPath: "C:\\fixtures\\converted-codex.json" }),
+      }),
+    ));
     expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
       title: "Download plaintext Codex credentials",
     }));
-    expect(URL.createObjectURL).toHaveBeenCalledOnce();
     await waitFor(() => expect(input).toHaveValue(""));
-    expect(await screen.findByText(/Source JSON cleared from this form/)).toBeInTheDocument();
+    expect(await screen.findByText(/Saved converted JSON to C:\\fixtures\\converted-codex\.json/)).toBeInTheDocument();
     expect(mocks.invoke.mock.calls.some(([command]) => String(command).includes("converter"))).toBe(false);
-    anchorClick.mockRestore();
+  });
+
+  it("previews converted JSON, copies it, and saves it to a chosen path", async () => {
+    const confirm = vi.fn().mockResolvedValue(true);
+    mocks.save.mockResolvedValue("C:\\fixtures\\converted-codex.json");
+    render(<AccountKeeper confirm={confirm} />);
+    await screen.findByRole("heading", { name: "Codex JSON Converter" });
+
+    fireEvent.change(screen.getByLabelText("Codex JSON input"), {
+      target: {
+        value: JSON.stringify({
+          access_token: "synthetic-access-token",
+          refresh_token: "synthetic-refresh-token",
+          id_token: "synthetic-id-token",
+          account_id: "account-synthetic-001",
+          last_refresh: "2026-09-12T00:00:00.000Z",
+          expired: "2026-09-12T01:00:00.000Z",
+          email: "owner@example.test",
+        }),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Convert JSON" }));
+
+    const preview = await screen.findByLabelText("Converted JSON preview");
+    expect((preview as HTMLTextAreaElement).value).toContain('"accessToken"');
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy converted JSON" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "clipboard_write",
+      { text: (preview as HTMLTextAreaElement).value },
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose converter output path" }));
+    await waitFor(() => expect(screen.getByLabelText("Converter output path")).toHaveValue("C:\\fixtures\\converted-codex.json"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Download converted JSON" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_save_converted_codex_json",
+      {
+        request: {
+          outputPath: "C:\\fixtures\\converted-codex.json",
+          json: (preview as HTMLTextAreaElement).value,
+        },
+      },
+    ));
+    expect((preview as HTMLTextAreaElement).value).toContain('"accessToken"');
+    expect(await screen.findByText(/Saved converted JSON to C:\\fixtures\\converted-codex\.json/)).toBeInTheDocument();
   });
 
   it("loads a 9Router JSON file locally and reports schema errors without backend calls", async () => {

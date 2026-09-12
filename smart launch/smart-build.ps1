@@ -45,6 +45,48 @@ function Require-Command($Name, $Hint) {
   }
 }
 
+# Windows PowerShell 5.1 runs on .NET Framework, which does not expose
+# System.IO.Path.GetRelativePath (the build entrypoint intentionally uses
+# powershell.exe for compatibility). Keep this helper framework-safe so the
+# staging integrity checks work in both Windows PowerShell and PowerShell 7.
+function Get-RelativePathCompat {
+  param(
+    [Parameter(Mandatory = $true)][string]$BasePath,
+    [Parameter(Mandatory = $true)][string]$Path
+  )
+
+  $base = [System.IO.Path]::GetFullPath($BasePath).TrimEnd('\', '/') + '\'
+  $full = [System.IO.Path]::GetFullPath($Path)
+  if ($full.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return $full.Substring($base.Length).Replace('\', '/')
+  }
+
+  # This should not occur for staging files, but retain a correct fallback for
+  # callers that pass paths on a different branch of the filesystem.
+  $baseUri = New-Object System.Uri($base)
+  $fullUri = New-Object System.Uri($full)
+  return [System.Uri]::UnescapeDataString($baseUri.MakeRelativeUri($fullUri).ToString()).Replace('\', '/')
+}
+
+# Get-FileHash is unavailable on older Windows PowerShell installations and
+# can also be missing when the utility module is not auto-loaded. Use the BCL
+# SHA-256 implementation so cache and staging checks work on every supported
+# Windows PowerShell host.
+function Get-Sha256Hash {
+  param(
+    [Parameter(Mandatory = $true)][string]$LiteralPath
+  )
+
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  $stream = [System.IO.File]::OpenRead((Resolve-Path -LiteralPath $LiteralPath).Path)
+  try {
+    return -join ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') })
+  } finally {
+    $stream.Dispose()
+    $sha.Dispose()
+  }
+}
+
 function Get-ExistingFileList($Paths) {
   $files = New-Object System.Collections.Generic.List[string]
   foreach ($path in $Paths) {
@@ -73,7 +115,7 @@ function Get-InputHash($Paths) {
   foreach ($file in $files) {
     $fileUri = New-Object System.Uri($file)
     $relative = [System.Uri]::UnescapeDataString($rootUri.MakeRelativeUri($fileUri).ToString())
-    $fileHash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+    $fileHash = Get-Sha256Hash -LiteralPath $file
     [void]$builder.AppendLine("$relative=$fileHash")
   }
   $bytes = [System.Text.Encoding]::UTF8.GetBytes($builder.ToString())
@@ -221,8 +263,8 @@ function Sync-AccountKeeperResources {
   $destinationManifest = Join-Path $Destination "manifest.json"
   $destinationReady = Test-Path -LiteralPath $destinationManifest
   if ($destinationReady) {
-    $destinationReady = (Get-FileHash -LiteralPath $sourceManifest).Hash -eq
-      (Get-FileHash -LiteralPath $destinationManifest).Hash
+    $destinationReady = (Get-Sha256Hash -LiteralPath $sourceManifest) -eq
+      (Get-Sha256Hash -LiteralPath $destinationManifest)
   }
   if ($destinationReady) {
     foreach ($relative in $required) {
@@ -246,8 +288,8 @@ function Sync-AccountKeeperResources {
       throw "Account Keeper release resource is missing after staging: $relative"
     }
   }
-  if ((Get-FileHash -LiteralPath $sourceManifest).Hash -ne
-      (Get-FileHash -LiteralPath $destinationManifest).Hash) {
+  if ((Get-Sha256Hash -LiteralPath $sourceManifest) -ne
+      (Get-Sha256Hash -LiteralPath $destinationManifest)) {
     throw "Account Keeper release resource manifest does not match"
   }
 }
@@ -273,8 +315,8 @@ function Sync-ProxyPoolResources {
   $destinationManifest = Join-Path $Destination "manifest.json"
   $destinationReady = Test-Path -LiteralPath $destinationManifest
   if ($destinationReady) {
-    $destinationReady = (Get-FileHash -LiteralPath $sourceManifest).Hash -eq
-      (Get-FileHash -LiteralPath $destinationManifest).Hash
+    $destinationReady = (Get-Sha256Hash -LiteralPath $sourceManifest) -eq
+      (Get-Sha256Hash -LiteralPath $destinationManifest)
   }
   if ($destinationReady) {
     foreach ($relative in $required) {
@@ -298,8 +340,8 @@ function Sync-ProxyPoolResources {
       throw "ProxyPool release resource is missing after staging: $relative"
     }
   }
-  if ((Get-FileHash -LiteralPath $sourceManifest).Hash -ne
-      (Get-FileHash -LiteralPath $destinationManifest).Hash) {
+  if ((Get-Sha256Hash -LiteralPath $sourceManifest) -ne
+      (Get-Sha256Hash -LiteralPath $destinationManifest)) {
     throw "ProxyPool release resource manifest does not match"
   }
 }
@@ -315,6 +357,7 @@ function Sync-BridgeExtension {
     "background.js",
     "codex-converter.js",
     "codex-export.js",
+    "codex-session.js",
     "codex-oauth.js",
     "codex-flow.html",
     "codex-flow.css",
@@ -335,7 +378,7 @@ function Sync-BridgeExtension {
     $destinationFiles = @(Get-ChildItem -LiteralPath $Destination -File -Recurse | ForEach-Object {
       [pscustomobject]@{
         FullName = $_.FullName
-        Relative = [IO.Path]::GetRelativePath($destinationRoot, $_.FullName).Replace("\", "/")
+        Relative = Get-RelativePathCompat -BasePath $destinationRoot -Path $_.FullName
       }
     })
   }
@@ -345,8 +388,8 @@ function Sync-BridgeExtension {
     $sourceFile = Join-Path $Source $relative
     $destinationFile = Join-Path $Destination $relative
     if (-not (Test-Path -LiteralPath $destinationFile) -or
-        (Get-FileHash -LiteralPath $sourceFile).Hash -ne
-        (Get-FileHash -LiteralPath $destinationFile).Hash) {
+        (Get-Sha256Hash -LiteralPath $sourceFile) -ne
+        (Get-Sha256Hash -LiteralPath $destinationFile)) {
       $destinationReady = $false
       break
     }
@@ -369,15 +412,15 @@ function Sync-BridgeExtension {
     $sourceFile = Join-Path $Source $relative
     $destinationFile = Join-Path $Destination $relative
     if (-not (Test-Path -LiteralPath $destinationFile) -or
-        (Get-FileHash -LiteralPath $sourceFile).Hash -ne
-        (Get-FileHash -LiteralPath $destinationFile).Hash) {
+        (Get-Sha256Hash -LiteralPath $sourceFile) -ne
+        (Get-Sha256Hash -LiteralPath $destinationFile)) {
       throw "BrProxies Bridge release file does not match after staging: $relative"
     }
   }
 
   $stagedRoot = (Resolve-Path -LiteralPath $Destination).Path
   $stagedFiles = @(Get-ChildItem -LiteralPath $Destination -File -Recurse | ForEach-Object {
-    [IO.Path]::GetRelativePath($stagedRoot, $_.FullName).Replace("\", "/")
+    Get-RelativePathCompat -BasePath $stagedRoot -Path $_.FullName
   })
   if (@(Compare-Object ($required | Sort-Object) ($stagedFiles | Sort-Object)).Count -ne 0) {
     throw "BrProxies Bridge release directory contains an unexpected file"
