@@ -9,7 +9,7 @@
     "test": "vitest run",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test:extension": "node extension/tests/validate-extension.mjs",
+    "test:extension": "node extension/tests/validate-extension.mjs && node --test extension/tests/*.test.mjs",
     "build:account-keeper-worker": "node scripts/prepare-account-keeper-worker.mjs",
     "build:proxypool-sidecar": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-proxypool-sidecar.ps1",
     "account-keeper:agent": "cargo run --manifest-path src-tauri/Cargo.toml --bin account-keeper-agent --",

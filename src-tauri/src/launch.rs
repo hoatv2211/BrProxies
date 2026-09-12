@@ -5,6 +5,9 @@ use crate::{
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use tauri::Manager;
+
+const BRIDGE_EXTENSION_DIR: &str = "bridge-extension";
 
 /// Launch result: OS pid plus CDP endpoint when remote-debugging is on.
 pub struct LaunchOutcome {
@@ -36,6 +39,48 @@ pub fn resolve_binary() -> Result<PathBuf> {
         return Ok(pb);
     }
     anyhow::bail!("BrProxies browser not installed yet - open Settings to download, or configure Browser path manually")
+}
+
+fn resolve_bridge_extension_dir() -> Result<PathBuf> {
+    let resource_root = crate::app_handle().and_then(|app| app.path().resource_dir().ok());
+    let executable_root = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    let dev_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("extension");
+
+    resolve_bridge_extension_dir_from(
+        resource_root.as_deref(),
+        executable_root.as_deref(),
+        &dev_root,
+    )
+}
+
+fn resolve_bridge_extension_dir_from(
+    resource_root: Option<&Path>,
+    executable_root: Option<&Path>,
+    dev_root: &Path,
+) -> Result<PathBuf> {
+    let candidates = resource_root
+        .into_iter()
+        .map(|root| root.join(BRIDGE_EXTENSION_DIR))
+        .chain(
+            executable_root
+                .into_iter()
+                .map(|root| root.join(BRIDGE_EXTENSION_DIR)),
+        )
+        .chain(std::iter::once(dev_root.to_path_buf()));
+
+    for candidate in candidates {
+        if candidate.join("manifest.json").is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    anyhow::bail!(
+        "BrProxies Bridge files are missing; reinstall BrProxies or disable BrProxies Bridge for this profile"
+    )
 }
 
 pub async fn launch_profile(
@@ -109,6 +154,14 @@ pub async fn launch_profile(
     // session because the patched browser injects its upstream welcome tab.
     if !headless && !enable_cdp {
         cmd.arg("--hide-crash-restore-bubble");
+        if stored.meta.bridge_enabled {
+            let extension_dir = resolve_bridge_extension_dir()?;
+            cmd.arg(format!("--load-extension={}", extension_dir.display()));
+            eprintln!(
+                "[launcher] BrProxies Bridge enabled: {}",
+                extension_dir.display()
+            );
+        }
     }
 
     if let Some(p) = bound_proxy.as_ref() {
@@ -568,4 +621,41 @@ fn host_locale() -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_bridge_extension_dir_from;
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("brproxies-{label}-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn bundled_bridge_wins_over_development_copy() {
+        let root = temp_root("bridge-resolve");
+        let resource_root = root.join("resources");
+        let bundled = resource_root.join("bridge-extension");
+        let dev = root.join("extension");
+        std::fs::create_dir_all(&bundled).expect("create bundled bridge dir");
+        std::fs::create_dir_all(&dev).expect("create development bridge dir");
+        std::fs::write(bundled.join("manifest.json"), "{}").expect("write bundled manifest");
+        std::fs::write(dev.join("manifest.json"), "{}").expect("write development manifest");
+
+        let resolved = resolve_bridge_extension_dir_from(Some(&resource_root), None, &dev)
+            .expect("resolve bundled bridge");
+
+        assert_eq!(resolved, bundled);
+        std::fs::remove_dir_all(root).expect("remove test directory");
+    }
+
+    #[test]
+    fn missing_bridge_has_an_actionable_error() {
+        let root = temp_root("bridge-missing");
+        let error = resolve_bridge_extension_dir_from(None, None, &root)
+            .expect_err("missing bridge should fail")
+            .to_string();
+
+        assert!(error.contains("disable BrProxies Bridge"));
+    }
 }

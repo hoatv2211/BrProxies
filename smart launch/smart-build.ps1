@@ -304,6 +304,86 @@ function Sync-ProxyPoolResources {
   }
 }
 
+function Sync-BridgeExtension {
+  param(
+    [string]$Source,
+    [string]$Destination
+  )
+
+  $required = @(
+    "manifest.json",
+    "background.js",
+    "codex-converter.js",
+    "codex-export.js",
+    "codex-oauth.js",
+    "codex-flow.html",
+    "codex-flow.css",
+    "codex-flow.js",
+    "popup.html",
+    "popup.css",
+    "popup.js"
+  )
+  foreach ($relative in $required) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Source $relative))) {
+      throw "BrProxies Bridge source file is missing: $relative"
+    }
+  }
+
+  $destinationFiles = @()
+  if (Test-Path -LiteralPath $Destination) {
+    $destinationRoot = (Resolve-Path -LiteralPath $Destination).Path
+    $destinationFiles = @(Get-ChildItem -LiteralPath $Destination -File -Recurse | ForEach-Object {
+      [pscustomobject]@{
+        FullName = $_.FullName
+        Relative = [IO.Path]::GetRelativePath($destinationRoot, $_.FullName).Replace("\", "/")
+      }
+    })
+  }
+  $unexpectedFiles = @($destinationFiles | Where-Object { $required -notcontains $_.Relative })
+  $destinationReady = $unexpectedFiles.Count -eq 0
+  foreach ($relative in $required) {
+    $sourceFile = Join-Path $Source $relative
+    $destinationFile = Join-Path $Destination $relative
+    if (-not (Test-Path -LiteralPath $destinationFile) -or
+        (Get-FileHash -LiteralPath $sourceFile).Hash -ne
+        (Get-FileHash -LiteralPath $destinationFile).Hash) {
+      $destinationReady = $false
+      break
+    }
+  }
+  if ($destinationReady) {
+    Write-Host "Skipping BrProxies Bridge resources; files unchanged."
+    return
+  }
+
+  Write-Host "Staging BrProxies Bridge resources..."
+  New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  foreach ($file in $unexpectedFiles) {
+    Remove-Item -LiteralPath $file.FullName -Force
+  }
+  foreach ($relative in $required) {
+    Copy-Item -LiteralPath (Join-Path $Source $relative) -Destination (Join-Path $Destination $relative) -Force
+  }
+
+  foreach ($relative in $required) {
+    $sourceFile = Join-Path $Source $relative
+    $destinationFile = Join-Path $Destination $relative
+    if (-not (Test-Path -LiteralPath $destinationFile) -or
+        (Get-FileHash -LiteralPath $sourceFile).Hash -ne
+        (Get-FileHash -LiteralPath $destinationFile).Hash) {
+      throw "BrProxies Bridge release file does not match after staging: $relative"
+    }
+  }
+
+  $stagedRoot = (Resolve-Path -LiteralPath $Destination).Path
+  $stagedFiles = @(Get-ChildItem -LiteralPath $Destination -File -Recurse | ForEach-Object {
+    [IO.Path]::GetRelativePath($stagedRoot, $_.FullName).Replace("\", "/")
+  })
+  if (@(Compare-Object ($required | Sort-Object) ($stagedFiles | Sort-Object)).Count -ne 0) {
+    throw "BrProxies Bridge release directory contains an unexpected file"
+  }
+}
+
 Require-Command "cargo" "Install Rust from https://rustup.rs/ then reopen terminal or VS Code."
 Require-Command "rustc" "Install Rust from https://rustup.rs/ then reopen terminal or VS Code."
 Require-Command "npm.cmd" "Install Node.js LTS, then reopen terminal or VS Code."
@@ -321,7 +401,7 @@ $androidPython = Join-Path $repoRoot "$androidVenv\Scripts\python.exe"
 $npmHash = Get-InputHash @("package.json", "package-lock.json")
 $androidDepsHash = Get-InputHash @("android_manager\pyproject.toml")
 $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
-$tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "scripts\prepare-account-keeper-worker.mjs", "scripts\prepare-proxypool-sidecar.ps1", "proxypool_service", "redis", "smart launch\build.bat", "smart launch\smart-build.ps1")
+$tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "extension", "scripts\prepare-account-keeper-worker.mjs", "scripts\prepare-proxypool-sidecar.ps1", "proxypool_service", "redis", "smart launch\build.bat", "smart launch\smart-build.ps1")
 
 $needNpm = $Full -or $Deps -or -not (Test-Path -LiteralPath "node_modules") -or ((Get-Cache "npm") -ne $npmHash)
 if ($needNpm) {
@@ -358,7 +438,7 @@ if ($needDesktop) {
   }
   Run-Step "Building desktop app..." "npm.cmd" @("run", "tauri", "build", "--", "--no-bundle")
   $frontendHash = Get-InputHash @("src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.node.json", "vite.config.ts")
-  $tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "scripts\prepare-account-keeper-worker.mjs", "scripts\prepare-proxypool-sidecar.ps1", "proxypool_service", "redis", "smart launch\build.bat", "smart launch\smart-build.ps1")
+  $tauriHash = Get-InputHash @("src-tauri\src", "src-tauri\build.rs", "src-tauri\Cargo.toml", "src-tauri\Cargo.lock", "src-tauri\tauri.conf.json", "src-tauri\tauri.windows.conf.json", "src-tauri\capabilities", "automation", "extension", "scripts\prepare-account-keeper-worker.mjs", "scripts\prepare-proxypool-sidecar.ps1", "proxypool_service", "redis", "smart launch\build.bat", "smart launch\smart-build.ps1")
   Set-Cache "frontend" $frontendHash
   Set-Cache "tauri" $tauriHash
 } else {
@@ -368,6 +448,7 @@ if ($needDesktop) {
 
 Sync-AccountKeeperResources -Source "src-tauri/resources/account-keeper" -Destination "src-tauri/target/release/account-keeper"
 Sync-ProxyPoolResources -Source "src-tauri/resources/proxypool" -Destination "src-tauri/target/release/proxypool"
+Sync-BridgeExtension -Source "extension" -Destination "src-tauri/target/release/bridge-extension"
 
 Write-Host ""
 Write-Host "Build complete."

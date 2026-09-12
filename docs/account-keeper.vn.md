@@ -503,3 +503,17 @@ phút trước khi tạo JSON. Nếu refresh lỗi, hãy reconnect profile thay 
 credential cũ. Token không được render trong UI và chỉ lưu trong local vault được
 bảo vệ. File JSON và clipboard là plaintext secret; hãy import sớm rồi bảo vệ hoặc
 xóa sau khi dùng.
+
+## Tool Chuyển Đổi Codex JSON Local
+
+Section **05 Codex JSON Converter** chuyển JSON account Codex hiện có giữa
+Cockpit và 9Router mà không cần kết nối profile. Chọn chiều chuyển đổi, sau đó
+dán JSON hoặc load file `.json` local. Tool nhận một object account, một mảng
+account thô, hoặc object có mảng `accounts`.
+
+Bấm **Convert JSON** để kiểm tra schema nguồn và chuẩn bị format đích, sau đó
+bấm **Download converted JSON**. Toàn bộ chuyển đổi chỉ diễn ra trong WebView
+hiện tại: không gọi Automation API, không cập nhật vault của Account Keeper,
+không lưu source vào app storage và không log token. Sau khi download thành
+công, source sẽ được xóa khỏi form. File JSON đã download vẫn chứa OAuth
+credential dạng plaintext và cần được bảo vệ phù hợp.

@@ -683,6 +683,115 @@ paths:
               schema: { $ref: "#/components/schemas/AccountKeeperDaemonStatus" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /account-keeper/profiles:
+    get:
+      tags: [Account Keeper]
+      summary: List verified managed profiles and Codex connection status
+      description: |
+        Returns redacted profile metadata only. Account identifiers are masked;
+        passwords, TOTP secrets, cookies, and OAuth tokens are never included.
+        This endpoint is intended for trusted local clients such as the bundled
+        Chrome extension.
+      responses:
+        "200":
+          description: Redacted verified Account Keeper profiles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ManagedProfile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /account-keeper/codex/export:
+    post:
+      tags: [Account Keeper]
+      summary: Export Codex credentials for 9Router or Cockpit
+      description: |
+        Reads selected Codex credentials from the DPAPI-protected Account Keeper
+        vault, refreshes credentials when possible, and returns the exact target
+        import objects. The response is secret-bearing plaintext and includes
+        `Cache-Control: no-store`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CodexExportRequest" }
+      responses:
+        "200":
+          description: Secret-bearing export. Do not log or persist unnecessarily.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodexExportResponse" }
+        "400":
+          description: Unsupported export format.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: No selected credential is exportable or reconnect is required.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /account-keeper/codex/oauth:
+    post:
+      tags: [Account Keeper]
+      summary: Start Codex OAuth for a verified profile
+      description: |
+        Creates a short-lived PKCE authorization operation and returns the
+        OpenAI authorization URL. A trusted local client opens this URL in the
+        selected BrProxies profile so the current signed-in web session can
+        authorize Codex without reading browser cookies or page tokens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CodexOAuthStartRequest" }
+      responses:
+        "200":
+          description: OAuth operation created. Open `authorize_url` in the current profile.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodexOAuthStartResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Profile is not verified, another operation is pending, or OAuth setup failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /account-keeper/codex/oauth/{operation_id}:
+    get:
+      tags: [Account Keeper]
+      summary: Read a redacted Codex OAuth operation status
+      parameters:
+        - name: operation_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Redacted status only; OAuth credentials are never returned here.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CodexOAuthStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Operation was not found or expired.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /account-keeper/jobs:
     get:
       tags: [Account Keeper]
@@ -937,6 +1046,92 @@ components:
         queued: { type: integer, minimum: 0 }
         active_job_id: { type: string, format: uuid, nullable: true }
 
+    ManagedProfileCodexAuth:
+      type: object
+      required: [status, has_account_id]
+      properties:
+        status:
+          type: string
+          enum: [missing, ready, reconnect_required]
+        expires_at: { type: string, nullable: true }
+        has_account_id: { type: boolean }
+
+    ManagedProfile:
+      type: object
+      required: [profile_id, masked_account, status, rotated, running, codex_auth]
+      properties:
+        profile_id: { type: string, format: uuid }
+        masked_account: { type: string, example: "o***r@example.test" }
+        status: { type: string, enum: [success] }
+        rotated: { type: boolean }
+        last_verified_at: { type: string, nullable: true }
+        running: { type: boolean }
+        codex_auth: { $ref: "#/components/schemas/ManagedProfileCodexAuth" }
+
+    CodexOAuthStartRequest:
+      type: object
+      additionalProperties: false
+      required: [profileId]
+      properties:
+        profileId: { type: string, format: uuid }
+
+    CodexOAuthStartResponse:
+      type: object
+      additionalProperties: false
+      required: [operation_id, authorize_url, expires_in_seconds]
+      properties:
+        operation_id: { type: string, format: uuid }
+        authorize_url:
+          type: string
+          format: uri
+          description: OpenAI authorization URL using a loopback PKCE callback.
+        expires_in_seconds: { type: integer, minimum: 1, example: 300 }
+
+    CodexOAuthStatus:
+      type: object
+      additionalProperties: false
+      required: [operation_id, profile_id, status]
+      properties:
+        operation_id: { type: string, format: uuid }
+        profile_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, ready, failed] }
+        auth:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/ManagedProfileCodexAuth" }]
+        error_code:
+          type: string
+          nullable: true
+          enum: [codex_oauth_failed]
+
+    CodexExportRequest:
+      type: object
+      additionalProperties: false
+      required: [profileIds, format]
+      properties:
+        profileIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        format:
+          type: string
+          enum: [nine_router, cockpit]
+
+    CodexExportResponse:
+      type: object
+      description: Secret-bearing response whose account shape depends on `format`.
+      required: [format, accounts, exportedCount, skippedCount, refreshedCount]
+      properties:
+        format: { type: string, enum: [nine_router, cockpit] }
+        accounts:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        exportedCount: { type: integer, minimum: 1 }
+        skippedCount: { type: integer, minimum: 0 }
+        refreshedCount: { type: integer, minimum: 0 }
+
     CreateAccountKeeperDaemonJob:
       type: object
       additionalProperties: false
@@ -1103,6 +1298,10 @@ components:
       properties:
         name: { type: string }
         notes: { type: string }
+        bridge_enabled:
+          type: boolean
+          default: false
+          description: Auto-load the bundled BrProxies Bridge on interactive launches.
         proxy_id:
           type: string
           description: Bind a proxy already in the store (by id).
@@ -1130,6 +1329,9 @@ components:
       properties:
         name: { type: string }
         notes: { type: string }
+        bridge_enabled:
+          type: boolean
+          description: Enable or disable auto-loading the bundled BrProxies Bridge.
         folder: { type: string, description: '"" unfiles (moves to All).' }
         proxy_id: { type: string, description: '"" unbinds the proxy.' }
         proxy:
@@ -1200,6 +1402,9 @@ components:
             pinned: { type: boolean }
             folder: { type: string }
             temporary: { type: boolean }
+            bridge_enabled:
+              type: boolean
+              description: Whether interactive launches auto-load the bundled BrProxies Bridge.
         running: { type: boolean }
         cdp:
           nullable: true

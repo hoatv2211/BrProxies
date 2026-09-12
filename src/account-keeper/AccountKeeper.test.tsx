@@ -106,6 +106,14 @@ describe("AccountKeeper", () => {
     window.history.pushState({}, "", "/");
     delete document.documentElement.dataset.accountKeeperQaConfig;
     delete document.documentElement.dataset.accountKeeperQaStatus;
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:synthetic-converter-download"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
     mocks.listen.mockResolvedValue(mocks.unlisten);
     mocks.invoke.mockImplementation(defaultInvoke);
   });
@@ -728,6 +736,73 @@ describe("AccountKeeper", () => {
       "account_keeper_delete_profile",
       { request: { profileId: "profile-1" } },
     ));
+  });
+
+  it("converts pasted Cockpit JSON locally, downloads it, and clears the source", async () => {
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const confirm = vi.fn().mockResolvedValue(true);
+    render(<AccountKeeper confirm={confirm} />);
+    await screen.findByRole("heading", { name: "Codex JSON Converter" });
+
+    const input = screen.getByLabelText("Codex JSON input");
+    fireEvent.change(input, {
+      target: {
+        value: JSON.stringify({
+          access_token: "synthetic-access-token",
+          refresh_token: "synthetic-refresh-token",
+          id_token: "synthetic-id-token",
+          account_id: "account-synthetic-001",
+          last_refresh: "2026-09-12T00:00:00.000Z",
+          expired: "2026-09-12T01:00:00.000Z",
+          email: "owner@example.test",
+        }),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Convert JSON" }));
+
+    expect(await screen.findByText("1 account ready for 9Router.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download converted JSON" }));
+
+    await waitFor(() => expect(anchorClick).toHaveBeenCalledOnce());
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Download plaintext Codex credentials",
+    }));
+    expect(URL.createObjectURL).toHaveBeenCalledOnce();
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(await screen.findByText(/Source JSON cleared from this form/)).toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.some(([command]) => String(command).includes("converter"))).toBe(false);
+    anchorClick.mockRestore();
+  });
+
+  it("loads a 9Router JSON file locally and reports schema errors without backend calls", async () => {
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+    await screen.findByRole("heading", { name: "Codex JSON Converter" });
+
+    fireEvent.click(screen.getByRole("button", { name: "9Router to Cockpit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load file" }));
+    const json = JSON.stringify({
+      accounts: [{
+        accessToken: "synthetic-access-token",
+        refreshToken: "synthetic-refresh-token",
+        idToken: "synthetic-id-token",
+        expiresAt: "2026-09-12T01:00:00.000Z",
+        lastRefreshAt: "2026-09-12T00:00:00.000Z",
+        email: "owner@example.test",
+        providerSpecificData: { chatgptAccountId: "account-synthetic-001" },
+      }],
+    });
+    const file = new File([json], "synthetic-9router.json", { type: "application/json" });
+    Object.defineProperty(file, "text", { value: vi.fn().mockResolvedValue(json) });
+    fireEvent.change(screen.getByLabelText("Codex JSON file"), { target: { files: [file] } });
+
+    expect(await screen.findByText("JSON file loaded locally. Convert when ready.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Convert JSON" }));
+    expect(await screen.findByText("1 account ready for Cockpit.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cockpit to 9Router" }));
+    fireEvent.click(screen.getByRole("button", { name: "Convert JSON" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("expected cockpit format");
+    expect(mocks.invoke.mock.calls.some(([command]) => String(command).includes("converter"))).toBe(false);
   });
 
   it("accepts synthetic QA configuration only through the dev bridge", async () => {

@@ -10,7 +10,7 @@ use crate::proxypool::ProxySelection;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -817,6 +817,51 @@ pub struct ManagedProfileCodexAuth {
     pub status: String,
     pub expires_at: Option<String>,
     pub has_account_id: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexOAuthStartResult {
+    pub operation_id: String,
+    pub authorize_url: String,
+    pub expires_in_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexOAuthStatusView {
+    pub operation_id: String,
+    pub profile_id: String,
+    pub status: String,
+    pub auth: Option<ManagedProfileCodexAuth>,
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CodexOAuthOperation {
+    profile_id: String,
+    status: String,
+    auth: Option<ManagedProfileCodexAuth>,
+    error_code: Option<String>,
+    created_at: Instant,
+}
+
+const CODEX_OAUTH_OPERATION_TTL: Duration = Duration::from_secs(15 * 60);
+
+fn codex_oauth_operations() -> &'static Mutex<HashMap<String, CodexOAuthOperation>> {
+    static OPERATIONS: OnceLock<Mutex<HashMap<String, CodexOAuthOperation>>> = OnceLock::new();
+    OPERATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn codex_oauth_status_view(
+    operation_id: &str,
+    operation: &CodexOAuthOperation,
+) -> CodexOAuthStatusView {
+    CodexOAuthStatusView {
+        operation_id: operation_id.to_string(),
+        profile_id: operation.profile_id.clone(),
+        status: operation.status.clone(),
+        auth: operation.auth.clone(),
+        error_code: operation.error_code.clone(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2009,7 +2054,9 @@ async fn verify_headless_password(
                         .await?;
                 }
                 Some(WorkerEvent::Verified) => return Ok(()),
-                Some(WorkerEvent::OAuthOpened) => bail!("Account Keeper recovery worker entered OAuth mode"),
+                Some(WorkerEvent::OAuthOpened) => {
+                    bail!("Account Keeper recovery worker entered OAuth mode")
+                }
                 Some(WorkerEvent::ManualRequired { .. }) => {
                     let _ = session.send(WorkerCommand::Cancel).await;
                     bail!("Account Keeper credential recovery requires manual action");
@@ -2080,38 +2127,160 @@ pub fn account_keeper_list_profiles() -> std::result::Result<Vec<ManagedProfileV
 pub async fn account_keeper_connect_codex(
     request: OpenProfileRequest,
 ) -> std::result::Result<ManagedProfileCodexAuth, String> {
-    connect_codex(request).await.map_err(|_| "codex_oauth_failed".to_string())
+    connect_codex(request)
+        .await
+        .map_err(|_| "codex_oauth_failed".to_string())
 }
 
 async fn connect_codex(request: OpenProfileRequest) -> Result<ManagedProfileCodexAuth> {
     ensure_account_keeper_supported()?;
     let mut vault = crate::account_keeper_store::load_vault()?;
-    let account = vault.accounts.iter().find(|account| {
-        account.profile_id == request.profile_id && is_verified_managed_account(account)
-    }).cloned().ok_or_else(|| anyhow::anyhow!("codex_oauth_failed"))?;
+    let account = vault
+        .accounts
+        .iter()
+        .find(|account| {
+            account.profile_id == request.profile_id && is_verified_managed_account(account)
+        })
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("codex_oauth_failed"))?;
     let (listener, port) = crate::account_keeper_codex::bind_callback().await?;
     let pending = crate::account_keeper_codex::create_pending_oauth(port)?;
     let runtime = HeadlessProfileRuntime;
     let cdp_endpoint = prepare_profile_cdp(&runtime, &request.profile_id).await?;
-    let transport = NodeWorkerTransport { resource_root: headless_worker_resource_root() };
-    let mut session = transport.spawn(WorkerStart {
-        request_id: uuid::Uuid::new_v4().to_string(),
-        operation: "codex_oauth".to_string(),
-        adapter_id: "openai-chatgpt-v1".to_string(),
-        cdp_endpoint,
-        account: String::new(), current_password: String::new(), new_password: String::new(), new_email: String::new(),
-        oauth_url: Some(pending.authorize_url.to_string()),
-    }).await?;
+    let transport = NodeWorkerTransport {
+        resource_root: headless_worker_resource_root(),
+    };
+    let mut session = transport
+        .spawn(WorkerStart {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            operation: "codex_oauth".to_string(),
+            adapter_id: "openai-chatgpt-v1".to_string(),
+            cdp_endpoint,
+            account: String::new(),
+            current_password: String::new(),
+            new_password: String::new(),
+            new_email: String::new(),
+            oauth_url: Some(pending.authorize_url.to_string()),
+        })
+        .await?;
     match tokio::time::timeout(Duration::from_secs(30), session.next_event()).await {
         Ok(Ok(Some(WorkerEvent::OAuthOpened))) => {}
         _ => bail!("codex_oauth_failed"),
     }
     let callback = crate::account_keeper_codex::wait_for_callback(listener, &pending.state).await?;
-    let (email, credential) = crate::account_keeper_codex::exchange_code(&pending, &callback.code).await?;
+    let (email, credential) =
+        crate::account_keeper_codex::exchange_code(&pending, &callback.code).await?;
     let auth = persist_codex_credential(&mut vault, &account, &email, credential)?;
     crate::account_keeper_store::save_vault(&vault)?;
     let _ = session.finish().await;
     Ok(auth)
+}
+
+pub(crate) async fn start_codex_oauth_browser_session(
+    request: OpenProfileRequest,
+) -> Result<CodexOAuthStartResult> {
+    ensure_account_keeper_supported()?;
+    let vault = crate::account_keeper_store::load_vault()?;
+    if !vault.accounts.iter().any(|account| {
+        account.profile_id == request.profile_id && is_verified_managed_account(account)
+    }) {
+        bail!("codex_profile_not_verified");
+    }
+
+    {
+        let mut operations = codex_oauth_operations().lock().await;
+        operations
+            .retain(|_, operation| operation.created_at.elapsed() < CODEX_OAUTH_OPERATION_TTL);
+        if operations.values().any(|operation| {
+            operation.profile_id == request.profile_id && operation.status == "pending"
+        }) {
+            bail!("codex_oauth_in_progress");
+        }
+    }
+
+    let (listener, port) = crate::account_keeper_codex::bind_callback()
+        .await
+        .map_err(|_| anyhow::anyhow!("codex_oauth_failed"))?;
+    let pending = crate::account_keeper_codex::create_pending_oauth(port)
+        .map_err(|_| anyhow::anyhow!("codex_oauth_failed"))?;
+    let operation_id = uuid::Uuid::new_v4().to_string();
+    let result = CodexOAuthStartResult {
+        operation_id: operation_id.clone(),
+        authorize_url: pending.authorize_url.to_string(),
+        expires_in_seconds: 300,
+    };
+
+    {
+        let mut operations = codex_oauth_operations().lock().await;
+        operations
+            .retain(|_, operation| operation.created_at.elapsed() < CODEX_OAUTH_OPERATION_TTL);
+        if operations.values().any(|operation| {
+            operation.profile_id == request.profile_id && operation.status == "pending"
+        }) {
+            bail!("codex_oauth_in_progress");
+        }
+        operations.insert(
+            operation_id.clone(),
+            CodexOAuthOperation {
+                profile_id: request.profile_id.clone(),
+                status: "pending".to_string(),
+                auth: None,
+                error_code: None,
+                created_at: Instant::now(),
+            },
+        );
+    }
+
+    tokio::spawn(async move {
+        let outcome = async {
+            let callback =
+                crate::account_keeper_codex::wait_for_callback(listener, &pending.state).await?;
+            let (email, credential) =
+                crate::account_keeper_codex::exchange_code(&pending, &callback.code).await?;
+            let mut vault = crate::account_keeper_store::load_vault()?;
+            let account = vault
+                .accounts
+                .iter()
+                .find(|account| {
+                    account.profile_id == request.profile_id && is_verified_managed_account(account)
+                })
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("codex_oauth_failed"))?;
+            let auth = persist_codex_credential(&mut vault, &account, &email, credential)?;
+            crate::account_keeper_store::save_vault(&vault)?;
+            Ok::<ManagedProfileCodexAuth, anyhow::Error>(auth)
+        }
+        .await;
+
+        let mut operations = codex_oauth_operations().lock().await;
+        if let Some(operation) = operations.get_mut(&operation_id) {
+            match outcome {
+                Ok(auth) => {
+                    operation.status = "ready".to_string();
+                    operation.auth = Some(auth);
+                    operation.error_code = None;
+                }
+                Err(_) => {
+                    operation.status = "failed".to_string();
+                    operation.auth = None;
+                    operation.error_code = Some("codex_oauth_failed".to_string());
+                }
+            }
+        }
+    });
+
+    Ok(result)
+}
+
+pub(crate) async fn codex_oauth_browser_session_status(
+    operation_id: &str,
+) -> Result<CodexOAuthStatusView> {
+    let mut operations = codex_oauth_operations().lock().await;
+    operations.retain(|_, operation| operation.created_at.elapsed() < CODEX_OAUTH_OPERATION_TTL);
+    let operation = operations
+        .get(operation_id)
+        .ok_or_else(|| anyhow::anyhow!("codex_oauth_operation_not_found"))?;
+    Ok(codex_oauth_status_view(operation_id, operation))
 }
 
 fn persist_codex_credential(
@@ -2128,55 +2297,105 @@ fn persist_codex_credential(
         expires_at: Some(credential.expires_at.clone()),
         has_account_id: !credential.account_id.is_empty(),
     };
-    vault.codex_oauth.insert(account.account_key.clone(), credential);
+    vault
+        .codex_oauth
+        .insert(account.account_key.clone(), credential);
     Ok(auth)
 }
 
-async fn codex_export_json(request: &CodexExportRequest) -> Result<(String, CodexExportResult)> {
+pub(crate) async fn account_keeper_codex_export_accounts(
+    request: &CodexExportRequest,
+) -> Result<(Vec<serde_json::Value>, CodexExportResult)> {
     let mut vault = crate::account_keeper_store::load_vault()?;
     let now = crate::account_keeper_codex::now_rfc3339();
     let mut selected = Vec::new();
     let mut refreshed_count = 0;
     let requested = request.profile_ids.iter().collect::<HashSet<_>>();
     for account in &vault.accounts {
-        if !requested.is_empty() && !requested.contains(&account.profile_id) { continue; }
-        if !is_verified_managed_account(account) { continue; }
-        let Some(mut credential) = vault.codex_oauth.get(&account.account_key).cloned() else { continue; };
+        if !requested.is_empty() && !requested.contains(&account.profile_id) {
+            continue;
+        }
+        if !is_verified_managed_account(account) {
+            continue;
+        }
+        let Some(mut credential) = vault.codex_oauth.get(&account.account_key).cloned() else {
+            continue;
+        };
         if crate::account_keeper_codex::needs_refresh(&credential.expires_at, &now) {
-            let (email, refreshed) = crate::account_keeper_codex::refresh_credential(&credential).await
+            let (email, refreshed) = crate::account_keeper_codex::refresh_credential(&credential)
+                .await
                 .map_err(|_| anyhow::anyhow!("codex_reconnect_required"))?;
-            if normalize_account(&email) != normalize_account(&account.account) { bail!("codex_reconnect_required"); }
+            if normalize_account(&email) != normalize_account(&account.account) {
+                bail!("codex_reconnect_required");
+            }
             credential = refreshed;
-            vault.codex_oauth.insert(account.account_key.clone(), credential.clone());
+            vault
+                .codex_oauth
+                .insert(account.account_key.clone(), credential.clone());
             refreshed_count += 1;
         }
         selected.push((account.account.clone(), credential));
     }
-    if selected.is_empty() { bail!("codex_reconnect_required"); }
-    if refreshed_count > 0 { crate::account_keeper_store::save_vault(&vault)?; }
-    let refs = selected.iter().map(|(email, credential)| (email.as_str(), credential)).collect::<Vec<_>>();
-    let value = match request.format.as_str() {
+    if selected.is_empty() {
+        bail!("codex_reconnect_required");
+    }
+    if refreshed_count > 0 {
+        crate::account_keeper_store::save_vault(&vault)?;
+    }
+    let refs = selected
+        .iter()
+        .map(|(email, credential)| (email.as_str(), credential))
+        .collect::<Vec<_>>();
+    let accounts = match request.format.as_str() {
         "nine_router" => crate::account_keeper_codex::nine_router_accounts(&refs),
         "cockpit" => crate::account_keeper_codex::cockpit_accounts(&refs),
         _ => bail!("invalid Codex export format"),
     };
-    let json = serde_json::to_string_pretty(&value)?;
-    let requested_count = if request.profile_ids.is_empty() { vault.accounts.len() } else { request.profile_ids.len() };
-    Ok((json, CodexExportResult { exported_count: selected.len(), skipped_count: requested_count.saturating_sub(selected.len()), refreshed_count }))
+    let requested_count = if request.profile_ids.is_empty() {
+        vault.accounts.len()
+    } else {
+        request.profile_ids.len()
+    };
+    Ok((
+        accounts,
+        CodexExportResult {
+            exported_count: selected.len(),
+            skipped_count: requested_count.saturating_sub(selected.len()),
+            refreshed_count,
+        },
+    ))
+}
+
+async fn codex_export_json(request: &CodexExportRequest) -> Result<(String, CodexExportResult)> {
+    let (accounts, result) = account_keeper_codex_export_accounts(request).await?;
+    let json = serde_json::to_string_pretty(&accounts)?;
+    Ok((json, result))
 }
 
 #[tauri::command]
-pub async fn account_keeper_copy_codex_export(app: tauri::AppHandle, request: CodexExportRequest) -> std::result::Result<CodexExportResult, String> {
+pub async fn account_keeper_copy_codex_export(
+    app: tauri::AppHandle,
+    request: CodexExportRequest,
+) -> std::result::Result<CodexExportResult, String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
-    let (json, result) = codex_export_json(&request).await.map_err(|error| error.to_string())?;
-    app.clipboard().write_text(json).map_err(|error| error.to_string())?;
+    let (json, result) = codex_export_json(&request)
+        .await
+        .map_err(|error| error.to_string())?;
+    app.clipboard()
+        .write_text(json)
+        .map_err(|error| error.to_string())?;
     Ok(result)
 }
 
 #[tauri::command]
-pub async fn account_keeper_save_codex_export(request: CodexSaveExportRequest) -> std::result::Result<CodexExportResult, String> {
-    let (json, result) = codex_export_json(&request.export).await.map_err(|error| error.to_string())?;
-    crate::store::atomic_write_bytes(Path::new(&request.output_path), json.as_bytes()).map_err(|error| error.to_string())?;
+pub async fn account_keeper_save_codex_export(
+    request: CodexSaveExportRequest,
+) -> std::result::Result<CodexExportResult, String> {
+    let (json, result) = codex_export_json(&request.export)
+        .await
+        .map_err(|error| error.to_string())?;
+    crate::store::atomic_write_bytes(Path::new(&request.output_path), json.as_bytes())
+        .map_err(|error| error.to_string())?;
     Ok(result)
 }
 
@@ -3028,8 +3247,7 @@ impl Coordinator {
             .is_err()
             {
                 let now = self.clock.now();
-                let outcome =
-                    pause_for_proxy_assignment_failure(checkpoint, account_index, &now);
+                let outcome = pause_for_proxy_assignment_failure(checkpoint, account_index, &now);
                 vault.accounts[vault_index].last_status = Some("queued".to_string());
                 persist_snapshot(checkpoint, vault, self.clock.as_ref(), self.events.as_ref())?;
                 return Ok(outcome);
@@ -4032,11 +4250,23 @@ fn managed_profile_views(vault: &VaultFile, running: &HashSet<String>) -> Vec<Ma
                 running: running.contains(&account.profile_id),
                 codex_auth: match vault.codex_oauth.get(&account.account_key) {
                     Some(credential) => ManagedProfileCodexAuth {
-                        status: if crate::account_keeper_codex::needs_refresh(&credential.expires_at, &crate::account_keeper_codex::now_rfc3339()) { "reconnect_required" } else { "ready" }.to_string(),
+                        status: if crate::account_keeper_codex::needs_refresh(
+                            &credential.expires_at,
+                            &crate::account_keeper_codex::now_rfc3339(),
+                        ) {
+                            "reconnect_required"
+                        } else {
+                            "ready"
+                        }
+                        .to_string(),
                         expires_at: Some(credential.expires_at.clone()),
                         has_account_id: !credential.account_id.is_empty(),
                     },
-                    None => ManagedProfileCodexAuth { status: "missing".to_string(), expires_at: None, has_account_id: false },
+                    None => ManagedProfileCodexAuth {
+                        status: "missing".to_string(),
+                        expires_at: None,
+                        has_account_id: false,
+                    },
                 },
             }
         })
@@ -4852,6 +5082,38 @@ mod tests {
     }
 
     #[test]
+    fn codex_oauth_status_is_redacted() {
+        let operation = CodexOAuthOperation {
+            profile_id: "profile-synthetic".into(),
+            status: "ready".into(),
+            auth: Some(ManagedProfileCodexAuth {
+                status: "ready".into(),
+                expires_at: Some("2026-09-12T12:00:00Z".into()),
+                has_account_id: true,
+            }),
+            error_code: None,
+            created_at: Instant::now(),
+        };
+
+        let serialized =
+            serde_json::to_string(&codex_oauth_status_view("operation-synthetic", &operation))
+                .unwrap()
+                .to_lowercase();
+
+        assert!(serialized.contains("operation-synthetic"));
+        assert!(serialized.contains("profile-synthetic"));
+        for forbidden in [
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "password",
+            "totp",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
     fn codex_credential_replacement_rejects_account_mismatch_without_overwrite() {
         let account = VaultAccount {
             account_key: "account-key".into(),
@@ -4876,18 +5138,18 @@ mod tests {
             expires_at: "2026-08-27T03:00:00Z".into(),
             expires_in: 864_000,
         };
-        vault.codex_oauth.insert(account.account_key.clone(), original.clone());
+        vault
+            .codex_oauth
+            .insert(account.account_key.clone(), original.clone());
         let replacement = crate::account_keeper_store::CodexOAuthCredential {
             access_token: "replacement-access".into(),
             ..original.clone()
         };
 
-        assert!(persist_codex_credential(
-            &mut vault,
-            &account,
-            "other@example.test",
-            replacement,
-        ).is_err());
+        assert!(
+            persist_codex_credential(&mut vault, &account, "other@example.test", replacement,)
+                .is_err()
+        );
         assert_eq!(vault.codex_oauth.get(&account.account_key), Some(&original));
     }
 
@@ -4906,16 +5168,19 @@ mod tests {
             last_status: Some("success".into()),
         };
         let mut vault = VaultFile::single(account.clone());
-        vault.codex_oauth.insert(account.account_key.clone(), crate::account_keeper_store::CodexOAuthCredential {
-            access_token: "synthetic-access".into(),
-            refresh_token: "synthetic-refresh".into(),
-            id_token: "synthetic-id".into(),
-            account_id: "synthetic-account".into(),
-            plan_type: None,
-            last_refresh_at: "2026-08-17T03:00:00Z".into(),
-            expires_at: "2026-08-27T03:00:00Z".into(),
-            expires_in: 864_000,
-        });
+        vault.codex_oauth.insert(
+            account.account_key.clone(),
+            crate::account_keeper_store::CodexOAuthCredential {
+                access_token: "synthetic-access".into(),
+                refresh_token: "synthetic-refresh".into(),
+                id_token: "synthetic-id".into(),
+                account_id: "synthetic-account".into(),
+                plan_type: None,
+                last_refresh_at: "2026-08-17T03:00:00Z".into(),
+                expires_at: "2026-08-27T03:00:00Z".into(),
+                expires_in: 864_000,
+            },
+        );
 
         let removed = remove_managed_account(&mut vault, 0);
 
@@ -5293,11 +5558,8 @@ mod tests {
         checkpoint.accounts[0].state = "launching".to_string();
         checkpoint.accounts[0].assign_proxy = true;
 
-        let outcome = pause_for_proxy_assignment_failure(
-            &mut checkpoint,
-            0,
-            "2026-08-27T00:00:00Z",
-        );
+        let outcome =
+            pause_for_proxy_assignment_failure(&mut checkpoint, 0, "2026-08-27T00:00:00Z");
 
         assert_eq!(outcome, AccountOutcome::Paused);
         assert_eq!(checkpoint.status, "paused");

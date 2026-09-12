@@ -1,21 +1,42 @@
-const DEFAULT_API_URL = "http://127.0.0.1:40326";
+import { normalizeLoopbackApiUrl } from "./codex-export.js";
+import { connectAndExportCodex } from "./codex-oauth.js";
 
-function normalizeApiUrl(apiUrl) {
-  const url = new URL(apiUrl || DEFAULT_API_URL);
-  if (!/^https?:$/.test(url.protocol)) {
-    throw new Error("Pool API URL must use http or https");
-  }
-  url.pathname = url.pathname.replace(/\/$/, "");
-  url.search = "";
-  url.hash = "";
-  return url.toString().replace(/\/$/, "");
+const DEFAULT_POOL_API_URL = "http://127.0.0.1:40326";
+const DEFAULT_BRPROXIES_API_URL = "http://127.0.0.1:40325";
+
+function normalizePoolApiUrl(apiUrl) {
+  return normalizeLoopbackApiUrl(apiUrl, DEFAULT_POOL_API_URL);
 }
 
 async function fetchJson(apiUrl, path, options = {}) {
-  const base = normalizeApiUrl(apiUrl);
+  const base = normalizePoolApiUrl(apiUrl);
   const response = await fetch(`${base}${path}`, { cache: "no-store", ...options });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+async function fetchAuthorizedJson(apiUrl, token, path, options = {}) {
+  const base = normalizeLoopbackApiUrl(apiUrl, DEFAULT_BRPROXIES_API_URL);
+  const response = await fetch(`${base}${path}`, {
+    cache: "no-store",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {})
+    }
+  });
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (body?.error) message = body.error;
+    } catch {
+      // The auth middleware deliberately returns an empty 401 response.
+    }
+    throw new Error(message);
   }
   return response.json();
 }
@@ -55,7 +76,7 @@ async function loadPool(apiUrl, liveOnly = true) {
 }
 
 async function testLivePool(apiUrl) {
-  const normalized = normalizeApiUrl(apiUrl);
+  const normalized = normalizePoolApiUrl(apiUrl);
   await storageSet({ apiUrl: normalized });
   const job = await fetchJson(normalized, "/jobs/check", { method: "POST" });
   const { health, timedOut } = await waitForJob(normalized, job.job || "check");
@@ -91,6 +112,134 @@ function storageRemove(keys) {
       if (error) reject(new Error(error.message));
       else resolve();
     });
+  });
+}
+
+function sessionGet(keys) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.session.get(keys, (items) => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve(items);
+    });
+  });
+}
+
+function sessionSet(items) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.session.set(items, () => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve();
+    });
+  });
+}
+
+function sessionRemove(keys) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.session.remove(keys, () => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve();
+    });
+  });
+}
+
+async function resolveBrProxiesToken(candidate) {
+  const supplied = String(candidate || "").trim();
+  if (supplied) return supplied;
+  const stored = await sessionGet("brApiToken");
+  const token = String(stored.brApiToken || "").trim();
+  if (!token) {
+    throw new Error("Paste the Automation API Bearer token first");
+  }
+  return token;
+}
+
+async function connectCodexExport(apiUrl, candidateToken) {
+  const normalized = normalizeLoopbackApiUrl(apiUrl, DEFAULT_BRPROXIES_API_URL);
+  const suppliedToken = String(candidateToken || "").trim();
+  const token = await resolveBrProxiesToken(candidateToken);
+  const profiles = await fetchAuthorizedJson(
+    normalized,
+    token,
+    "/account-keeper/profiles"
+  );
+  if (suppliedToken) await sessionSet({ brApiToken: suppliedToken });
+  await storageSet({ brApiUrl: normalized });
+  return { apiUrl: normalized, profiles, hasToken: true };
+}
+
+async function exportCodexAccounts(message) {
+  const apiUrl = normalizeLoopbackApiUrl(message.apiUrl, DEFAULT_BRPROXIES_API_URL);
+  const suppliedToken = String(message.token || "").trim();
+  const token = await resolveBrProxiesToken(message.token);
+  const profileIds = Array.from(
+    new Set((Array.isArray(message.profileIds) ? message.profileIds : []).map(String).filter(Boolean))
+  );
+  if (profileIds.length === 0) {
+    throw new Error("Select at least one Codex profile");
+  }
+  if (!new Set(["nine_router", "cockpit"]).has(message.format)) {
+    throw new Error("Unsupported Codex export format");
+  }
+  const result = await fetchAuthorizedJson(apiUrl, token, "/account-keeper/codex/export", {
+    method: "POST",
+    body: JSON.stringify({ profileIds, format: message.format })
+  });
+  if (suppliedToken) await sessionSet({ brApiToken: suppliedToken });
+  return result;
+}
+
+function tabsCreate(details) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.create(details, (tab) => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve(tab);
+    });
+  });
+}
+
+function trustedCodexAuthorizeUrl(value) {
+  const url = new URL(String(value || ""));
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "auth.openai.com" ||
+    url.pathname !== "/oauth/authorize"
+  ) {
+    throw new Error("BrProxies returned an invalid Codex authorization URL");
+  }
+  return url.toString();
+}
+
+async function connectAndExportCodexAccounts(message) {
+  const apiUrl = normalizeLoopbackApiUrl(message.apiUrl, DEFAULT_BRPROXIES_API_URL);
+  const token = await resolveBrProxiesToken();
+  await storageSet({ brApiUrl: apiUrl });
+  return connectAndExportCodex({
+    profileIds: message.profileIds,
+    format: message.format,
+    listProfiles: () =>
+      fetchAuthorizedJson(apiUrl, token, "/account-keeper/profiles"),
+    startOAuth: (profileId) =>
+      fetchAuthorizedJson(apiUrl, token, "/account-keeper/codex/oauth", {
+        method: "POST",
+        body: JSON.stringify({ profileId })
+      }),
+    openAuthorization: (authorizeUrl) =>
+      tabsCreate({ url: trustedCodexAuthorizeUrl(authorizeUrl), active: true }),
+    readOAuth: (operationId) =>
+      fetchAuthorizedJson(
+        apiUrl,
+        token,
+        `/account-keeper/codex/oauth/${encodeURIComponent(operationId)}`
+      ),
+    exportAccounts: (profileIds, format) =>
+      fetchAuthorizedJson(apiUrl, token, "/account-keeper/codex/export", {
+        method: "POST",
+        body: JSON.stringify({ profileIds, format })
+      })
   });
 }
 
@@ -155,7 +304,7 @@ async function clearChromeProxy() {
 
 async function handleMessage(message) {
   if (message?.type === "connect") {
-    const apiUrl = normalizeApiUrl(message.apiUrl);
+    const apiUrl = normalizePoolApiUrl(message.apiUrl);
     await storageSet({ apiUrl });
     return loadPool(apiUrl, true);
   }
@@ -177,8 +326,25 @@ async function handleMessage(message) {
   if (message?.type === "clearProxy") {
     return clearChromeProxy();
   }
+  if (message?.type === "connectCodexExport") {
+    return connectCodexExport(message.apiUrl, message.token);
+  }
+  if (message?.type === "exportCodex") {
+    return exportCodexAccounts(message);
+  }
+  if (message?.type === "connectAndExportCodex") {
+    return connectAndExportCodexAccounts(message);
+  }
+  if (message?.type === "forgetCodexToken") {
+    await sessionRemove("brApiToken");
+    return { hasToken: false };
+  }
   if (message?.type === "getState") {
-    return storageGet(["apiUrl", "activeProxy"]);
+    const [local, session] = await Promise.all([
+      storageGet(["apiUrl", "activeProxy", "brApiUrl"]),
+      sessionGet("brApiToken")
+    ]);
+    return { ...local, hasBrApiToken: Boolean(session.brApiToken) };
   }
   throw new Error("Unknown message type");
 }

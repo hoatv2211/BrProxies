@@ -543,3 +543,17 @@ of expiry before producing JSON. If refresh fails, reconnect that profile instea
 of exporting stale credentials. Token values never render in the Account Keeper UI
 and are stored only in the protected local vault. Saved JSON files and clipboard
 contents are plaintext secrets; import them promptly and protect or delete them.
+
+## Local Codex JSON Converter
+
+Section **05 Codex JSON Converter** converts existing Codex account JSON between
+Cockpit and 9Router without connecting to a profile. Select the direction, then
+paste JSON or load a local `.json` file. The converter accepts one account
+object, a raw account array, or an object containing an `accounts` array.
+
+Click **Convert JSON** to validate the source schema and prepare the opposite
+format, then click **Download converted JSON**. Conversion happens only in the
+current app WebView: it does not call the Automation API, update the Account
+Keeper vault, write the source to app storage, or log token values. After a
+successful download, the source is cleared from the form. The downloaded JSON
+still contains plaintext OAuth credentials and must be protected accordingly.

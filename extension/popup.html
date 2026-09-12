@@ -3,39 +3,138 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>BrProxies ProxyPool</title>
+    <title>BrProxies Bridge</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
         <div>
+          <p class="eyebrow">Local browser bridge</p>
           <h1>BrProxies</h1>
-          <p id="statusText">Disconnected</p>
         </div>
-        <span id="countBadge" class="badge">0</span>
+        <span class="brand-mark" aria-hidden="true"></span>
       </header>
 
-      <label class="field">
-        <span>Pool API URL</span>
-        <input id="apiUrlInput" type="url" spellcheck="false" value="http://127.0.0.1:40326" />
-      </label>
+      <nav class="tabs" aria-label="Extension tools">
+        <button class="tab active" type="button" data-tab="codex">Codex Export</button>
+        <button class="tab" type="button" data-tab="converter">JSON Convert</button>
+        <button class="tab" type="button" data-tab="proxy">ProxyPool</button>
+      </nav>
 
-      <section class="actions">
-        <button id="connectButton" type="button">Connect</button>
-        <button id="testLiveButton" type="button">Test live</button>
-        <button id="rotateButton" type="button">Rotate</button>
-        <button id="directButton" type="button">Direct</button>
+      <section id="codexPanel" class="panel active" aria-labelledby="codexTitle">
+        <div class="panel-heading">
+          <div>
+            <p class="kicker">Account Keeper</p>
+            <h2 id="codexTitle">Connect &amp; export Codex</h2>
+          </div>
+          <span id="codexCountBadge" class="badge accent">0</span>
+        </div>
+
+        <label class="field">
+          <span>BrProxies API URL</span>
+          <input id="brApiUrlInput" type="url" spellcheck="false" value="http://127.0.0.1:40325" />
+        </label>
+
+        <label class="field">
+          <span>Automation API Bearer token</span>
+          <div class="secret-row">
+            <input id="brTokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste from BrProxies Settings" />
+            <button id="forgetTokenButton" class="ghost-button" type="button" title="Forget session token">Forget</button>
+          </div>
+        </label>
+
+        <p class="security-note">Missing or expired credentials are connected through OpenAI OAuth in this profile. The API token stays in this Chrome session; exported OAuth JSON is plaintext.</p>
+
+        <div class="codex-actions">
+          <button id="codexConnectButton" class="primary-button" type="button">Connect BrProxies</button>
+          <button id="selectAllButton" class="ghost-button" type="button">Select all</button>
+        </div>
+
+        <p id="codexStatusText" class="status-line">Not connected</p>
+        <div id="profileList" class="profile-list" role="list"></div>
+
+        <section class="export-dock" aria-label="Export options">
+          <label class="field compact">
+            <span>Target format</span>
+            <select id="formatSelect">
+              <option value="nine_router">9Router</option>
+              <option value="cockpit">Cockpit</option>
+            </select>
+          </label>
+          <button id="exportButton" class="export-button" type="button">Connect &amp; Export</button>
+        </section>
       </section>
 
-      <section class="active">
-        <span>Active</span>
-        <strong id="activeProxy">Direct</strong>
+      <section id="converterPanel" class="panel" aria-labelledby="converterTitle" hidden>
+        <div class="panel-heading">
+          <div>
+            <p class="kicker">Offline transformer</p>
+            <h2 id="converterTitle">Convert account JSON</h2>
+          </div>
+          <span class="badge direction-badge" aria-hidden="true">&lt;&gt;</span>
+        </div>
+
+        <label class="field">
+          <span>Conversion direction</span>
+          <select id="conversionDirectionSelect">
+            <option value="cockpit_to_nine_router">Cockpit to 9Router</option>
+            <option value="nine_router_to_cockpit">9Router to Cockpit</option>
+          </select>
+        </label>
+
+        <label class="file-drop" for="converterFileInput">
+          <strong>Choose a JSON file</strong>
+          <span id="converterFileName">or paste JSON below</span>
+          <input id="converterFileInput" type="file" accept="application/json,.json" />
+        </label>
+
+        <label class="field">
+          <span>Source JSON</span>
+          <textarea id="converterInput" rows="9" spellcheck="false" autocomplete="off" placeholder="Paste a Cockpit or 9Router account object/array"></textarea>
+        </label>
+
+        <p class="security-note local-note">Conversion runs only inside this popup. JSON is not sent to BrProxies, 9Router, Cockpit, or extension storage.</p>
+
+        <div class="converter-actions">
+          <button id="clearConverterButton" class="ghost-button" type="button">Clear</button>
+          <button id="convertButton" class="export-button" type="button">Convert &amp; download</button>
+        </div>
+        <p id="converterStatusText" class="status-line">Waiting for JSON</p>
       </section>
 
-      <p id="errorText" class="error" hidden></p>
-      <div id="proxyList" class="proxy-list" role="list"></div>
+      <section id="proxyPanel" class="panel" aria-labelledby="proxyTitle" hidden>
+        <div class="panel-heading">
+          <div>
+            <p class="kicker">Local pool</p>
+            <h2 id="proxyTitle">Chrome proxy</h2>
+          </div>
+          <span id="countBadge" class="badge">0</span>
+        </div>
+
+        <label class="field">
+          <span>Pool API URL</span>
+          <input id="apiUrlInput" type="url" spellcheck="false" value="http://127.0.0.1:40326" />
+        </label>
+
+        <section class="actions">
+          <button id="connectButton" type="button">Connect</button>
+          <button id="testLiveButton" type="button">Test live</button>
+          <button id="rotateButton" type="button">Rotate</button>
+          <button id="directButton" type="button">Direct</button>
+        </section>
+
+        <section class="active-proxy">
+          <span>Active</span>
+          <strong id="activeProxy">Direct</strong>
+        </section>
+        <p id="statusText" class="status-line">Disconnected</p>
+        <div id="proxyList" class="proxy-list" role="list"></div>
+      </section>
+
+      <p id="errorText" class="message error" hidden></p>
+      <p id="successText" class="message success" hidden></p>
     </main>
-    <script src="popup.js"></script>
+    <script type="module" src="popup.js"></script>
   </body>
 </html>

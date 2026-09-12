@@ -100,7 +100,8 @@
 .account-keeper .account-keeper__setup,
 .account-keeper .account-keeper__jobs,
 .account-keeper .account-keeper__progress,
-.account-keeper .account-keeper__profiles { padding: 18px; }
+.account-keeper .account-keeper__profiles,
+.account-keeper .account-keeper__converter { padding: 18px; }
 
 .account-keeper .account-keeper__panel-head {
   display: flex;
@@ -522,6 +523,81 @@
 
 .account-keeper .account-keeper__profiles { margin-top: 16px; }
 
+.account-keeper .account-keeper__converter { margin-top: 16px; }
+
+.account-keeper .account-keeper__converter-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(260px, .75fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.account-keeper .account-keeper__converter-directions { width: min(430px, 100%); }
+
+.account-keeper .account-keeper__converter-file-picker {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 72px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px dashed var(--bd-2);
+  border-radius: 9px;
+  background: var(--bg-1);
+}
+
+.account-keeper .account-keeper__converter-file-picker input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.account-keeper .account-keeper__converter-file-picker span {
+  overflow: hidden;
+  color: var(--tx-3);
+  font: 10.5px/1.4 "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-keeper .account-keeper__converter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.account-keeper .account-keeper__converter-safety {
+  display: grid;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid #f59e0b45;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #b4530918, transparent), var(--bg-1);
+}
+
+.account-keeper .account-keeper__converter-safety strong {
+  color: #fde68a;
+  font-size: 11.5px;
+}
+
+.account-keeper .account-keeper__converter-safety p {
+  margin: 0 0 7px;
+  color: var(--tx-3);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.account-keeper .account-keeper__converter-safety code {
+  color: var(--tx-2);
+  font-family: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+}
+
 .account-keeper .account-keeper__profile-list { display: grid; gap: 9px; }
 
 .account-keeper .account-keeper__profile {
@@ -568,6 +644,7 @@
 @media (max-width: 1120px) {
   .account-keeper .account-keeper__workspace { grid-template-columns: 1fr; }
   .account-keeper .account-keeper__jobs { order: -1; }
+  .account-keeper .account-keeper__converter-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {
@@ -593,4 +670,5 @@
   .account-keeper .account-keeper__progress-side { justify-items: stretch; }
   .account-keeper .account-keeper__profile { align-items: stretch; flex-direction: column; }
   .account-keeper .account-keeper__log { grid-template-columns: 1fr; }
+  .account-keeper .account-keeper__converter-file-picker { grid-template-columns: 1fr; }
 }

@@ -7,8 +7,8 @@ use axum::{
     body::Body,
     extract::{Path, Query, Request},
     http::{
-        header::{AUTHORIZATION, CONTENT_TYPE},
-        StatusCode,
+        header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE},
+        HeaderValue, StatusCode,
     },
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -131,8 +131,97 @@ async fn health() -> Json<Value> {
 }
 
 async fn account_keeper_daemon_status() -> ApiResult {
-    Ok(Json(serde_json::to_value(crate::account_keeper_daemon::status().await)
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?))
+    Ok(Json(
+        serde_json::to_value(crate::account_keeper_daemon::status().await)
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
+    ))
+}
+
+async fn account_keeper_list_managed_profiles() -> ApiResult {
+    let profiles = crate::account_keeper::account_keeper_list_profiles().map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "account_keeper_profiles_failed",
+        )
+    })?;
+    Ok(Json(serde_json::to_value(profiles).unwrap_or(Value::Null)))
+}
+
+fn account_keeper_codex_oauth_error(error: anyhow::Error) -> ApiError {
+    match error.to_string().as_str() {
+        "codex_profile_not_verified" => err(StatusCode::CONFLICT, "codex_profile_not_verified"),
+        "codex_oauth_in_progress" => err(StatusCode::CONFLICT, "codex_oauth_in_progress"),
+        "codex_oauth_operation_not_found" => {
+            err(StatusCode::NOT_FOUND, "codex_oauth_operation_not_found")
+        }
+        _ => err(StatusCode::CONFLICT, "codex_oauth_failed"),
+    }
+}
+
+async fn account_keeper_start_codex_oauth(
+    Json(request): Json<crate::account_keeper::OpenProfileRequest>,
+) -> Result<Response, ApiError> {
+    let result = crate::account_keeper::start_codex_oauth_browser_session(request)
+        .await
+        .map_err(account_keeper_codex_oauth_error)?;
+    let mut response = Json(serde_json::to_value(result).unwrap_or(Value::Null)).into_response();
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+async fn account_keeper_codex_oauth_status(
+    Path(operation_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let result = crate::account_keeper::codex_oauth_browser_session_status(&operation_id)
+        .await
+        .map_err(account_keeper_codex_oauth_error)?;
+    let mut response = Json(serde_json::to_value(result).unwrap_or(Value::Null)).into_response();
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+fn account_keeper_codex_export_error(error: anyhow::Error) -> ApiError {
+    match error.to_string().as_str() {
+        "invalid Codex export format" => {
+            err(StatusCode::BAD_REQUEST, "invalid_codex_export_format")
+        }
+        "codex_reconnect_required" => err(StatusCode::CONFLICT, "codex_reconnect_required"),
+        _ => err(StatusCode::INTERNAL_SERVER_ERROR, "codex_export_failed"),
+    }
+}
+
+async fn account_keeper_export_codex(
+    Json(request): Json<crate::account_keeper::CodexExportRequest>,
+) -> Result<Response, ApiError> {
+    if request.profile_ids.is_empty() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "codex_profile_selection_required",
+        ));
+    }
+    if !matches!(request.format.as_str(), "nine_router" | "cockpit") {
+        return Err(err(StatusCode::BAD_REQUEST, "invalid_codex_export_format"));
+    }
+    let format = request.format.clone();
+    let (accounts, result) = crate::account_keeper::account_keeper_codex_export_accounts(&request)
+        .await
+        .map_err(account_keeper_codex_export_error)?;
+    let mut response = Json(json!({
+        "format": format,
+        "accounts": accounts,
+        "exportedCount": result.exported_count,
+        "skippedCount": result.skipped_count,
+        "refreshedCount": result.refreshed_count,
+    }))
+    .into_response();
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
 }
 
 async fn account_keeper_create_job(
@@ -145,8 +234,10 @@ async fn account_keeper_create_job(
 }
 
 async fn account_keeper_list_daemon_jobs() -> ApiResult {
-    Ok(Json(serde_json::to_value(crate::account_keeper_daemon::list_jobs().await)
-        .unwrap_or(Value::Null)))
+    Ok(Json(
+        serde_json::to_value(crate::account_keeper_daemon::list_jobs().await)
+            .unwrap_or(Value::Null),
+    ))
 }
 
 async fn account_keeper_get_daemon_job(Path(id): Path<String>) -> ApiResult {
@@ -258,6 +349,7 @@ async fn new_fingerprint_impl(platform: Option<String>) -> ApiResult {
 struct CreateReq {
     name: Option<String>,
     notes: Option<String>,
+    bridge_enabled: Option<bool>,
     proxy_id: Option<String>,
     /// Proxy string: added to store + full-tested, bound by id.
     proxy: Option<String>,
@@ -282,6 +374,9 @@ async fn persist_created(folder_override: Option<String>, body: CreateReq) -> Ap
 
     let folder = folder_override.or(body.folder).unwrap_or_default();
     let mut meta = json!({ "id": "", "folder": folder });
+    if let Some(enabled) = body.bridge_enabled {
+        meta["bridge_enabled"] = json!(enabled);
+    }
     if let Some(pid) = body.proxy_id.as_ref() {
         meta["proxy_id"] = json!(pid);
     } else if let Some(pstr) = body.proxy.as_ref() {
@@ -373,6 +468,7 @@ async fn delete_profile(Path(id): Path<String>) -> ApiResult {
 struct EditReq {
     name: Option<String>,
     notes: Option<String>,
+    bridge_enabled: Option<bool>,
     /// "" unfiles.
     folder: Option<String>,
     /// "" unbinds.
@@ -401,6 +497,9 @@ async fn edit_profile(Path(id): Path<String>, Json(body): Json<EditReq>) -> ApiR
     }
     if let Some(n) = body.notes.as_ref() {
         stored.config.insert("notes".into(), json!(n));
+    }
+    if let Some(enabled) = body.bridge_enabled {
+        stored.meta.bridge_enabled = enabled;
     }
     if let Some(pid) = body.proxy_id.as_ref() {
         stored.meta.proxy_id = if pid.is_empty() {
@@ -742,10 +841,29 @@ pub async fn serve(secret: String, port: u16) {
         .route("/proxies/:id", delete(delete_proxy))
         .route("/account-keeper/daemon", get(account_keeper_daemon_status))
         .route(
+            "/account-keeper/profiles",
+            get(account_keeper_list_managed_profiles),
+        )
+        .route(
+            "/account-keeper/codex/export",
+            post(account_keeper_export_codex),
+        )
+        .route(
+            "/account-keeper/codex/oauth",
+            post(account_keeper_start_codex_oauth),
+        )
+        .route(
+            "/account-keeper/codex/oauth/:operation_id",
+            get(account_keeper_codex_oauth_status),
+        )
+        .route(
             "/account-keeper/jobs",
             get(account_keeper_list_daemon_jobs).post(account_keeper_create_job),
         )
-        .route("/account-keeper/jobs/:id", get(account_keeper_get_daemon_job))
+        .route(
+            "/account-keeper/jobs/:id",
+            get(account_keeper_get_daemon_job),
+        )
         .route(
             "/account-keeper/jobs/:id/continue",
             post(account_keeper_continue_daemon_job),
