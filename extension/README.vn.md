@@ -64,12 +64,25 @@ ProxyPool API mặc định chạy tại `http://127.0.0.1:40326`.
 
 ## Export JSON cho 9Router hoặc Cockpit
 
+### Chrome hiện tại: không cần dán token (0.3.1)
+
+Chạy BrProxies bản mới, bật Automation API. Trong Chrome thường, mở ChatGPT,
+bật **Use current ChatGPT session** rồi bấm **Connect & Export** trực tiếp.
+Không cần **Connect BrProxies**, không cần chọn profile hoặc dán Bearer token.
+Đối chiếu mã 8 ký tự trên trang extension với hộp xác nhận trong BrProxies rồi
+chọn Yes nếu đúng yêu cầu của bạn; tiếp tục xác nhận tài khoản ở trang OpenAI OAuth.
+Chế độ này bỏ qua các profile đang tick. Quyền chỉ dùng một lần cho OAuth/export,
+hết hạn sau 10 phút, không cấp quyền đọc profile/cookie. BrProxies vẫn phải chạy.
+Nếu từ chối hoặc bỏ dở, đợi tối đa 10 phút trước khi thử lại.
+Muốn export profile đã quản lý: tắt current-session và dùng luồng token dưới đây.
+
 1. Bấm biểu tượng **BrProxies Bridge** trên thanh extension.
 2. Chọn tab **Codex Export**.
 3. Giữ **BrProxies API URL** là `http://127.0.0.1:40325`.
 4. Dán **Automation API Bearer token**.
 5. Bấm **Connect BrProxies**.
-6. Chọn một hoặc nhiều profile. Profile chưa có hoặc hết hạn credential vẫn chọn được.
+6. Chọn một hoặc nhiều profile; hoặc để trống danh sách nếu muốn export trực tiếp
+   từ phiên ChatGPT hiện tại.
 7. Chọn định dạng **9Router** hoặc **Cockpit**.
 8. Bấm **Connect & Export**.
 9. Giữ bật **Use current ChatGPT session** nếu trong cùng cửa sổ Chrome đã có
@@ -77,8 +90,8 @@ ProxyPool API mặc định chạy tại `http://127.0.0.1:40326`.
    `chatgpt.com` hoặc `chat.openai.com`, sau đó mở OAuth chính thức của OpenAI
    trong cùng Chrome profile; extension không đọc cookie, local storage hoặc
    raw token của trình duyệt.
-10. Nếu tab OpenAI OAuth mở ra, xác nhận bằng tài khoản ChatGPT đang đăng nhập
-   và phải khớp với profile Account Keeper đã chọn.
+10. Nếu không chọn profile, tài khoản được xác định từ phiên OAuth hiện tại. Nếu
+   có chọn profile, tài khoản OAuth phải khớp profile Account Keeper đã chọn.
 11. Chờ trang tiến trình tải JSON xuống, rồi import file đó vào 9Router/Cockpit.
 
 Bearer token chỉ được giữ trong `chrome.storage.session` và mất khi session

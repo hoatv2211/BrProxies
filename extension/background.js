@@ -1,5 +1,5 @@
 import { normalizeLoopbackApiUrl } from "./codex-export.js";
-import { connectAndExportCodex } from "./codex-oauth.js";
+import { connectAndExportCodex, pairAndExportCurrentSession } from "./codex-oauth.js";
 import { requireActiveChatGPTTab } from "./codex-session.js";
 
 const DEFAULT_POOL_API_URL = "http://127.0.0.1:40326";
@@ -226,8 +226,25 @@ function trustedCodexAuthorizeUrl(value) {
 
 async function connectAndExportCodexAccounts(message) {
   const apiUrl = normalizeLoopbackApiUrl(message.apiUrl, DEFAULT_BRPROXIES_API_URL);
-  const token = await resolveBrProxiesToken();
   const useCurrentSession = message.useCurrentSession === true;
+  if (useCurrentSession) {
+    const tab = await requireActiveChatGPTTab((queryInfo) => tabsQuery(queryInfo));
+    if (tab.incognito) throw new Error("Use a regular Chrome window for pairing");
+    return pairAndExportCurrentSession({
+      nonce: message.pairingNonce,
+      format: message.format,
+      call: async (path, body) => {
+        const response = await fetch(`${apiUrl}${path}`, {
+          method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        if (!response.ok) throw new Error(response.status === 429 ? "pairing_busy" : "pairing_unavailable");
+        return response.json();
+      },
+      openAuthorization: (url) => tabsCreate({url: trustedCodexAuthorizeUrl(url), windowId: tab.windowId, active: true})
+    });
+  }
+  const token = await resolveBrProxiesToken();
   let currentSessionChecked = false;
   await storageSet({ brApiUrl: apiUrl });
   return connectAndExportCodex({

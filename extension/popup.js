@@ -77,7 +77,7 @@ function setBusy(isBusy) {
   for (const button of busyButtons) button.disabled = isBusy;
   if (!isBusy) {
     const hasManagedProfile = managedProfiles.length > 0;
-    els.exportButton.disabled = !hasManagedProfile;
+    els.exportButton.disabled = !hasManagedProfile && !els.useCurrentChatGptSession.checked;
     els.selectAllButton.disabled = !hasManagedProfile;
   }
 }
@@ -138,7 +138,7 @@ function codexStatusLabel(profile) {
 function renderProfiles() {
   els.profileList.textContent = "";
   els.codexCountBadge.textContent = String(managedProfiles.length);
-  els.exportButton.disabled = managedProfiles.length === 0;
+  els.exportButton.disabled = managedProfiles.length === 0 && !els.useCurrentChatGptSession.checked;
 
   if (managedProfiles.length === 0) {
     const empty = document.createElement("p");
@@ -228,13 +228,13 @@ function selectAllProfiles() {
 }
 
 function exportCodexJson() {
-  const profileIds = selectedProfileIds();
-  if (profileIds.length === 0) {
+  const profileIds = els.useCurrentChatGptSession.checked ? [] : selectedProfileIds();
+  if (profileIds.length === 0 && !els.useCurrentChatGptSession.checked) {
     setError(new Error("Select at least one Codex profile"));
     return;
   }
   const sessionMessage = els.useCurrentChatGptSession.checked
-    ? "A ChatGPT tab in this Chrome window must be signed in to the matching account. BrProxies will reuse that Chrome session through official OpenAI OAuth without reading cookies or tokens."
+    ? "No API token needed. Approve the matching pairing code in BrProxies, then authorize your account in Chrome. Selected managed profiles are ignored in this mode."
     : "BrProxies will open an official OpenAI OAuth tab. The downloaded JSON contains plaintext OAuth tokens. Continue?";
   if (!window.confirm(`${sessionMessage} The downloaded JSON contains plaintext OAuth tokens. Continue?`)) return;
 
@@ -489,6 +489,7 @@ els.codexConnectButton.addEventListener("click", connectCodexExport);
 els.forgetTokenButton.addEventListener("click", forgetCodexToken);
 els.selectAllButton.addEventListener("click", selectAllProfiles);
 els.exportButton.addEventListener("click", exportCodexJson);
+els.useCurrentChatGptSession.addEventListener("change", () => setBusy(false));
 els.converterFileInput.addEventListener("change", loadConverterFile);
 els.clearConverterButton.addEventListener("click", clearConverterInput);
 els.convertButton.addEventListener("click", convertAccountJson);

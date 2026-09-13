@@ -36,23 +36,35 @@ unpacked Chrome extension.
 
 ## Export Codex JSON
 
+### Chrome current-session pairing (0.3.1)
+
+Run the updated BrProxies app with Automation API enabled. In any regular Chrome
+window, open ChatGPT, enable **Use current ChatGPT session**, and press
+**Connect & Export** directly. No Bearer token or Connect BrProxies step is needed.
+Compare the eight-character code on the extension flow page with the native
+BrProxies approval dialog; approve only your own request. Then approve your
+account on the OpenAI OAuth page. This mode ignores managed profile selections.
+The one-shot permission expires after 10 minutes and cannot read profiles/cookies.
+BrProxies must remain running; this is not standalone offline OAuth.
+If pairing is denied or abandoned, wait up to 10 minutes before retrying.
+For managed-profile export, turn current-session mode off and use the token flow below.
+
 1. In BrProxies, enable **Settings > Automation API** and restart the app if
    the setting changed.
 2. Copy the **Bearer token** from the same Settings card.
-3. Verify the account in **Account Keeper** and open its mapped BrProxies profile.
-4. Sign in to the matching ChatGPT account in that profile.
-5. Open the extension, select **Codex Export**, paste the Bearer token, and
+3. Open the extension, select **Codex Export**, paste the Bearer token, and
    click **Connect BrProxies**.
-6. Select one or more profiles, choose **9Router** or **Cockpit**, and click
+4. Select one or more profiles, or leave the list unselected when using the
+   current ChatGPT session, choose **9Router** or **Cockpit**, and click
    **Connect & Export**.
-7. Leave **Use current ChatGPT session** enabled when the same Chrome window
+5. Leave **Use current ChatGPT session** enabled when the same Chrome window
    already has the matching ChatGPT account signed in. The extension checks for
    a `chatgpt.com` or `chat.openai.com` tab, then opens the official OpenAI OAuth
    page in that Chrome profile. It does not read cookies, local storage, or raw
    browser tokens.
-8. If an OpenAI authorization tab opens, approve access with the account that
-   matches the selected Account Keeper profile. The JSON downloads after OAuth
-   completes. Profiles with a ready credential skip the OAuth step.
+6. If an OpenAI authorization tab opens, approve access. With no profile selected,
+   the returned account is exported directly from this browser session; with
+   profiles selected, the account must match the selected verified profile.
 
 The extension calls only the loopback Automation API at
 `http://127.0.0.1:40325` or `http://localhost:40325`. The Bearer token is kept

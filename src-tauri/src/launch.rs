@@ -156,11 +156,12 @@ pub async fn launch_profile(
         cmd.arg("--hide-crash-restore-bubble");
         if stored.meta.bridge_enabled {
             let extension_dir = resolve_bridge_extension_dir()?;
-            cmd.arg(format!("--load-extension={}", extension_dir.display()));
-            eprintln!(
-                "[launcher] BrProxies Bridge enabled: {}",
-                extension_dir.display()
-            );
+            if bridge_profile_needs_load(&udd, &extension_dir) {
+                cmd.arg(format!("--load-extension={}", extension_dir.display()));
+                eprintln!("[launcher] BrProxies Bridge update/load: {}", extension_dir.display());
+            } else {
+                eprintln!("[launcher] BrProxies Bridge already current; skipping duplicate load");
+            }
         }
     }
 
@@ -295,6 +296,48 @@ pub async fn launch_profile(
     };
 
     Ok(LaunchOutcome { pid, cdp })
+}
+
+fn bridge_profile_needs_load(user_data_dir: &Path, source_dir: &Path) -> bool {
+    let Ok(source_manifest) = std::fs::read_to_string(source_dir.join("manifest.json")) else { return true };
+    let Ok(source) = serde_json::from_str::<serde_json::Value>(&source_manifest) else { return true };
+    let source_name = source.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let source_version = source.get("version").and_then(|v| v.as_str()).unwrap_or("");
+    let source_path = source_dir.canonicalize().unwrap_or_else(|_| source_dir.to_path_buf());
+    let profile_name = std::fs::read_to_string(user_data_dir.join("Local State"))
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+        .and_then(|value| value.get("profile")?.get("last_used")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| "Default".to_string());
+    let profile_dir = user_data_dir.join(profile_name);
+    for filename in ["Preferences", "Secure Preferences"] {
+        let Ok(body) = std::fs::read_to_string(profile_dir.join(filename)) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) else { continue };
+        let Some(settings) = value.pointer("/extensions/settings").and_then(|v| v.as_object()) else { continue };
+        for item in settings.values() {
+            if let Some(path) = item.get("path").and_then(|v| v.as_str()).filter(|p| Path::new(p).exists()) {
+                let installed_path = Path::new(path).canonicalize().unwrap_or_else(|_| PathBuf::from(path));
+                let installed_manifest = std::fs::read_to_string(installed_path.join("manifest.json"))
+                    .ok().and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok());
+                let installed_name = item.pointer("/manifest/name").and_then(|v| v.as_str())
+                    .or_else(|| installed_manifest.as_ref().and_then(|v| v.get("name").and_then(|v| v.as_str())))
+                    .unwrap_or("");
+                let installed_version = item.pointer("/manifest/version").and_then(|v| v.as_str())
+                    .or_else(|| installed_manifest.as_ref().and_then(|v| v.get("version").and_then(|v| v.as_str())))
+                    .unwrap_or("");
+                if installed_path == source_path || (installed_name == source_name && compare_versions(installed_version, source_version) >= std::cmp::Ordering::Equal) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    let parse = |v: &str| v.split('.').map(|part| part.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
+    let mut a = parse(left); let mut b = parse(right);
+    a.resize(4, 0); b.resize(4, 0); a.cmp(&b)
 }
 
 /// Poll `<udd>/DevToolsActivePort` for ~6s; line 1 = port, line 2 = ws path.

@@ -103,6 +103,45 @@ tags:
   - name: Account Keeper
 
 paths:
+  /bridge/pair:
+    post:
+      summary: Request native approval for one external Chrome OAuth export
+      description: No API JWT. Requires a random 64-hex nonce in JSON; one active pairing, 10 minute TTL. Native BrProxies approval is mandatory. Browser website origins rejected. No profile or cookie access.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nonce]
+              properties:
+                nonce: {type: string, pattern: '^[a-f0-9]{64}$'}
+      responses:
+        '200': {description: Pending native approval; no-store}
+        '429': {description: Another pairing active}
+  /bridge/status:
+    post:
+      summary: Poll pairing or its bound OAuth status using the same nonce in JSON
+      security: []
+      responses:
+        '200': {description: Redacted pending, approved, ready or failed status; no-store}
+        '401': {description: Wrong or expired nonce}
+  /bridge/oauth:
+    post:
+      summary: Start one external OAuth operation after native approval using nonce in JSON
+      security: []
+      responses:
+        '200': {description: Authorization URL; operation bound to pairing; no-store}
+        '401': {description: Unapproved or expired pairing}
+  /bridge/export:
+    post:
+      summary: Consume the paired OAuth result using nonce and format in JSON
+      description: Format is cockpit or nine_router. No caller-supplied operation or profile ID accepted. Successful export revokes pairing. Response contains plaintext credentials.
+      security: []
+      responses:
+        '200': {description: Single-account export; no-store}
+        '401': {description: Invalid pairing}
   /health:
     get:
       tags: [System]

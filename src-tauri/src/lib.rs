@@ -11,6 +11,7 @@ mod account_keeper_worker;
 mod actions;
 mod android;
 mod api;
+mod bridge_pairing;
 mod cookies;
 mod dpapi;
 mod fingerprints;

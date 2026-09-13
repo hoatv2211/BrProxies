@@ -1,7 +1,41 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { connectAndExportCodex } from "../codex-oauth.js";
+import { connectAndExportCodex, pairAndExportCurrentSession } from "../codex-oauth.js";
+
+test("pairing exports without managed profiles or API token", async () => {
+  const calls = [];
+  const nonce = "a".repeat(64);
+  const statuses = ["pending", "approved", "pending", "ready"];
+  let clock = 0;
+  const result = await pairAndExportCurrentSession({nonce, format:"cockpit",
+    call: async (path, body) => {
+      calls.push(path);
+      assert.equal(body.nonce, nonce);
+      assert.equal(body.profileIds, undefined);
+      if (path === "/bridge/status") return {status:statuses.shift()};
+      if (path === "/bridge/oauth") return {authorize_url:"https://auth.openai.com/oauth/authorize"};
+      if (path === "/bridge/export") return {exportedCount:1};
+      return {status:"pending"};
+    },
+    openAuthorization: async () => calls.push("open"), sleep:async () => {clock += 1000;}, now:() => clock
+  });
+  assert.deepEqual(calls, ["/bridge/pair", "/bridge/status", "/bridge/status", "/bridge/oauth", "open", "/bridge/status", "/bridge/status", "/bridge/export"]);
+  assert.equal(result.exportedCount, 1);
+});
+
+test("denied or timed out pairing never starts OAuth or exports", async () => {
+  for (const denied of [true, false]) {
+    let clock = 0;
+    const calls = [];
+    await assert.rejects(pairAndExportCurrentSession({nonce:"a".repeat(64), format:"nine_router",
+      call:async (path) => {calls.push(path); return denied ? {status:"failed",error_code:"pairing_denied"} : {status:"pending"};},
+      openAuthorization:async () => {throw new Error("must not open");},
+      sleep:async () => {clock += 300000;}, now:() => clock
+    }), denied ? /pairing_denied/ : /timed_out/);
+    assert.ok(!calls.includes("/bridge/oauth") && !calls.includes("/bridge/export"));
+  }
+});
 
 const readyProfile = {
   profile_id: "profile-ready",

@@ -197,7 +197,7 @@ fn account_keeper_codex_export_error(error: anyhow::Error) -> ApiError {
 async fn account_keeper_export_codex(
     Json(request): Json<crate::account_keeper::CodexExportRequest>,
 ) -> Result<Response, ApiError> {
-    if request.profile_ids.is_empty() {
+    if request.profile_ids.is_empty() && request.oauth_operation_id.is_none() {
         return Err(err(
             StatusCode::BAD_REQUEST,
             "codex_profile_selection_required",
@@ -207,9 +207,13 @@ async fn account_keeper_export_codex(
         return Err(err(StatusCode::BAD_REQUEST, "invalid_codex_export_format"));
     }
     let format = request.format.clone();
-    let (accounts, result) = crate::account_keeper::account_keeper_codex_export_accounts(&request)
-        .await
-        .map_err(account_keeper_codex_export_error)?;
+    let (accounts, result) = if let Some(operation_id) = request.oauth_operation_id.as_deref() {
+        crate::account_keeper::account_keeper_codex_export_external(operation_id, &request.format)
+            .await
+    } else {
+        crate::account_keeper::account_keeper_codex_export_accounts(&request).await
+    }
+    .map_err(account_keeper_codex_export_error)?;
     let mut response = Json(json!({
         "format": format,
         "accounts": accounts,
@@ -884,7 +888,8 @@ pub async fn serve(secret: String, port: u16) {
         )
         .route_layer(middleware::from_fn(auth));
 
-    let app = Router::new().route("/health", get(health)).merge(protected);
+    let app = Router::new().route("/health", get(health)).merge(protected)
+        .merge(crate::bridge_pairing::routes());
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     match tokio::net::TcpListener::bind(addr).await {

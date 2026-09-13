@@ -1,6 +1,29 @@
 const EXPORT_FORMATS = new Set(["nine_router", "cockpit"]);
 const TERMINAL_OAUTH_STATUSES = new Set(["ready", "failed"]);
 
+// Capability stays in this invocation only; never Chrome storage or URL params.
+export async function pairAndExportCurrentSession({ nonce, format, call, openAuthorization,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = () => Date.now() }) {
+  if (!EXPORT_FORMATS.has(format)) throw new Error("Unsupported Codex export format");
+  if (!/^[a-f0-9]{64}$/.test(nonce || "")) throw new Error("invalid_pairing_nonce");
+  const deadline = now() + 540000;
+  await call("/bridge/pair", { nonce });
+  async function waitFor(expected) {
+    while (now() < deadline) {
+      await sleep(1000);
+      const result = await call("/bridge/status", { nonce });
+      if (result.status === expected) return;
+      if (result.status === "failed") throw new Error(result.error_code || "codex_oauth_failed");
+    }
+    throw new Error("codex_oauth_timed_out");
+  }
+  await waitFor("approved");
+  const operation = await call("/bridge/oauth", { nonce });
+  await openAuthorization(operation.authorize_url);
+  await waitFor("ready");
+  return call("/bridge/export", { nonce, format });
+}
+
 function uniqueProfileIds(profileIds) {
   return Array.from(
     new Set((Array.isArray(profileIds) ? profileIds : []).map(String).filter(Boolean))

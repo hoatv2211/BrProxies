@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "102",
   "name": "BrProxies Bridge",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Export and convert Codex account JSON for 9Router/Cockpit, plus control BrProxies ProxyPool.",
   "permissions": ["proxy", "storage"],
   "host_permissions": [

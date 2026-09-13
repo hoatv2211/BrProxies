@@ -30,6 +30,9 @@ function sendMessage(message) {
 
 function friendlyError(error) {
   const message = error?.message || String(error);
+  if (message === "pairing_busy") return "Another pairing is active. Finish it or wait up to 10 minutes before retrying.";
+  if (message === "pairing_denied") return "Pairing declined in BrProxies. No permission granted.";
+  if (message === "pairing_unavailable") return "Pairing unavailable or expired. Run the updated BrProxies app with Automation API enabled, then retry.";
   if (/^401\b/.test(message) || /Bearer token/.test(message)) {
     return "Reconnect BrProxies from the extension popup and try again.";
   }
@@ -60,13 +63,14 @@ function downloadJson(data) {
 }
 
 async function run() {
+  const pairingNonce = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("");
   els.retryButton.hidden = true;
   setState(
     "working",
     "OAuth in progress",
     "Keep this page open",
     useCurrentSession
-      ? "Keep the signed-in ChatGPT tab open. Approve the official OpenAI OAuth tab that opens; each selected account must match its Account Keeper profile."
+      ? `Pairing code: ${pairingNonce.slice(0, 8).toUpperCase()}. Approve this code in BrProxies (only if you requested it), then approve your account in the Chrome OAuth tab. No Bearer token or managed profile is needed.`
       : "Approve the official OpenAI OAuth tab that opens. Each selected account must match its Account Keeper profile."
   );
   try {
@@ -75,7 +79,8 @@ async function run() {
       apiUrl,
       profileIds,
       format,
-      useCurrentSession
+      useCurrentSession,
+      pairingNonce
     });
     downloadJson(data);
     const refreshed = data.refreshedCount ? ` ${data.refreshedCount} credential(s) were refreshed.` : "";
@@ -91,7 +96,7 @@ async function run() {
   }
 }
 
-els.profileCount.textContent = String(profileIds.length);
+els.profileCount.textContent = useCurrentSession ? "Current Chrome session" : String(profileIds.length);
 els.formatName.textContent = format === "nine_router" ? "9Router" : "Cockpit";
 els.retryButton.addEventListener("click", run);
 run();

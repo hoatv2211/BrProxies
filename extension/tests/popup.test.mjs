@@ -9,6 +9,38 @@ import { JSDOM } from "jsdom";
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const extensionDir = path.resolve(testDir, "..");
 
+test("current-session export is enabled without Connect, token or profiles", async () => {
+  const dom = new JSDOM(fs.readFileSync(path.join(extensionDir, "popup.html"), "utf8"), {url:"chrome-extension://brproxies/popup.html"});
+  const previous = {window:globalThis.window, document:globalThis.document, chrome:globalThis.chrome};
+  let opened = "";
+  const messages = [];
+  dom.window.confirm = () => true;
+  dom.window.open = (url) => {opened = url;};
+  globalThis.window = dom.window;
+  globalThis.document = dom.window.document;
+  globalThis.chrome = {runtime:{lastError:null, getURL:(file)=>`chrome-extension://brproxies/${file}`,
+    sendMessage(message, callback) {messages.push(message.type); callback({ok:true,data:{hasBrApiToken:false}});}
+  }};
+  try {
+    await import(`${pathToFileURL(path.join(extensionDir,"popup.js")).href}?pairing=${Date.now()}`);
+    await new Promise((resolve)=>setTimeout(resolve,0));
+    const button = document.getElementById("exportButton");
+    assert.equal(button.disabled, false);
+    button.click();
+    const url = new URL(opened);
+    assert.equal(url.searchParams.get("session"), "current_chatgpt");
+    assert.deepEqual(url.searchParams.getAll("profile"), []);
+    assert.deepEqual(messages, ["getState"]);
+    const toggle = document.getElementById("useCurrentChatGptSession");
+    toggle.checked = false;
+    toggle.dispatchEvent(new dom.window.Event("change"));
+    assert.equal(button.disabled, true);
+  } finally {
+    Object.assign(globalThis, previous);
+    dom.window.close();
+  }
+});
+
 test("Codex tab renders redacted profiles returned by BrProxies", async () => {
   const dom = new JSDOM(fs.readFileSync(path.join(extensionDir, "popup.html"), "utf8"), {
     url: "chrome-extension://brproxies/popup.html"
@@ -132,7 +164,7 @@ test("missing Codex credentials remain selectable and open the connect flow", as
     document.getElementById("exportButton").click();
     const flowUrl = new URL(openedUrl);
     assert.equal(flowUrl.pathname, "/codex-flow.html");
-    assert.deepEqual(flowUrl.searchParams.getAll("profile"), ["synthetic-missing-profile"]);
+    assert.deepEqual(flowUrl.searchParams.getAll("profile"), []);
     assert.equal(flowUrl.searchParams.get("format"), "nine_router");
     assert.equal(flowUrl.searchParams.get("session"), "current_chatgpt");
     assert.equal(flowUrl.searchParams.has("token"), false);
