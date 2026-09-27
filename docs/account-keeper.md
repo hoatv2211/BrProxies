@@ -33,6 +33,19 @@ clipboard history, or process memory. Clear sensitive clipboard contents after
 pasting, and store plaintext input and output files only in a trusted local
 location with appropriate Windows file permissions.
 
+## Local 2FA Authenticator
+
+The card below **Resumable jobs** generates six-digit, 30-second TOTP codes
+from one Base32 secret. Paste the secret, select **Get code**, then **Copy code**.
+The code refreshes automatically. **Show secret** reveals the input; **Clear**
+removes the input and code and stops refreshing. Editing the secret also stops
+refreshing until you select **Get code** again.
+
+Generation runs locally in Rust without a job, browser, or network request.
+This card does not save the secret; leaving Account Keeper clears its component
+state. Keep the system clock accurate. Copy copies only the code. Clear does
+not erase system clipboard contents or clipboard history.
+
 ## Platform And Runtime
 
 - Supported platform: Windows 10 and Windows 11.
@@ -543,3 +556,17 @@ of expiry before producing JSON. If refresh fails, reconnect that profile instea
 of exporting stale credentials. Token values never render in the Account Keeper UI
 and are stored only in the protected local vault. Saved JSON files and clipboard
 contents are plaintext secrets; import them promptly and protect or delete them.
+
+## Local Codex JSON Converter
+
+Section **05 Codex JSON Converter** converts existing Codex account JSON between
+Cockpit and 9Router without connecting to a profile. Select the direction, then
+paste JSON or load a local `.json` file. The converter accepts one account
+object, a raw account array, or an object containing an `accounts` array.
+
+Click **Convert JSON** to validate the source schema and prepare the opposite
+format, then click **Download converted JSON**. Conversion happens only in the
+current app WebView: it does not call the Automation API, update the Account
+Keeper vault, write the source to app storage, or log token values. After a
+successful download, the source is cleared from the form. The downloaded JSON
+still contains plaintext OAuth credentials and must be protected accordingly.

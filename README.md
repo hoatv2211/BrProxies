@@ -239,22 +239,33 @@ Default sidecar URL: `http://127.0.0.1:40326`
 | `POST`   | `/jobs/collect`               | queue collect job              |
 | `POST`   | `/jobs/check`                 | queue recheck job              |
 
-## Chrome ProxyPool Extension
+## Chrome Bridge Extension
 
 The repo includes a local Manifest V3 Chrome extension in [`extension/`](extension/).
-It connects to `http://127.0.0.1:40326`, lists working proxies, rechecks them,
-and applies one proxy to Chrome through `chrome.proxy`.
+It connects verified Account Keeper profiles through Codex OAuth and exports
+9Router/Cockpit JSON through the authenticated loopback Automation API. Its offline JSON converter
+also transforms existing Cockpit files to 9Router format and back without
+uploading or storing credentials. The extension also connects to
+`http://127.0.0.1:40326`, lists working proxies, rechecks them, and applies one
+proxy to Chrome through `chrome.proxy`.
 
 Local load flow:
 
 1. Run `smart launch\run.bat`.
-2. Open **ProxyPool**, click **Connect**, then collect/check until working rows
-   exist.
-3. Open Chrome `chrome://extensions`, enable **Developer mode**, and click
+2. For Codex export, enable **Settings > Automation API**, copy its Bearer
+   token, verify the Account Keeper profile, and sign in to its matching ChatGPT account.
+3. For proxy use, open **ProxyPool** and collect/check until working rows exist.
+4. Open Chrome `chrome://extensions`, enable **Developer mode**, and click
    **Load unpacked**.
-4. Select the repo `extension` folder.
-5. Open the extension popup, click **Connect**, then use **Use**, **Rotate**, or
-   **Direct**.
+5. Select the repo `extension` folder.
+6. Use **Connect & Export** to authorize missing/expired credentials and download
+   9Router/Cockpit JSON, or **ProxyPool** to
+   choose **Use**, **Rotate**, or **Direct**.
+
+The API token is held in Chrome session storage only. Exported JSON contains
+plaintext OAuth credentials and must be handled as a secret. The extension
+does not scrape ChatGPT cookies or page tokens; OAuth credentials are stored in
+the BrProxies DPAPI vault before export.
 
 ## Local Automation API
 
@@ -274,7 +285,7 @@ proxypool_service/    Python FastAPI + Redis proxy pool service
 sdks/python/          Python SDK
 sdks/node/            Node SDK
 mcp/                  MCP server package
-extension/            Local Chrome ProxyPool extension
+extension/            Chrome Codex export/converter and ProxyPool bridge
 smart launch/         Windows build/run helpers
 docs/screenshots/     README and guide screenshots
 ```

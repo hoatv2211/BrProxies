@@ -60,6 +60,9 @@ pub struct StoredMeta {
     /// Hidden from listings; auto-deleted on close.
     #[serde(default, skip_serializing_if = "is_false")]
     pub temporary: bool,
+    /// Load the bundled BrProxies Bridge on interactive browser launches.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub bridge_enabled: bool,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -398,4 +401,34 @@ fn chrono_now_iso() -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     format!("@{s}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StoredMeta;
+
+    #[test]
+    fn bridge_setting_defaults_off_for_legacy_profiles() {
+        let meta: StoredMeta = serde_json::from_value(serde_json::json!({ "id": "legacy" }))
+            .expect("legacy metadata should deserialize");
+
+        assert!(!meta.bridge_enabled);
+    }
+
+    #[test]
+    fn bridge_setting_round_trips_when_enabled() {
+        let meta: StoredMeta = serde_json::from_value(serde_json::json!({
+            "id": "with-bridge",
+            "bridge_enabled": true
+        }))
+        .expect("bridge metadata should deserialize");
+
+        assert!(meta.bridge_enabled);
+        assert_eq!(
+            serde_json::to_value(meta)
+                .expect("bridge metadata should serialize")
+                .get("bridge_enabled"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
 }

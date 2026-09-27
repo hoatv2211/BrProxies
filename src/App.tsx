@@ -6,6 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { AccountKeeper } from "./account-keeper/AccountKeeper";
+import type { ManagedProfileView } from "./account-keeper/types";
 import { deleteGroupFromRegistry, renameGroupInRegistry } from "./browser-groups";
 import "./App.css";
 
@@ -455,6 +456,7 @@ type ProfileForm = {
 
   webrtc: WebRtcMode;
   do_not_track: boolean;
+  bridge_enabled: boolean;
 
   noise_canvas: NoiseMode;
   noise_webgl: NoiseMode;
@@ -588,6 +590,7 @@ const defaultForm = (): ProfileForm => ({
 
   webrtc: "auto",
   do_not_track: false,
+  bridge_enabled: false,
 
   noise_canvas: "real",
   noise_webgl: "real",
@@ -623,6 +626,7 @@ function fromStored(stored: any): ProfileForm {
   f.language = stored?.navigator?.language ?? AUTO_LANG;
   f.webrtc = (stored?.webrtc === "replace" ? "tcp_only" : stored?.webrtc) ?? "auto";
   f.do_not_track = !!stored?.navigator?.do_not_track;
+  f.bridge_enabled = !!stored?._meta?.bridge_enabled;
 
   const noise = stored?.noise ?? {};
   const noiseMode = (n: any): NoiseMode => (n?.enabled ? "auto" : "real");
@@ -671,6 +675,7 @@ function toStored(f: ProfileForm, lib: FingerprintEntry | null): any {
     proxy_id: f.proxy_id,
     last_launched_at: null,
     gpu_preset_id: f.gpu_preset_id,
+    bridge_enabled: f.bridge_enabled,
   };
   base.name = f.name || "untitled";
   base.notes = f.notes;
@@ -1391,6 +1396,58 @@ function BrowsersView() {
     } catch (e) { toast.err(String(e)); }
   };
 
+  const connectCodex = async (p: ProfileMeta) => {
+    try {
+      await invoke<ManagedProfileView["codex_auth"]>("account_keeper_connect_codex", {
+        request: { profileId: p.id },
+      });
+      toast.ok("Codex OAuth connected. 9Router/Cockpit export is ready.");
+    } catch (e) { toast.err(String(e)); }
+  };
+
+  const exportCodexJson = async (p: ProfileMeta) => {
+    const format = await confirmModal({
+      title: "Export Codex JSON",
+      message: "Choose an import format. The saved JSON contains plaintext OAuth tokens, so keep it private and import it only into a trusted local app.",
+      buttons: [
+        { label: "Cancel", value: null },
+        { label: "9Router JSON", value: "nine_router", primary: true },
+        { label: "Cockpit JSON", value: "cockpit", primary: true },
+      ],
+    });
+    if (format !== "nine_router" && format !== "cockpit") return;
+    try {
+      const target = format === "nine_router" ? "9Router" : "Cockpit";
+      const safeName = (p.name || p.id).replace(/[^\w.-]+/g, "_");
+      const outputPath = await saveDialog({
+        title: `Save ${target} Codex JSON`,
+        defaultPath: `${safeName}-${format === "nine_router" ? "9router" : "cockpit"}-codex.json`,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof outputPath !== "string") return;
+      const result = await invoke<{ exportedCount: number }>("account_keeper_save_codex_export", {
+        request: { profileIds: [p.id], format, outputPath },
+      });
+      toast.ok(`Saved ${result.exportedCount} Codex account for ${target}`);
+      const dir = outputPath.replace(/[/\\][^/\\]*$/, "");
+      try { await openPath(dir); } catch {}
+    } catch (e) { toast.err(String(e)); }
+  };
+
+  const toggleBridge = async (p: ProfileMeta, enabled: boolean) => {
+    try {
+      const stored = await invoke<any>("profile_get", { id: p.id });
+      if (!stored || typeof stored !== "object") throw new Error("Profile data is unavailable");
+      stored._meta = {
+        ...(stored._meta && typeof stored._meta === "object" ? stored._meta : {}),
+        bridge_enabled: !enabled,
+      };
+      await invoke<ProfileMeta>("profile_save", { payload: stored });
+      toast.ok(`BrProxies Bridge will be ${enabled ? "removed from" : "added to"} the next profile launch.`);
+      reload();
+    } catch (e) { toast.err(String(e)); }
+  };
+
   // Per-profile action menu shared by right-click and ⋮ button.
   const runProfileAction = async (p: ProfileMeta, action: ProfileActionCommand) => {
     try {
@@ -1418,18 +1475,33 @@ function BrowsersView() {
   const openProfileMenu = async (e: React.MouseEvent, p: ProfileMeta) => {
     e.preventDefault();
     e.stopPropagation();
-    try {
-      const actions = await invoke<ProfileActionCommand[]>("actions_list", { profileId: p.id });
-      ctx.open(e, profileMenu(p, actions));
-    } catch (err) {
-      toast.err(String(err));
-      ctx.open(e, profileMenu(p, []));
-    }
+    const [actionsResult, managedProfilesResult, storedProfileResult] = await Promise.allSettled([
+      invoke<ProfileActionCommand[]>("actions_list", { profileId: p.id }),
+      invoke<ManagedProfileView[]>("account_keeper_list_profiles"),
+      invoke<any>("profile_get", { id: p.id }),
+    ]);
+    if (actionsResult.status === "rejected") toast.err(String(actionsResult.reason));
+    const actions = actionsResult.status === "fulfilled" ? actionsResult.value : [];
+    const managedProfile = managedProfilesResult.status === "fulfilled"
+      ? managedProfilesResult.value.find((profile) => profile.profile_id === p.id) ?? null
+      : null;
+    const bridgeEnabled = storedProfileResult.status === "fulfilled"
+      && Boolean(storedProfileResult.value?._meta?.bridge_enabled);
+    ctx.open(e, profileMenu(p, actions, managedProfile, bridgeEnabled));
   };
 
-  const profileMenu = (p: ProfileMeta, actions: ProfileActionCommand[] = []) => [
+  const profileMenu = (
+    p: ProfileMeta,
+    actions: ProfileActionCommand[] = [],
+    managedProfile: ManagedProfileView | null = null,
+    bridgeEnabled = false,
+  ) => [
     { label: running[p.id] ? "Stop" : "Launch", onClick: () => startStop(p) },
     { label: "Edit", onClick: () => expand(p.id) },
+    {
+      label: bridgeEnabled ? "Remove BrProxies Bridge" : "Add BrProxies Bridge",
+      onClick: () => toggleBridge(p, bridgeEnabled),
+    },
     { label: "Clone", onClick: () => cloneProfile(p.id) },
     { label: p.pinned ? "Unpin" : "Pin to top", onClick: () => togglePin(p) },
     { sep: true, label: "", onClick: () => {} },
@@ -1440,6 +1512,16 @@ function BrowsersView() {
     { sep: true, label: "", onClick: () => {} },
     { label: "Export cookies", onClick: () => exportCookies(p) },
     { label: "Import cookies", onClick: () => importCookies(p) },
+    { sep: true, label: "", onClick: () => {} },
+    {
+      label: managedProfile?.codex_auth.status === "missing" || !managedProfile ? "Connect Codex" : "Reconnect Codex",
+      onClick: () => managedProfile
+        ? connectCodex(p)
+        : toast.err("Connect Codex is available after this profile is verified by Account Keeper."),
+    },
+    ...(managedProfile?.codex_auth.status === "ready"
+      ? [{ label: "Export JSON for 9Router/Cockpit...", onClick: () => exportCodexJson(p) }]
+      : []),
     { sep: true, label: "", onClick: () => {} },
     ...actions.map((action) => ({
       label: `Action: ${action.label}`,
@@ -2321,6 +2403,19 @@ function InlineEditor({
             <SelectField label="Speakers" value={f.media_audio_out} onChange={(v) => u("media_audio_out", v)} options={MEDIA_COUNT_OPTIONS} />
             <SelectField label="Webcam" value={f.media_video_in} onChange={(v) => u("media_video_in", v)} options={MEDIA_COUNT_OPTIONS} />
           </div>
+
+          <div className="ie-section-title" style={{ marginTop: 10 }}>Browser extensions</div>
+          <label>
+            <span className="lbl">BrProxies Bridge</span>
+            <CSSelect
+              value={f.bridge_enabled ? "1" : "0"}
+              onChange={(v) => u("bridge_enabled", v === "1")}
+              options={[
+                { value: "0", label: "Not included" },
+                { value: "1", label: "Include and auto-load" },
+              ]}
+            />
+          </label>
 
           <label>
             <span className="lbl">Notes</span>

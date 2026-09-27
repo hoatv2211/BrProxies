@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -10,6 +10,12 @@ import {
   progressLogEntries,
   reduceProgress,
 } from "./model";
+import {
+  convertCodexJson,
+  createConvertedDownload,
+  type CodexConversionDirection,
+  type CodexConversionResult,
+} from "./codex-converter";
 import type {
   AccountKeeperDefaultsDto,
   AccountStage,
@@ -24,6 +30,7 @@ import type {
   TemplateValidationDto,
 } from "./types";
 import "./AccountKeeper.css";
+import { TotpAuthenticator } from "./TotpAuthenticator";
 
 type ConfirmOptions = {
   title?: string;
@@ -253,11 +260,26 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
   const [profiles, setProfiles] = useState<ManagedProfileView[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(false);
+  const [progressExpanded, setProgressExpanded] = useState(true);
+  const [profilesExpanded, setProfilesExpanded] = useState(true);
   const [importProfileId, setImportProfileId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [converterDirection, setConverterDirection] = useState<CodexConversionDirection>(
+    "cockpit_to_nine_router",
+  );
+  const [converterInputMode, setConverterInputMode] = useState<"paste" | "file">("paste");
+  const [converterInput, setConverterInput] = useState("");
+  const [converterFileName, setConverterFileName] = useState("");
+  const [converterResult, setConverterResult] = useState<CodexConversionResult | null>(null);
+  const [converterOutputJson, setConverterOutputJson] = useState<string | null>(null);
+  const [converterOutputFilename, setConverterOutputFilename] = useState("");
+  const [converterOutputPath, setConverterOutputPath] = useState("");
+  const [converterError, setConverterError] = useState<string | null>(null);
+  const [converterNotice, setConverterNotice] = useState<string | null>(null);
+  const converterFileRef = useRef<HTMLInputElement>(null);
   const qaAdapterId = useRef("openai-chatgpt-v1");
 
   const refreshProfiles = async () => {
@@ -1012,6 +1034,131 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
     }
   };
 
+  const resetConverterFeedback = () => {
+    setConverterResult(null);
+    setConverterOutputJson(null);
+    setConverterOutputFilename("");
+    setConverterOutputPath("");
+    setConverterError(null);
+    setConverterNotice(null);
+  };
+
+  const selectConverterDirection = (direction: CodexConversionDirection) => {
+    setConverterDirection(direction);
+    resetConverterFeedback();
+  };
+
+  const loadConverterFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    resetConverterFeedback();
+    try {
+      setConverterInput(await file.text());
+      setConverterFileName(file.name);
+      setConverterNotice("JSON file loaded locally. Convert when ready.");
+    } catch {
+      setConverterInput("");
+      setConverterFileName("");
+      setConverterError("Could not read the selected JSON file.");
+    }
+  };
+
+  const runCodexConversion = () => {
+    setConverterError(null);
+    setConverterNotice(null);
+    if (!converterInput.trim()) {
+      setConverterResult(null);
+      setConverterError("Paste JSON or load a local JSON file first.");
+      return;
+    }
+    try {
+      const result = convertCodexJson(converterInput, converterDirection);
+      const download = createConvertedDownload(result);
+      setConverterResult(result);
+      setConverterOutputJson(download.json);
+      setConverterOutputFilename(download.filename);
+      setConverterOutputPath("");
+      setConverterNotice(
+        `${result.accounts.length} account${result.accounts.length === 1 ? "" : "s"} ready for ${result.targetFormat === "nine_router" ? "9Router" : "Cockpit"}.`,
+      );
+    } catch (conversionError) {
+      setConverterResult(null);
+      setConverterError(
+        conversionError instanceof Error ? conversionError.message : "Conversion failed.",
+      );
+    }
+  };
+
+  const chooseConverterOutputPath = async () => {
+    if (!converterOutputJson) return;
+    try {
+      const outputPath = await saveDialog({
+        title: "Save converted Codex JSON",
+        defaultPath: converterOutputPath || converterOutputFilename,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (outputPath) setConverterOutputPath(outputPath);
+    } catch {
+      setConverterError("Could not choose a converter output path.");
+    }
+  };
+
+  const copyConvertedJson = async () => {
+    if (!converterOutputJson) return;
+    const approved = await confirm({
+      title: "Copy plaintext Codex credentials",
+      message: "Copy the converted JSON to the system clipboard? It contains plaintext OAuth tokens.",
+      buttons: [
+        { label: "Cancel", value: false },
+        { label: "Copy JSON", value: true, primary: true },
+      ],
+    });
+    if (approved !== true) return;
+    try {
+      await invoke("clipboard_write", { text: converterOutputJson });
+      setConverterNotice("Converted JSON copied to clipboard.");
+    } catch {
+      setConverterError("Could not copy the converted JSON to the clipboard.");
+    }
+  };
+
+  const downloadConvertedJson = async () => {
+    if (!converterResult || !converterOutputJson) return;
+    const approved = await confirm({
+      title: "Download plaintext Codex credentials",
+      message: `Download ${converterResult.accounts.length} converted Codex account${converterResult.accounts.length === 1 ? "" : "s"}? The JSON contains plaintext OAuth tokens.`,
+      buttons: [
+        { label: "Cancel", value: false },
+        { label: "Download JSON", value: true, primary: true },
+      ],
+    });
+    if (approved !== true) return;
+    try {
+      const outputPath = converterOutputPath || await saveDialog({
+        title: "Save converted Codex JSON",
+        defaultPath: converterOutputFilename,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!outputPath) return;
+      await invoke("account_keeper_save_converted_codex_json", {
+        request: { outputPath, json: converterOutputJson },
+      });
+
+      const count = converterResult.accounts.length;
+      setConverterOutputPath(outputPath);
+      setConverterInput("");
+      setConverterFileName("");
+      setConverterError(null);
+      setConverterNotice(
+        `Saved converted JSON to ${outputPath}. ${count} account${count === 1 ? "" : "s"} written. Source JSON cleared from this form.`,
+      );
+      if (converterFileRef.current) converterFileRef.current.value = "";
+    } catch {
+      setConverterError("Could not prepare the converted JSON download.");
+    }
+  };
+
   return (
     <section className="account-keeper page" aria-labelledby="account-keeper-title">
       <div className="account-keeper__header">
@@ -1359,6 +1506,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           </div>
         </section>
 
+        <div className="account-keeper__sidebar">
         <aside className="account-keeper__panel account-keeper__jobs" aria-labelledby="account-keeper-jobs-title">
           <div className="account-keeper__panel-head">
             <div>
@@ -1408,13 +1556,22 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
             </div>
           )}
         </aside>
+        <TotpAuthenticator />
+        </div>
       </div>
 
       <section className="account-keeper__panel account-keeper__progress" aria-labelledby="account-keeper-progress-title">
-        <div className="account-keeper__panel-head account-keeper__progress-head">
+        <div className={`account-keeper__panel-head account-keeper__progress-head${progressExpanded ? "" : " is-collapsed"}`}>
           <div>
             <span className="account-keeper__step">03</span>
-            <h2 id="account-keeper-progress-title">Progress</h2>
+            <h2 id="account-keeper-progress-title">
+              <button type="button" className="account-keeper__collapse-toggle" aria-expanded={progressExpanded}
+                aria-controls="account-keeper-progress-body account-keeper-progress-actions"
+                onClick={() => setProgressExpanded((expanded) => !expanded)}>
+                <span className="account-keeper__chevron" aria-hidden="true">{progressExpanded ? "▾" : "▸"}</span>
+                Progress
+              </button>
+            </h2>
           </div>
           <div className="account-keeper__progress-side">
             {selectedJob && (
@@ -1424,7 +1581,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
                 <span className={`account-keeper__status is-${selectedJob.status}`}>{labelFor(selectedJob.status)}</span>
               </div>
             )}
-            <div className="account-keeper__progress-actions">
+            <div id="account-keeper-progress-actions" className="account-keeper__progress-actions" hidden={!progressExpanded}>
               <button
                 type="button"
                 className="btn-sm"
@@ -1446,6 +1603,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           </div>
         </div>
 
+        <div id="account-keeper-progress-body" hidden={!progressExpanded}>
         {selectedJob && (selectedJob.status === "waiting_manual" || activeAccount?.stage === "waiting_manual") && activeAccount && (
           <div className="account-keeper__manual" role="status">
             <div>
@@ -1517,17 +1675,26 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
             </tbody>
           </table>
         </div>
+        </div>
       </section>
 
       <section className="account-keeper__panel account-keeper__profiles" aria-labelledby="account-keeper-profiles-title">
-        <div className="account-keeper__panel-head">
+        <div className={`account-keeper__panel-head${profilesExpanded ? "" : " is-collapsed"}`}>
           <div>
             <span className="account-keeper__step">04</span>
-            <h2 id="account-keeper-profiles-title">Profiles</h2>
+            <h2 id="account-keeper-profiles-title">
+              <button type="button" className="account-keeper__collapse-toggle" aria-expanded={profilesExpanded}
+                aria-controls="account-keeper-profiles-body"
+                onClick={() => setProfilesExpanded((expanded) => !expanded)}>
+                <span className="account-keeper__chevron" aria-hidden="true">{profilesExpanded ? "▾" : "▸"}</span>
+                Profiles
+              </button>
+            </h2>
           </div>
           <span className="account-keeper__panel-note">{profiles.length} verified</span>
         </div>
 
+        <div id="account-keeper-profiles-body" hidden={!profilesExpanded}>
         {readyCodexProfileIds.length > 0 && (
           <div className="account-keeper__bulk-export" role="group" aria-label="Bulk Codex export">
             <span>{readyCodexProfileIds.length} Codex account{readyCodexProfileIds.length === 1 ? "" : "s"} ready</span>
@@ -1613,6 +1780,169 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
             </div>
           </div>
         )}
+        </div>
+      </section>
+
+      <section className="account-keeper__panel account-keeper__converter" aria-labelledby="account-keeper-converter-title">
+        <div className="account-keeper__panel-head">
+          <div>
+            <span className="account-keeper__step">05</span>
+            <h2 id="account-keeper-converter-title">Codex JSON Converter</h2>
+          </div>
+          <span className="account-keeper__panel-note">Local-only conversion</span>
+        </div>
+
+        <div className="account-keeper__converter-grid">
+          <div>
+            <div className="account-keeper__field">
+              <span className="account-keeper__field-label">Conversion direction</span>
+              <div className="account-keeper__source-modes account-keeper__converter-directions" role="group" aria-label="Codex conversion direction">
+                <button
+                  type="button"
+                  aria-pressed={converterDirection === "cockpit_to_nine_router"}
+                  onClick={() => selectConverterDirection("cockpit_to_nine_router")}
+                >
+                  Cockpit to 9Router
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={converterDirection === "nine_router_to_cockpit"}
+                  onClick={() => selectConverterDirection("nine_router_to_cockpit")}
+                >
+                  9Router to Cockpit
+                </button>
+              </div>
+            </div>
+
+            <div className="account-keeper__field">
+              <span className="account-keeper__field-label">JSON source</span>
+              <div className="account-keeper__source-modes" role="group" aria-label="Converter JSON source">
+                <button
+                  type="button"
+                  aria-pressed={converterInputMode === "paste"}
+                  onClick={() => setConverterInputMode("paste")}
+                >
+                  Paste JSON
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={converterInputMode === "file"}
+                  onClick={() => setConverterInputMode("file")}
+                >
+                  Load file
+                </button>
+              </div>
+            </div>
+
+            {converterInputMode === "paste" ? (
+              <div className="account-keeper__field">
+                <label htmlFor="account-keeper-codex-json">Codex JSON input</label>
+                <textarea
+                  id="account-keeper-codex-json"
+                  value={converterInput}
+                  spellCheck={false}
+                  placeholder="Paste a Cockpit or 9Router account object, array, or accounts wrapper"
+                  onChange={(event) => {
+                    setConverterInput(event.target.value);
+                    setConverterFileName("");
+                    resetConverterFeedback();
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="account-keeper__converter-file-picker">
+                <input
+                  ref={converterFileRef}
+                  type="file"
+                  accept=".json,application/json"
+                  aria-label="Codex JSON file"
+                  onChange={(event) => void loadConverterFile(event)}
+                />
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => converterFileRef.current?.click()}
+                >
+                  Browse JSON
+                </button>
+                <span>{converterFileName || "No JSON file loaded"}</span>
+              </div>
+            )}
+
+            {converterOutputJson && (
+              <div className="account-keeper__converter-output">
+                <div className="account-keeper__converter-output-head">
+                  <label htmlFor="account-keeper-converted-json">Converted JSON preview</label>
+                  <button type="button" className="btn-sm" onClick={() => void copyConvertedJson()}>
+                    Copy converted JSON
+                  </button>
+                </div>
+                <textarea
+                  id="account-keeper-converted-json"
+                  aria-label="Converted JSON preview"
+                  value={converterOutputJson}
+                  readOnly
+                  spellCheck={false}
+                />
+                <div className="account-keeper__converter-output-path">
+                  <label htmlFor="account-keeper-converter-output-path">Download path</label>
+                  <div>
+                    <input
+                      id="account-keeper-converter-output-path"
+                      aria-label="Converter output path"
+                      value={converterOutputPath}
+                      placeholder={converterOutputFilename || "Choose a local JSON file path"}
+                      readOnly
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      aria-label="Choose converter output path"
+                      onClick={() => void chooseConverterOutputPath()}
+                    >
+                      Choose path
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="account-keeper__converter-actions">
+              <button type="button" className="btn-primary" onClick={runCodexConversion}>
+                Convert JSON
+              </button>
+              <button
+                type="button"
+                className="btn-sm"
+                onClick={() => void downloadConvertedJson()}
+                disabled={!converterResult}
+              >
+                Download converted JSON
+              </button>
+            </div>
+
+            {converterError && (
+              <div className="account-keeper__validation is-invalid" role="alert">
+                <strong>Conversion error</strong>
+                <span>{converterError}</span>
+              </div>
+            )}
+            {converterNotice && (
+              <div className={`account-keeper__validation ${converterResult ? "is-valid" : ""}`} role="status">
+                <strong>{converterResult ? "Conversion ready" : "Converter status"}</strong>
+                <span>{converterNotice}</span>
+              </div>
+            )}
+          </div>
+
+          <aside className="account-keeper__converter-safety">
+            <strong>Accepted JSON shapes</strong>
+            <p>Use one account object, an account array, or an object with an <code>accounts</code> array.</p>
+            <strong>Secret-safe behavior</strong>
+            <p>Conversion stays in this WebView. It does not call the Automation API, write to the Account Keeper vault, persist input, or log tokens.</p>
+            <p>The converted JSON remains visible for review and copying. Saving clears the source field; the saved file still contains plaintext OAuth credentials.</p>
+          </aside>
+        </div>
       </section>
     </section>
   );

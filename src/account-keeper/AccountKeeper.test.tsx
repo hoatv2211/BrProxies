@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountKeeper } from "./AccountKeeper";
@@ -141,12 +141,51 @@ describe("AccountKeeper", () => {
     return { accountInput, start };
   }
 
+  it("collapses groups independently without changing jobs or profiles", async () => {
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "account_keeper_list_jobs") return [failedJob];
+      if (command === "account_keeper_get_job") return failedJob;
+      if (command === "account_keeper_list_profiles") return [managedProfile];
+      return defaultInvoke(command);
+    });
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+    const progress = within(screen.getByRole("region", { name: "Progress" }));
+    const profiles = within(screen.getByRole("region", { name: "Profiles" }));
+    await waitFor(() => expect(profiles.getByRole("button", { name: /Run profile/ })).toBeEnabled());
+    await waitFor(() => expect(progress.getByRole("button", { name: "Logs" })).toBeEnabled());
+    const progressToggle = progress.getByRole("button", { name: "Progress" });
+    const profilesToggle = profiles.getByRole("button", { name: "Profiles" });
+    expect(progressToggle).toHaveAttribute("aria-expanded", "true");
+    expect(profilesToggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(progress.getByRole("button", { name: "Logs" }));
+    mocks.invoke.mockClear();
+    fireEvent.click(progressToggle);
+    expect(progressToggle).toHaveAttribute("aria-expanded", "false");
+    expect(progress.queryByRole("table")).not.toBeInTheDocument();
+    expect(progress.queryByRole("button", { name: "Clean" })).not.toBeInTheDocument();
+    expect(progress.getByText("Failed", { selector: ".account-keeper__status" })).toBeVisible();
+    expect(profiles.getByRole("button", { name: /Run profile/ })).toBeVisible();
+    fireEvent.click(profilesToggle);
+    expect(profilesToggle).toHaveAttribute("aria-expanded", "false");
+    expect(profiles.queryByRole("button", { name: /Run profile/ })).not.toBeInTheDocument();
+    expect(profiles.getByText("1 verified")).toBeVisible();
+    fireEvent.click(progressToggle);
+    fireEvent.click(profilesToggle);
+    expect(progress.getByRole("table")).toBeVisible();
+    expect(progress.getByRole("region", { name: "Progress logs" })).toBeVisible();
+    expect(profiles.getByRole("button", { name: /Run profile/ })).toBeVisible();
+    expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+
   it("describes GPT account management operations", async () => {
     render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
 
     await screen.findByText("0 resumable jobs");
     expect(screen.getByText("GPT ACCOUNT MANAGEMENT")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Account Keeper" })).toBeInTheDocument();
+    const jobs = screen.getByRole("complementary", { name: "Resumable jobs" });
+    const authenticator = screen.getByRole("region", { name: "2FA Authenticator" });
+    expect(jobs.nextElementSibling).toBe(authenticator);
     expect(screen.getByText(
       "Manage and update GPT accounts in one place — log in, change passwords, rotate 2FA, and update account emails with isolated browser profiles.",
     )).toBeInTheDocument();
@@ -728,6 +767,123 @@ describe("AccountKeeper", () => {
       "account_keeper_delete_profile",
       { request: { profileId: "profile-1" } },
     ));
+  });
+
+  it("converts pasted Cockpit JSON locally, saves it, and clears the source", async () => {
+    const confirm = vi.fn().mockResolvedValue(true);
+    mocks.save.mockResolvedValue("C:\\fixtures\\converted-codex.json");
+    render(<AccountKeeper confirm={confirm} />);
+    await screen.findByRole("heading", { name: "Codex JSON Converter" });
+
+    const input = screen.getByLabelText("Codex JSON input");
+    fireEvent.change(input, {
+      target: {
+        value: JSON.stringify({
+          access_token: "synthetic-access-token",
+          refresh_token: "synthetic-refresh-token",
+          id_token: "synthetic-id-token",
+          account_id: "account-synthetic-001",
+          last_refresh: "2026-09-12T00:00:00.000Z",
+          expired: "2026-09-12T01:00:00.000Z",
+          email: "owner@example.test",
+        }),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Convert JSON" }));
+
+    expect(await screen.findByText("1 account ready for 9Router.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download converted JSON" }));
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_save_converted_codex_json",
+      expect.objectContaining({
+        request: expect.objectContaining({ outputPath: "C:\\fixtures\\converted-codex.json" }),
+      }),
+    ));
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Download plaintext Codex credentials",
+    }));
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(await screen.findByText(/Saved converted JSON to C:\\fixtures\\converted-codex\.json/)).toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.some(([command]) => String(command).includes("converter"))).toBe(false);
+  });
+
+  it("previews converted JSON, copies it, and saves it to a chosen path", async () => {
+    const confirm = vi.fn().mockResolvedValue(true);
+    mocks.save.mockResolvedValue("C:\\fixtures\\converted-codex.json");
+    render(<AccountKeeper confirm={confirm} />);
+    await screen.findByRole("heading", { name: "Codex JSON Converter" });
+
+    fireEvent.change(screen.getByLabelText("Codex JSON input"), {
+      target: {
+        value: JSON.stringify({
+          access_token: "synthetic-access-token",
+          refresh_token: "synthetic-refresh-token",
+          id_token: "synthetic-id-token",
+          account_id: "account-synthetic-001",
+          last_refresh: "2026-09-12T00:00:00.000Z",
+          expired: "2026-09-12T01:00:00.000Z",
+          email: "owner@example.test",
+        }),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Convert JSON" }));
+
+    const preview = await screen.findByLabelText("Converted JSON preview");
+    expect((preview as HTMLTextAreaElement).value).toContain('"accessToken"');
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy converted JSON" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "clipboard_write",
+      { text: (preview as HTMLTextAreaElement).value },
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose converter output path" }));
+    await waitFor(() => expect(screen.getByLabelText("Converter output path")).toHaveValue("C:\\fixtures\\converted-codex.json"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Download converted JSON" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      "account_keeper_save_converted_codex_json",
+      {
+        request: {
+          outputPath: "C:\\fixtures\\converted-codex.json",
+          json: (preview as HTMLTextAreaElement).value,
+        },
+      },
+    ));
+    expect((preview as HTMLTextAreaElement).value).toContain('"accessToken"');
+    expect(await screen.findByText(/Saved converted JSON to C:\\fixtures\\converted-codex\.json/)).toBeInTheDocument();
+  });
+
+  it("loads a 9Router JSON file locally and reports schema errors without backend calls", async () => {
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+    await screen.findByRole("heading", { name: "Codex JSON Converter" });
+
+    fireEvent.click(screen.getByRole("button", { name: "9Router to Cockpit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load file" }));
+    const json = JSON.stringify({
+      accounts: [{
+        accessToken: "synthetic-access-token",
+        refreshToken: "synthetic-refresh-token",
+        idToken: "synthetic-id-token",
+        expiresAt: "2026-09-12T01:00:00.000Z",
+        lastRefreshAt: "2026-09-12T00:00:00.000Z",
+        email: "owner@example.test",
+        providerSpecificData: { chatgptAccountId: "account-synthetic-001" },
+      }],
+    });
+    const file = new File([json], "synthetic-9router.json", { type: "application/json" });
+    Object.defineProperty(file, "text", { value: vi.fn().mockResolvedValue(json) });
+    fireEvent.change(screen.getByLabelText("Codex JSON file"), { target: { files: [file] } });
+
+    expect(await screen.findByText("JSON file loaded locally. Convert when ready.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Convert JSON" }));
+    expect(await screen.findByText("1 account ready for Cockpit.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cockpit to 9Router" }));
+    fireEvent.click(screen.getByRole("button", { name: "Convert JSON" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("expected cockpit format");
+    expect(mocks.invoke.mock.calls.some(([command]) => String(command).includes("converter"))).toBe(false);
   });
 
   it("accepts synthetic QA configuration only through the dev bridge", async () => {

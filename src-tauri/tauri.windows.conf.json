@@ -6,7 +6,19 @@
   "bundle": {
     "resources": {
       "resources/account-keeper/": "account-keeper/",
-      "resources/proxypool/": "proxypool/"
+      "resources/proxypool/": "proxypool/",
+      "../extension/manifest.json": "bridge-extension/manifest.json",
+      "../extension/background.js": "bridge-extension/background.js",
+      "../extension/codex-converter.js": "bridge-extension/codex-converter.js",
+      "../extension/codex-export.js": "bridge-extension/codex-export.js",
+      "../extension/codex-session.js": "bridge-extension/codex-session.js",
+      "../extension/codex-oauth.js": "bridge-extension/codex-oauth.js",
+      "../extension/codex-flow.html": "bridge-extension/codex-flow.html",
+      "../extension/codex-flow.css": "bridge-extension/codex-flow.css",
+      "../extension/codex-flow.js": "bridge-extension/codex-flow.js",
+      "../extension/popup.html": "bridge-extension/popup.html",
+      "../extension/popup.css": "bridge-extension/popup.css",
+      "../extension/popup.js": "bridge-extension/popup.js"
     }
   }
 }

@@ -7,10 +7,12 @@ pub mod account_keeper_agent;
 mod account_keeper_format;
 mod account_keeper_mailbox;
 mod account_keeper_store;
+mod account_keeper_totp;
 mod account_keeper_worker;
 mod actions;
 mod android;
 mod api;
+mod bridge_pairing;
 mod cookies;
 mod dpapi;
 mod fingerprints;
@@ -1275,6 +1277,7 @@ pub fn run() {
             clipboard_write,
             clipboard_read,
             account_keeper::account_keeper_defaults,
+            account_keeper_totp::account_keeper_generate_totp,
             account_keeper::account_keeper_validate_input,
             account_keeper::account_keeper_validate_template,
             account_keeper::account_keeper_start_batch,
@@ -1283,6 +1286,7 @@ pub fn run() {
             account_keeper::account_keeper_connect_codex,
             account_keeper::account_keeper_copy_codex_export,
             account_keeper::account_keeper_save_codex_export,
+            account_keeper::account_keeper_save_converted_codex_json,
             account_keeper::account_keeper_get_job,
             account_keeper::account_keeper_pause_after_current,
             account_keeper::account_keeper_cancel_batch,

@@ -13,6 +13,14 @@ if ($errors.Count -gt 0) { throw $errors[0].Message }
 $definition = $ast.Find({
   param($node)
   $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq "Get-Sha256Hash"
+}, $true)
+if (-not $definition) { throw "Missing function: Get-Sha256Hash" }
+Invoke-Expression $definition.Extent.Text
+
+$definition = $ast.Find({
+  param($node)
+  $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
     $node.Name -eq "Sync-AccountKeeperResources"
 }, $true)
 if (-not $definition) { throw "Missing function: Sync-AccountKeeperResources" }

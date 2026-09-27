@@ -5,6 +5,9 @@ use crate::{
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use tauri::Manager;
+
+const BRIDGE_EXTENSION_DIR: &str = "bridge-extension";
 
 /// Launch result: OS pid plus CDP endpoint when remote-debugging is on.
 pub struct LaunchOutcome {
@@ -36,6 +39,48 @@ pub fn resolve_binary() -> Result<PathBuf> {
         return Ok(pb);
     }
     anyhow::bail!("BrProxies browser not installed yet - open Settings to download, or configure Browser path manually")
+}
+
+fn resolve_bridge_extension_dir() -> Result<PathBuf> {
+    let resource_root = crate::app_handle().and_then(|app| app.path().resource_dir().ok());
+    let executable_root = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    let dev_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("extension");
+
+    resolve_bridge_extension_dir_from(
+        resource_root.as_deref(),
+        executable_root.as_deref(),
+        &dev_root,
+    )
+}
+
+fn resolve_bridge_extension_dir_from(
+    resource_root: Option<&Path>,
+    executable_root: Option<&Path>,
+    dev_root: &Path,
+) -> Result<PathBuf> {
+    let candidates = resource_root
+        .into_iter()
+        .map(|root| root.join(BRIDGE_EXTENSION_DIR))
+        .chain(
+            executable_root
+                .into_iter()
+                .map(|root| root.join(BRIDGE_EXTENSION_DIR)),
+        )
+        .chain(std::iter::once(dev_root.to_path_buf()));
+
+    for candidate in candidates {
+        if candidate.join("manifest.json").is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    anyhow::bail!(
+        "BrProxies Bridge files are missing; reinstall BrProxies or disable BrProxies Bridge for this profile"
+    )
 }
 
 pub async fn launch_profile(
@@ -109,6 +154,15 @@ pub async fn launch_profile(
     // session because the patched browser injects its upstream welcome tab.
     if !headless && !enable_cdp {
         cmd.arg("--hide-crash-restore-bubble");
+        if stored.meta.bridge_enabled {
+            let extension_dir = resolve_bridge_extension_dir()?;
+            if bridge_profile_needs_load(&udd, &extension_dir)? {
+                cmd.arg(format!("--load-extension={}", extension_dir.display()));
+                eprintln!("[launcher] BrProxies Bridge update/load: {}", extension_dir.display());
+            } else {
+                eprintln!("[launcher] BrProxies Bridge already current; skipping duplicate load");
+            }
+        }
     }
 
     if let Some(p) = bound_proxy.as_ref() {
@@ -242,6 +296,56 @@ pub async fn launch_profile(
     };
 
     Ok(LaunchOutcome { pid, cdp })
+}
+
+fn bridge_profile_needs_load(user_data_dir: &Path, source_dir: &Path) -> Result<bool> {
+    let Ok(source_manifest) = std::fs::read_to_string(source_dir.join("manifest.json")) else { return Ok(true) };
+    let Ok(source) = serde_json::from_str::<serde_json::Value>(&source_manifest) else { return Ok(true) };
+    let source_name = source.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let source_version = source.get("version").and_then(|v| v.as_str()).unwrap_or("");
+    let source_path = source_dir.canonicalize().unwrap_or_else(|_| source_dir.to_path_buf());
+    let profile_name = std::fs::read_to_string(user_data_dir.join("Local State"))
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+        .and_then(|value| value.get("profile")?.get("last_used")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| "Default".to_string());
+    let profile_dir = user_data_dir.join(profile_name);
+    let mut current_bridge_found = false;
+    for filename in ["Preferences", "Secure Preferences"] {
+        let Ok(body) = std::fs::read_to_string(profile_dir.join(filename)) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) else { continue };
+        let Some(settings) = value.pointer("/extensions/settings").and_then(|v| v.as_object()) else { continue };
+        for item in settings.values() {
+            if let Some(path) = item.get("path").and_then(|v| v.as_str()).filter(|p| Path::new(p).exists()) {
+                let installed_path = Path::new(path).canonicalize().unwrap_or_else(|_| PathBuf::from(path));
+                let installed_manifest = std::fs::read_to_string(installed_path.join("manifest.json"))
+                    .ok().and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok());
+                let installed_name = item.pointer("/manifest/name").and_then(|v| v.as_str())
+                    .or_else(|| installed_manifest.as_ref().and_then(|v| v.get("name").and_then(|v| v.as_str())))
+                    .unwrap_or("");
+                let installed_version = item.pointer("/manifest/version").and_then(|v| v.as_str())
+                    .or_else(|| installed_manifest.as_ref().and_then(|v| v.get("version").and_then(|v| v.as_str())))
+                    .unwrap_or("");
+                if installed_path != source_path && installed_name == source_name
+                    && compare_versions(installed_version, source_version) < std::cmp::Ordering::Equal {
+                    // Unpacked extension IDs depend on their path. Loading the new
+                    // directory cannot replace an older identity at another path.
+                    // Do not edit Chrome's protected preferences or external files.
+                    anyhow::bail!("An older BrProxies Bridge is installed at another location. Disable Bridge auto-load for this profile, launch it, remove the old Bridge at chrome://extensions, then close it and enable Bridge auto-load again.");
+                }
+                if installed_path == source_path || (installed_name == source_name && compare_versions(installed_version, source_version) >= std::cmp::Ordering::Equal) {
+                    current_bridge_found = true;
+                }
+            }
+        }
+    }
+    Ok(!current_bridge_found)
+}
+
+fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    let parse = |v: &str| v.split('.').map(|part| part.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
+    let mut a = parse(left); let mut b = parse(right);
+    a.resize(4, 0); b.resize(4, 0); a.cmp(&b)
 }
 
 /// Poll `<udd>/DevToolsActivePort` for ~6s; line 1 = port, line 2 = ws path.
@@ -568,4 +672,91 @@ fn host_locale() -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_bridge_extension_dir_from;
+
+    #[test]
+    fn older_bridge_at_another_path_requires_explicit_migration() {
+        let root = temp_root("bridge-upgrade");
+        let source = root.join("bundled");
+        let old = root.join("old");
+        let profile = root.join("user/Default");
+        for dir in [&source, &old, &profile] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(source.join("manifest.json"), r#"{"name":"BrProxies Bridge","version":"0.3.2"}"#).unwrap();
+        let prefs = serde_json::json!({"extensions":{"settings":{"old-id":{
+            "path":old,"state":1,"manifest":{"name":"BrProxies Bridge","version":"0.3.0"}
+        }}}});
+        std::fs::write(profile.join("Preferences"), prefs.to_string()).unwrap();
+        let result = super::bridge_profile_needs_load(&root.join("user"), &source);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(result.is_err(), "must not add a second unpacked extension identity");
+        assert!(result.unwrap_err().to_string().contains("chrome://extensions"));
+    }
+
+    #[test]
+    fn bridge_load_decision_preserves_current_and_unrelated_extensions() {
+        let root = temp_root("bridge-load");
+        let source = root.join("bundled");
+        let installed = root.join("installed");
+        let user = root.join("user");
+        let profile = user.join("Profile 2");
+        for dir in [&source, &installed, &profile] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(source.join("manifest.json"), r#"{"name":"BrProxies Bridge","version":"0.3.2"}"#).unwrap();
+        std::fs::write(user.join("Local State"), r#"{"profile":{"last_used":"Profile 2"}}"#).unwrap();
+        assert!(super::bridge_profile_needs_load(&user, &source).unwrap());
+        for (path, name, version, want_load) in [
+            (&source, "BrProxies Bridge", "0.3.1", false),
+            (&installed, "BrProxies Bridge", "0.3.2", false),
+            (&installed, "BrProxies Bridge", "0.4.0", false),
+            (&installed, "Other extension", "0.1.0", true),
+        ] {
+            let prefs = serde_json::json!({"extensions":{"settings":{"id":{
+                "path":path,"manifest":{"name":name,"version":version}
+            }}}});
+            let file = profile.join("Secure Preferences");
+            std::fs::write(&file, prefs.to_string()).unwrap();
+            assert_eq!(super::bridge_profile_needs_load(&user, &source).unwrap(), want_load);
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), prefs.to_string());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("brproxies-{label}-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn bundled_bridge_wins_over_development_copy() {
+        let root = temp_root("bridge-resolve");
+        let resource_root = root.join("resources");
+        let bundled = resource_root.join("bridge-extension");
+        let dev = root.join("extension");
+        std::fs::create_dir_all(&bundled).expect("create bundled bridge dir");
+        std::fs::create_dir_all(&dev).expect("create development bridge dir");
+        std::fs::write(bundled.join("manifest.json"), "{}").expect("write bundled manifest");
+        std::fs::write(dev.join("manifest.json"), "{}").expect("write development manifest");
+
+        let resolved = resolve_bridge_extension_dir_from(Some(&resource_root), None, &dev)
+            .expect("resolve bundled bridge");
+
+        assert_eq!(resolved, bundled);
+        std::fs::remove_dir_all(root).expect("remove test directory");
+    }
+
+    #[test]
+    fn missing_bridge_has_an_actionable_error() {
+        let root = temp_root("bridge-missing");
+        let error = resolve_bridge_extension_dir_from(None, None, &root)
+            .expect_err("missing bridge should fail")
+            .to_string();
+
+        assert!(error.contains("disable BrProxies Bridge"));
+    }
 }

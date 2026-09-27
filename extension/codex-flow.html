@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect &amp; Export Codex - BrProxies Bridge</title>
+    <link rel="stylesheet" href="codex-flow.css" />
+  </head>
+  <body>
+    <main class="flow-shell">
+      <header>
+        <p class="eyebrow">BrProxies Bridge</p>
+        <h1>Connect <span>&amp;</span> Export</h1>
+        <p class="lede">Authorize Codex with this browser profile, then download an import-ready JSON file.</p>
+      </header>
+
+      <section class="status-card" aria-live="polite">
+        <div id="statusMark" class="status-mark working" aria-hidden="true"></div>
+        <div>
+          <p id="statusLabel" class="status-label">Preparing secure OAuth</p>
+          <h2 id="statusTitle">Keep this page open</h2>
+          <p id="statusDetail">If an OpenAI tab opens, approve access with the account currently signed in to this profile.</p>
+        </div>
+      </section>
+
+      <section class="facts" aria-label="Export details">
+        <div><span>Profiles</span><strong id="profileCount">0</strong></div>
+        <div><span>Format</span><strong id="formatName">-</strong></div>
+        <div><span>Storage</span><strong>DPAPI vault</strong></div>
+      </section>
+
+      <p class="security-note">The extension does not read ChatGPT cookies or page tokens. OAuth credentials remain in BrProxies until the final plaintext JSON download.</p>
+      <button id="retryButton" type="button" hidden>Try again</button>
+    </main>
+    <script type="module" src="codex-flow.js"></script>
+  </body>
+</html>

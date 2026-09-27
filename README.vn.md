@@ -215,20 +215,38 @@ Nút trong UI:
 Proxy miễn phí rất thất thường. Bảng trống có thể do source bị chặn, source đang
 lỗi, hoặc tất cả proxy đều fail bài test.
 
-## Chrome ProxyPool Extension
+## Chrome Bridge Extension
 
-Thư mục [`extension/`](extension/) có Chrome extension Manifest V3 để lấy proxy
-từ ProxyPool local. Extension gọi `http://127.0.0.1:40326`, hiện proxy sống,
-test live, và set proxy cho Chrome bằng `chrome.proxy`.
+Thư mục [`extension/`](extension/) có Chrome extension Manifest V3 để kết nối
+Codex OAuth cho profile Account Keeper đã xác minh và export JSON cho 9Router/Cockpit qua Automation API
+loopback có Bearer auth. Công cụ chuyển đổi offline trong extension cũng đổi file
+Cockpit sang 9Router và ngược lại mà không upload hoặc lưu credential. Extension
+cũng gọi `http://127.0.0.1:40326`, hiện proxy sống, test live, và set proxy cho
+Chrome bằng `chrome.proxy`.
 
-Cách load local:
+Hướng dẫn đầy đủ: [`extension/README.vn.md`](extension/README.vn.md).
+
+Cách khuyên dùng với BrProxies Browser là mở **New profile/Edit**, tại
+**Browser extensions > BrProxies Bridge** chọn **Include and auto-load**, rồi
+start lại profile. Khi dùng cách này không cần **Load unpacked**.
+
+Cách load local thủ công:
 
 1. Chạy `smart launch\run.bat`.
-2. Mở **ProxyPool**, bấm **Connect**, rồi collect/check đến khi có proxy sống.
-3. Mở Chrome `chrome://extensions`, bật **Developer mode**, bấm **Load unpacked**.
-4. Chọn thư mục `extension` trong repo.
-5. Mở popup extension, bấm **Connect**, rồi dùng **Use**, **Rotate**, hoặc
-   **Direct**.
+2. Để export Codex, bật **Settings > Automation API**, copy Bearer token, xác
+   minh profile Account Keeper và đăng nhập đúng tài khoản ChatGPT trong profile đó.
+3. Để dùng proxy, mở **ProxyPool** và collect/check đến khi có proxy sống.
+4. Mở Chrome `chrome://extensions`, bật **Developer mode**, bấm **Load unpacked**.
+5. Chọn thư mục `extension` trong repo, là thư mục chứa trực tiếp
+   `manifest.json`. Không chọn `src-tauri\target\release\bundle`.
+6. Dùng **Connect & Export** để tự OAuth nếu credential thiếu/hết hạn rồi tải
+   JSON 9Router/Cockpit, hoặc tab **ProxyPool**
+   để chọn **Use**, **Rotate**, hay **Direct**.
+
+API token chỉ được giữ trong Chrome session storage. File JSON export chứa OAuth
+credential dạng plaintext và phải được bảo quản như secret. Extension không đọc
+cookie ChatGPT hoặc lấy token từ trang web; credential được BrProxies lưu trong
+vault DPAPI trước khi export.
 
 ## Automation API cục bộ
 
@@ -247,7 +265,7 @@ proxypool_service/    Python FastAPI + Redis proxy pool service
 sdks/python/          Python SDK
 sdks/node/            Node SDK
 mcp/                  MCP server package
-extension/            Local Chrome ProxyPool extension
+extension/            Chrome Codex export/converter và ProxyPool bridge
 smart launch/         Windows build/run helpers
 docs/screenshots/     README screenshots
 ```
