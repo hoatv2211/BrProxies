@@ -73,7 +73,13 @@ Không cần **Connect BrProxies**, không cần chọn profile hoặc dán Bear
 chọn Yes nếu đúng yêu cầu của bạn; tiếp tục xác nhận tài khoản ở trang OpenAI OAuth.
 Chế độ này bỏ qua các profile đang tick. Quyền chỉ dùng một lần cho OAuth/export,
 hết hạn sau 10 phút, không cấp quyền đọc profile/cookie. BrProxies vẫn phải chạy.
-Nếu từ chối hoặc bỏ dở, đợi tối đa 10 phút trước khi thử lại.
+Nếu từ chối, có thể thử lại ngay bằng một yêu cầu phê duyệt mới.
+Nếu bỏ dở yêu cầu đang chờ hoặc đã được duyệt, đợi tối đa 10 phút trước khi thử lại.
+
+Khi Bridge cũ được cài unpacked ở đường dẫn khác, trình khởi chạy sẽ báo lỗi
+thay vì nạp thêm bản trùng. Tắt auto-load Bridge của profile, mở profile và gỡ
+Bridge cũ tại `chrome://extensions`. Sau đó đóng profile, bật lại auto-load và
+mở lại. Các extension khác và thư mục extension bên ngoài không bị chỉnh sửa.
 Muốn export profile đã quản lý: tắt current-session và dùng luồng token dưới đây.
 
 1. Bấm biểu tượng **BrProxies Bridge** trên thanh extension.

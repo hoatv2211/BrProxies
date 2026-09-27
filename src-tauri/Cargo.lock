@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "brproxies"
-version = "1.0.8"
+version = "1.0.9"
 dependencies = [
  "aes",
  "aes-gcm",

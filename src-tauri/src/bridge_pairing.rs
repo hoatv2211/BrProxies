@@ -21,6 +21,9 @@ struct Pairing {
     created: Option<Instant>,
 }
 impl Pairing {
+    fn blocks_new_pairing(&self) -> bool {
+        !self.denied && self.created.is_some_and(|t| t.elapsed() < Duration::from_secs(600))
+    }
     fn valid(&self, nonce: &str) -> bool {
         self.nonce == nonce
             && self
@@ -69,9 +72,7 @@ async fn begin(headers: HeaderMap, Json(request): Json<Request>) -> Reply {
         let mut s = state()
             .lock()
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        if s.created
-            .is_some_and(|t| t.elapsed() < Duration::from_secs(600))
-        {
+        if s.blocks_new_pairing() {
             if s.valid(&request.nonce) {
                 return Ok(reply(json!({"status":"pending"})));
             }
@@ -199,6 +200,20 @@ pub fn routes() -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn denied_pairing_allows_retry_but_never_authorizes_old_nonce() {
+        let mut s = Pairing {
+            nonce: "a".repeat(64),
+            created: Some(Instant::now()),
+            ..Default::default()
+        };
+        assert!(s.blocks_new_pairing());
+        s.approved = true;
+        assert!(s.blocks_new_pairing());
+        s.denied = true;
+        assert!(!s.blocks_new_pairing());
+        assert!(!s.authorized(&s.nonce));
+    }
     #[test]
     fn approval_nonce_and_expiry_are_all_required() {
         let mut s = Pairing {

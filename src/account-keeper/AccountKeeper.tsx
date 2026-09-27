@@ -30,6 +30,7 @@ import type {
   TemplateValidationDto,
 } from "./types";
 import "./AccountKeeper.css";
+import { TotpAuthenticator } from "./TotpAuthenticator";
 
 type ConfirmOptions = {
   title?: string;
@@ -259,6 +260,8 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
   const [profiles, setProfiles] = useState<ManagedProfileView[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(false);
+  const [progressExpanded, setProgressExpanded] = useState(true);
+  const [profilesExpanded, setProfilesExpanded] = useState(true);
   const [importProfileId, setImportProfileId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -1503,6 +1506,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           </div>
         </section>
 
+        <div className="account-keeper__sidebar">
         <aside className="account-keeper__panel account-keeper__jobs" aria-labelledby="account-keeper-jobs-title">
           <div className="account-keeper__panel-head">
             <div>
@@ -1552,13 +1556,22 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
             </div>
           )}
         </aside>
+        <TotpAuthenticator />
+        </div>
       </div>
 
       <section className="account-keeper__panel account-keeper__progress" aria-labelledby="account-keeper-progress-title">
-        <div className="account-keeper__panel-head account-keeper__progress-head">
+        <div className={`account-keeper__panel-head account-keeper__progress-head${progressExpanded ? "" : " is-collapsed"}`}>
           <div>
             <span className="account-keeper__step">03</span>
-            <h2 id="account-keeper-progress-title">Progress</h2>
+            <h2 id="account-keeper-progress-title">
+              <button type="button" className="account-keeper__collapse-toggle" aria-expanded={progressExpanded}
+                aria-controls="account-keeper-progress-body account-keeper-progress-actions"
+                onClick={() => setProgressExpanded((expanded) => !expanded)}>
+                <span className="account-keeper__chevron" aria-hidden="true">{progressExpanded ? "▾" : "▸"}</span>
+                Progress
+              </button>
+            </h2>
           </div>
           <div className="account-keeper__progress-side">
             {selectedJob && (
@@ -1568,7 +1581,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
                 <span className={`account-keeper__status is-${selectedJob.status}`}>{labelFor(selectedJob.status)}</span>
               </div>
             )}
-            <div className="account-keeper__progress-actions">
+            <div id="account-keeper-progress-actions" className="account-keeper__progress-actions" hidden={!progressExpanded}>
               <button
                 type="button"
                 className="btn-sm"
@@ -1590,6 +1603,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
           </div>
         </div>
 
+        <div id="account-keeper-progress-body" hidden={!progressExpanded}>
         {selectedJob && (selectedJob.status === "waiting_manual" || activeAccount?.stage === "waiting_manual") && activeAccount && (
           <div className="account-keeper__manual" role="status">
             <div>
@@ -1661,17 +1675,26 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
             </tbody>
           </table>
         </div>
+        </div>
       </section>
 
       <section className="account-keeper__panel account-keeper__profiles" aria-labelledby="account-keeper-profiles-title">
-        <div className="account-keeper__panel-head">
+        <div className={`account-keeper__panel-head${profilesExpanded ? "" : " is-collapsed"}`}>
           <div>
             <span className="account-keeper__step">04</span>
-            <h2 id="account-keeper-profiles-title">Profiles</h2>
+            <h2 id="account-keeper-profiles-title">
+              <button type="button" className="account-keeper__collapse-toggle" aria-expanded={profilesExpanded}
+                aria-controls="account-keeper-profiles-body"
+                onClick={() => setProfilesExpanded((expanded) => !expanded)}>
+                <span className="account-keeper__chevron" aria-hidden="true">{profilesExpanded ? "▾" : "▸"}</span>
+                Profiles
+              </button>
+            </h2>
           </div>
           <span className="account-keeper__panel-note">{profiles.length} verified</span>
         </div>
 
+        <div id="account-keeper-profiles-body" hidden={!profilesExpanded}>
         {readyCodexProfileIds.length > 0 && (
           <div className="account-keeper__bulk-export" role="group" aria-label="Bulk Codex export">
             <span>{readyCodexProfileIds.length} Codex account{readyCodexProfileIds.length === 1 ? "" : "s"} ready</span>
@@ -1757,6 +1780,7 @@ export function AccountKeeper({ confirm }: AccountKeeperProps) {
             </div>
           </div>
         )}
+        </div>
       </section>
 
       <section className="account-keeper__panel account-keeper__converter" aria-labelledby="account-keeper-converter-title">

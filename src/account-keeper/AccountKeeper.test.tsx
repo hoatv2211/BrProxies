@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountKeeper } from "./AccountKeeper";
@@ -141,12 +141,51 @@ describe("AccountKeeper", () => {
     return { accountInput, start };
   }
 
+  it("collapses groups independently without changing jobs or profiles", async () => {
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "account_keeper_list_jobs") return [failedJob];
+      if (command === "account_keeper_get_job") return failedJob;
+      if (command === "account_keeper_list_profiles") return [managedProfile];
+      return defaultInvoke(command);
+    });
+    render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
+    const progress = within(screen.getByRole("region", { name: "Progress" }));
+    const profiles = within(screen.getByRole("region", { name: "Profiles" }));
+    await waitFor(() => expect(profiles.getByRole("button", { name: /Run profile/ })).toBeEnabled());
+    await waitFor(() => expect(progress.getByRole("button", { name: "Logs" })).toBeEnabled());
+    const progressToggle = progress.getByRole("button", { name: "Progress" });
+    const profilesToggle = profiles.getByRole("button", { name: "Profiles" });
+    expect(progressToggle).toHaveAttribute("aria-expanded", "true");
+    expect(profilesToggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(progress.getByRole("button", { name: "Logs" }));
+    mocks.invoke.mockClear();
+    fireEvent.click(progressToggle);
+    expect(progressToggle).toHaveAttribute("aria-expanded", "false");
+    expect(progress.queryByRole("table")).not.toBeInTheDocument();
+    expect(progress.queryByRole("button", { name: "Clean" })).not.toBeInTheDocument();
+    expect(progress.getByText("Failed", { selector: ".account-keeper__status" })).toBeVisible();
+    expect(profiles.getByRole("button", { name: /Run profile/ })).toBeVisible();
+    fireEvent.click(profilesToggle);
+    expect(profilesToggle).toHaveAttribute("aria-expanded", "false");
+    expect(profiles.queryByRole("button", { name: /Run profile/ })).not.toBeInTheDocument();
+    expect(profiles.getByText("1 verified")).toBeVisible();
+    fireEvent.click(progressToggle);
+    fireEvent.click(profilesToggle);
+    expect(progress.getByRole("table")).toBeVisible();
+    expect(progress.getByRole("region", { name: "Progress logs" })).toBeVisible();
+    expect(profiles.getByRole("button", { name: /Run profile/ })).toBeVisible();
+    expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+
   it("describes GPT account management operations", async () => {
     render(<AccountKeeper confirm={vi.fn().mockResolvedValue(true)} />);
 
     await screen.findByText("0 resumable jobs");
     expect(screen.getByText("GPT ACCOUNT MANAGEMENT")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Account Keeper" })).toBeInTheDocument();
+    const jobs = screen.getByRole("complementary", { name: "Resumable jobs" });
+    const authenticator = screen.getByRole("region", { name: "2FA Authenticator" });
+    expect(jobs.nextElementSibling).toBe(authenticator);
     expect(screen.getByText(
       "Manage and update GPT accounts in one place — log in, change passwords, rotate 2FA, and update account emails with isolated browser profiles.",
     )).toBeInTheDocument();

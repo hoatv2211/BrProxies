@@ -48,6 +48,20 @@ const nineRouterAccount = {
 };
 
 describe("Codex JSON converter", () => {
+  it("uses token email instead of a display label when email is omitted", () => {
+    expect(convertCodexJson({ ...cockpitAccount, email: undefined }, "cockpit_to_nine_router")
+      .accounts[0].email).toBe("owner@example.test");
+    expect(convertCodexJson({ ...nineRouterAccount, email: undefined }, "nine_router_to_cockpit")
+      .accounts[0].email).toBe("owner@example.test");
+  });
+
+  it("rejects display labels when neither explicit nor token email exists", () => {
+    expect(() => convertCodexJson({ ...cockpitAccount, email: undefined, id_token: jwt({}) }, "cockpit_to_nine_router"))
+      .toThrow("missing email");
+    expect(() => convertCodexJson({ ...nineRouterAccount, email: undefined, idToken: jwt({}) }, "nine_router_to_cockpit"))
+      .toThrow("missing email");
+  });
+
   it("converts a Cockpit accounts wrapper to a 9Router account array", () => {
     const result = convertCodexJson(
       JSON.stringify({ accounts: [cockpitAccount] }),

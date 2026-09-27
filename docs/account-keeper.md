@@ -33,6 +33,19 @@ clipboard history, or process memory. Clear sensitive clipboard contents after
 pasting, and store plaintext input and output files only in a trusted local
 location with appropriate Windows file permissions.
 
+## Local 2FA Authenticator
+
+The card below **Resumable jobs** generates six-digit, 30-second TOTP codes
+from one Base32 secret. Paste the secret, select **Get code**, then **Copy code**.
+The code refreshes automatically. **Show secret** reveals the input; **Clear**
+removes the input and code and stops refreshing. Editing the secret also stops
+refreshing until you select **Get code** again.
+
+Generation runs locally in Rust without a job, browser, or network request.
+This card does not save the secret; leaving Account Keeper clears its component
+state. Keep the system clock accurate. Copy copies only the code. Clear does
+not erase system clipboard contents or clipboard history.
+
 ## Platform And Runtime
 
 - Supported platform: Windows 10 and Windows 11.

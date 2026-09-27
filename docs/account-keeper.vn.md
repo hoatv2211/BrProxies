@@ -7,6 +7,18 @@ khẩu cho các tài khoản do người vận hành sở hữu hoặc được 
 ràng. Bản MVP xử lý từng tài khoản một và ánh xạ mỗi tài khoản vào một profile
 BrProxies lâu dài.
 
+## Lấy Mã 2FA Tại Máy
+
+Thẻ **2FA Authenticator** nằm dưới **Resumable jobs**. Dán một secret Base32,
+bấm **Get code** để tạo mã sáu số, rồi **Copy code** để sao chép riêng mã.
+Mã tự cập nhật theo chu kỳ 30 giây. **Show secret** hiện secret;
+**Clear** xóa secret và mã khỏi thẻ, đồng thời dừng cập nhật. Sửa secret cũng
+dừng cập nhật cho đến khi bấm **Get code** lần nữa.
+
+Mã được tạo bằng Rust ngay trên máy, không chạy job, mở browser hay gửi request
+ra mạng. Thẻ không lưu secret; rời Account Keeper sẽ xóa state của component.
+Cần giữ đồng hồ hệ thống chính xác. Clear không xóa clipboard hay lịch sử clipboard.
+
 ## An Toàn Và Phạm Vi
 
 Account Keeper thay đổi thông tin đăng nhập. Đọc các giới hạn này trước khi

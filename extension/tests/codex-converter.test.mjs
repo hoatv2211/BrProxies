@@ -16,6 +16,19 @@ const idToken = syntheticJwt({
 });
 const accessToken = syntheticJwt({ iat: 1_800_000_000, exp: 1_800_864_000 });
 
+test("uses token identity, never display labels as email in either direction", () => {
+  const cockpit = { type: "codex", access_token: accessToken, refresh_token: "synthetic-refresh",
+    id_token: idToken, account_id: "synthetic-account-id", account_note: "Display label",
+    expired: "2027-01-25T08:00:00Z", last_refresh: "2027-01-15T08:00:00Z" };
+  const converted = convertCodexJson(cockpit, "cockpit_to_nine_router").accounts[0];
+  assert.equal(converted.email, "owner@example.test");
+  assert.equal(converted.name, "Display label");
+  const nine = { ...converted, email: undefined };
+  assert.equal(convertCodexJson(nine, "nine_router_to_cockpit").accounts[0].email, "owner@example.test");
+  assert.throws(() => convertCodexJson({ ...cockpit, id_token: syntheticJwt({}) }, "cockpit_to_nine_router"), /missing email/);
+  assert.throws(() => convertCodexJson({ ...nine, idToken: syntheticJwt({}) }, "nine_router_to_cockpit"), /missing email/);
+});
+
 test("converts Cockpit accounts to exact 9Router fields", () => {
   const result = convertCodexJson(
     JSON.stringify([

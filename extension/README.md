@@ -23,6 +23,12 @@ normal interactive launches, so Chrome's **Load unpacked** flow is not needed.
 Automation/CDP launches continue to disable browser extensions to keep Account
 Keeper flows isolated.
 
+If an older unpacked Bridge exists at another location, auto-load stops with a
+migration message instead of adding a duplicate. Disable Bridge auto-load for
+that profile, launch it and remove the old Bridge at `chrome://extensions`.
+Close the profile, enable auto-load again, and relaunch. Other extensions and
+external extension folders are not modified.
+
 ## Load locally (manual fallback)
 
 1. Build and run BrProxies with `smart launch\run.bat`.
@@ -46,7 +52,8 @@ BrProxies approval dialog; approve only your own request. Then approve your
 account on the OpenAI OAuth page. This mode ignores managed profile selections.
 The one-shot permission expires after 10 minutes and cannot read profiles/cookies.
 BrProxies must remain running; this is not standalone offline OAuth.
-If pairing is denied or abandoned, wait up to 10 minutes before retrying.
+If pairing is denied, you can retry immediately with a new approval request.
+If a pending or approved pairing is abandoned, wait up to 10 minutes before retrying.
 For managed-profile export, turn current-session mode off and use the token flow below.
 
 1. In BrProxies, enable **Settings > Automation API** and restart the app if

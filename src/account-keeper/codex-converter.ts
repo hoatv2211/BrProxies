@@ -110,7 +110,6 @@ function cockpitToNineRouter(
   const idToken = requireString(account, "id_token", accountNumber);
   const metadata = idTokenMetadata(idToken);
   const email = nonEmptyString(account.email)
-    ?? nonEmptyString(account.account_note)
     ?? metadata.email;
   const accountId = nonEmptyString(account.account_id) ?? metadata.accountId;
   const expiresAt = requireString(account, "expired", accountNumber);
@@ -147,7 +146,6 @@ function nineRouterToCockpit(
   const metadata = idTokenMetadata(idToken);
   const providerData = asRecord(account.providerSpecificData) ?? {};
   const email = nonEmptyString(account.email)
-    ?? nonEmptyString(account.name)
     ?? metadata.email;
   const accountId = nonEmptyString(providerData.chatgptAccountId) ?? metadata.accountId;
 

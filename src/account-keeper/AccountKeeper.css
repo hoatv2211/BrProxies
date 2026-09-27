@@ -114,6 +114,24 @@
 .account-keeper .account-keeper__panel-head > div:first-child { display: flex; align-items: center; gap: 10px; }
 .account-keeper .account-keeper__panel-head h2 { margin: 0; font-size: 15px; letter-spacing: -.2px; }
 
+.account-keeper .account-keeper__collapse-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.account-keeper .account-keeper__collapse-toggle:hover { color: var(--accent-hi); }
+.account-keeper .account-keeper__collapse-toggle:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 4px; border-radius: 3px; }
+.account-keeper .account-keeper__chevron { color: var(--accent-hi); width: 12px; }
+.account-keeper .account-keeper__panel-head.is-collapsed { margin-bottom: 0; }
+.account-keeper [hidden] { display: none !important; }
+
 .account-keeper .account-keeper__step {
   display: inline-grid;
   width: 28px;
@@ -572,6 +590,31 @@
   margin-bottom: 12px;
 }
 
+.account-keeper .account-keeper__sidebar { display: grid; gap: 16px; min-width: 0; }
+.account-keeper .account-keeper__totp { padding: 18px; }
+.account-keeper .account-keeper__totp input { width: 100%; min-width: 0; box-sizing: border-box; }
+.account-keeper .account-keeper__totp-reveal { justify-self: end; }
+.account-keeper .account-keeper__totp-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-keeper .account-keeper__totp-result {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 16px 10px;
+  border: 1px solid var(--bd-1);
+  border-radius: 8px;
+  background: var(--bg-1);
+}
+.account-keeper .account-keeper__totp-code {
+  color: var(--accent-hi);
+  font-family: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 5px;
+}
+.account-keeper .account-keeper__totp-expiry { color: var(--tx-3); font-size: 11px; }
+.account-keeper .account-keeper__totp-hint { color: var(--tx-3); font-size: 11px; line-height: 1.5; margin: 12px 0 0; }
+
 .account-keeper .account-keeper__converter-output {
   display: grid;
   gap: 8px;
@@ -699,7 +742,7 @@
 
 @media (max-width: 1120px) {
   .account-keeper .account-keeper__workspace { grid-template-columns: 1fr; }
-  .account-keeper .account-keeper__jobs { order: -1; }
+  .account-keeper .account-keeper__sidebar { order: -1; }
   .account-keeper .account-keeper__converter-grid { grid-template-columns: 1fr; }
 }
 
