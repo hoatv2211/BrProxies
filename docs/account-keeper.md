@@ -2,10 +2,25 @@
 
 [README](../README.md) | [Tiếng Việt](account-keeper.vn.md)
 
-Account Keeper is the Windows 10/11 BrProxies workflow for logging in and changing
+Account Keeper is the Windows, macOS, and Linux BrProxies workflow for logging in and changing
 passwords, authenticator 2FA, or account email on accounts you own or are explicitly authorized to manage. It processes
 one account at a time and maps every account to one persistent BrProxies
 profile.
+
+## Desktop platform requirements
+
+Windows uses DPAPI for internal encrypted storage. macOS and Linux use
+AES-256-GCM with a key held in macOS Keychain or Linux Secret Service; there
+is no plaintext fallback. Linux requires an available, unlocked Secret Service
+session. Release packages must include the native Node runtime and worker.
+Encrypted storage is local to the OS user and is not portable between systems.
+Existing references below to the DPAPI vault refer to this platform-specific
+protected storage on macOS/Linux as well. Explicit input/output exports remain
+plaintext on every platform.
+
+macOS builds and automated tests are exercised locally. Windows/Linux runtime
+parity and live provider/OAuth flows still require platform-specific QA; enabling
+a platform is not a claim that all live providers have been verified there.
 
 ## Safety And Scope
 

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmod,
   cp,
   mkdir,
   readFile,
@@ -12,7 +13,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { prepareExtractedRuntime } from "./account-keeper-runtime-cache.mjs";
+import { prepareExtractedRuntime, selectRuntime } from "./account-keeper-runtime-cache.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -24,7 +25,7 @@ const resourceRoot = path.join(repoRoot, "src-tauri", "resources", "account-keep
 assertInsideRepo(cacheRoot);
 assertInsideRepo(resourceRoot);
 
-const runtime = JSON.parse(await readFile(runtimePath, "utf8"));
+const runtime = selectRuntime(JSON.parse(await readFile(runtimePath, "utf8")));
 validateRuntime(runtime);
 
 runNpmCi();
@@ -58,7 +59,7 @@ const {
   archiveName: runtime.archive,
   extractRoot,
   sha256: runtime.sha256,
-  expandArchive: expandZip,
+  expandArchive: expandRuntimeArchive,
   resetDestination: safeRemove,
 });
 if (reusedNodeRuntime) {
@@ -71,7 +72,9 @@ const bundledWorkerDir = path.join(resourceRoot, "worker");
 await mkdir(bundledNodeDir, { recursive: true });
 await mkdir(bundledWorkerDir, { recursive: true });
 
-await cp(nodeExecutable, path.join(bundledNodeDir, "node.exe"));
+const bundledNode = path.join(bundledNodeDir, runtime.platform === "win" ? "node.exe" : "node");
+await cp(nodeExecutable, bundledNode);
+if (runtime.platform !== "win") await chmod(bundledNode, 0o755);
 await cp(nodeLicense, path.join(bundledNodeDir, "LICENSE"));
 const workerModules = await collectModuleGraph(
   path.join(automationDir, "account-keeper-worker.mjs"),
@@ -100,6 +103,8 @@ const manifest = {
   schema_version: 1,
   node: {
     version: runtime.version,
+    platform: runtime.platform,
+    arch: runtime.arch,
     archive: runtime.archive,
     sha256: runtime.sha256,
   },
@@ -136,9 +141,15 @@ function runNpmCi() {
   }
 }
 
-function expandZip(archivePath, destination) {
-  if (process.platform !== "win32") {
-    throw new Error("Account Keeper worker packaging is supported on Windows only");
+function expandRuntimeArchive(archivePath, destination) {
+  if (runtime.platform !== "win") {
+    const result = spawnSync("tar", ["-xzf", archivePath, "-C", destination], {
+      stdio: "inherit",
+    });
+    if (result.error || result.status !== 0) {
+      throw new Error("Node runtime extraction failed");
+    }
+    return;
   }
   const escapedArchive = archivePath.replaceAll("'", "''");
   const escapedDestination = destination.replaceAll("'", "''");

@@ -44,7 +44,7 @@ describe("ProxiesView", () => {
           notes: "",
         }];
       }
-      if (command === "profile_list") return [];
+      if (["profile_list", "fingerprint_list", "process_list"].includes(command)) return [];
       if (command === "proxy_last_test") {
         return {
           first_seen: "@1",
@@ -71,6 +71,17 @@ describe("ProxiesView", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("exposes Account Keeper navigation on non-Windows hosts", async () => {
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "runtime_status") return { spec: null, installed: true, fingerprints_installed: true };
+      if (["profile_list", "proxy_list", "fingerprint_list", "process_list"].includes(command)) return [];
+      return null;
+    });
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "Account Keeper" })).toBeInTheDocument();
   });
 
   it("shows the latest TCP latency in its own column", async () => {

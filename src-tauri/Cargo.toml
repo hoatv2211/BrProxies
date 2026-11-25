@@ -47,6 +47,8 @@ sha1 = "0.10"
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 getrandom = "0.2"
+aes-gcm = "0.10"
+zeroize = "1"
 # Self-bootstrapping runtime: zip extraction of the chrome bundle
 # downloaded from Cloudflare R2 on first launch (src/runtime.rs).
 zip = { version = "2", default-features = false, features = ["deflate"] }
@@ -54,9 +56,14 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6.3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6.3", features = ["sync-secret-service", "crypto-rust", "vendored"] }
+
 # Windows cookie crypto: AES-256-GCM + DPAPI key from Local State.
 [target.'cfg(windows)'.dependencies]
-aes-gcm = "0.10"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",            # HLOCAL + LocalFree live here in 0.59
     "Win32_Security_Cryptography", # CryptProtectData / CryptUnprotectData

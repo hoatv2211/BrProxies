@@ -41,7 +41,11 @@ pub fn resolve_worker(resource_root: Option<&Path>) -> Result<WorkerResources> {
 
 pub fn resolve_bundled_worker_from(resource_root: &Path) -> Result<WorkerResources> {
     let account_keeper_root = resource_root.join("account-keeper");
-    let node_executable = account_keeper_root.join("node").join("node.exe");
+    let node_executable = account_keeper_root.join("node").join(if cfg!(windows) {
+        "node.exe"
+    } else {
+        "node"
+    });
     let working_dir = account_keeper_root.join("worker");
     let worker_script = working_dir.join("account-keeper-worker.mjs");
     let worker_runtime = working_dir.join("account-keeper-worker-runtime.mjs");
@@ -312,7 +316,11 @@ mod tests {
     #[test]
     fn resolves_expected_bundled_resource_layout() {
         let root = test_dir("resources");
-        let node = root.join("account-keeper/node/node.exe");
+        let node = root.join(if cfg!(windows) {
+            "account-keeper/node/node.exe"
+        } else {
+            "account-keeper/node/node"
+        });
         let worker = root.join("account-keeper/worker/account-keeper-worker.mjs");
         let runtime = root.join("account-keeper/worker/account-keeper-worker-runtime.mjs");
         let protocol = root.join("account-keeper/worker/account-keeper-protocol.mjs");
@@ -350,7 +358,11 @@ mod tests {
     #[test]
     fn bundled_layout_rejects_missing_semantic_flow() {
         let root = test_dir("missing-flow");
-        let node = root.join("account-keeper/node/node.exe");
+        let node = root.join(if cfg!(windows) {
+            "account-keeper/node/node.exe"
+        } else {
+            "account-keeper/node/node"
+        });
         let worker_root = root.join("account-keeper/worker");
         std::fs::create_dir_all(worker_root.join("node_modules/patchright")).unwrap();
         std::fs::create_dir_all(worker_root.join("node_modules/patchright-core")).unwrap();

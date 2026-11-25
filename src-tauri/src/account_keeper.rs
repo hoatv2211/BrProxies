@@ -2905,13 +2905,13 @@ fn remove_managed_account(vault: &mut VaultFile, index: usize) -> VaultAccount {
 }
 
 fn ensure_account_keeper_supported() -> Result<()> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     {
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
-        bail!("Account Keeper is supported on Windows only")
+        bail!("Account Keeper requires Windows, macOS, or Linux")
     }
 }
 
@@ -6093,9 +6093,8 @@ mod tests {
         assert!(!security_failure_is_critical("change_password", true));
     }
 
-    #[cfg(windows)]
     #[test]
-    fn backend_support_guard_allows_windows() {
+    fn backend_support_guard_allows_desktop_platform() {
         ensure_account_keeper_supported().unwrap();
     }
 
@@ -6190,11 +6189,16 @@ mod tests {
 
     #[test]
     fn headless_agent_resolves_worker_resources_beside_executable() {
-        let executable = Path::new(r"C:\BrProxies\account-keeper-agent.exe");
+        let root = Path::new("synthetic-install");
+        let executable = root.join(if cfg!(windows) {
+            "account-keeper-agent.exe"
+        } else {
+            "account-keeper-agent"
+        });
 
         assert_eq!(
-            headless_worker_resource_root_from(executable),
-            Some(PathBuf::from(r"C:\BrProxies")),
+            headless_worker_resource_root_from(&executable),
+            Some(root.to_path_buf()),
         );
     }
 

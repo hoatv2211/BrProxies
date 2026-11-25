@@ -4,8 +4,9 @@ import test from "node:test";
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 
-test("Windows releases bundle BrProxies Bridge for profile auto-load", () => {
+test("all desktop releases bundle BrProxies Bridge for profile auto-load", () => {
   const windowsConfig = readJson("src-tauri/tauri.windows.conf.json");
+  const sharedConfig = readJson("src-tauri/tauri.conf.json");
   const required = [
     "manifest.json",
     "background.js",
@@ -22,6 +23,7 @@ test("Windows releases bundle BrProxies Bridge for profile auto-load", () => {
   ];
   for (const file of required) {
     assert.equal(existsSync(`extension/${file}`), true, `${file} should exist`);
+    assert.equal(sharedConfig.bundle.resources[`../extension/${file}`], `bridge-extension/${file}`);
     assert.equal(
       windowsConfig.bundle.resources[`../extension/${file}`],
       `bridge-extension/${file}`,

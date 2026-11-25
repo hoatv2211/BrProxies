@@ -823,9 +823,7 @@ function Sidebar({
       label: "Workspace",
       items: [
         { id: "browsers", label: "Browsers", svg: <IconShard /> },
-        ...(HOST_OS === "Windows"
-          ? [{ id: "accountKeeper" as Section, label: "Account Keeper", svg: <IconHex /> }]
-          : []),
+        { id: "accountKeeper", label: "Account Keeper", svg: <IconHex /> },
         { id: "android", label: "Android", svg: <IconPhone /> },
         { id: "proxies", label: "Proxies", svg: <IconWire /> },
         { id: "proxypool", label: "ProxyPool", svg: <IconPool /> },

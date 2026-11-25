@@ -417,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     fn dpapi_vault_round_trips_without_plaintext_on_disk() {
         let path = test_dir("vault").join("vault.bin");
         let vault = VaultFile::single(synthetic_vault_account());
@@ -466,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     fn dpapi_job_checkpoint_round_trips_without_plaintext_on_disk() {
         let path = test_dir("checkpoint").join("job.json");
         let checkpoint = synthetic_checkpoint();
@@ -492,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     fn job_checkpoint_rejects_unknown_schema() {
         let path = test_dir("checkpoint-schema").join("job.json");
         let mut checkpoint = synthetic_checkpoint();
@@ -508,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     fn vault_rejects_unknown_schema() {
         let path = test_dir("vault-schema").join("vault.bin");
         let mut vault = VaultFile::single(synthetic_vault_account());
